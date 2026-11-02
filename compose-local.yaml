@@ -1,0 +1,21 @@
+# 로컬 개발용 DB 하나만 띄운다 — docker compose -f compose-local.yaml up -d
+# 서버 배포용 Compose(BE · AI · DB)는 따로 둔다(BE#9).
+# 아래 계정은 내 PC 에서만 쓰는 개발용 값이다. 서버 비밀번호는 .env 로.
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: woowang
+      POSTGRES_USER: woowang
+      POSTGRES_PASSWORD: woowang
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U woowang -d woowang"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  db-data:

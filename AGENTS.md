@@ -107,7 +107,7 @@ SPEC 항목 → plan-feature 로 이슈 → implement-issue: 읽기 → (모르�
 
 ## 이 레포 — BE (백엔드)
 
-- 스택: 미정
-- 실행: 미정 — 정해지면 README 와 여기에
-- 검증 명령: 미정 — 정해지면 여기에. 비어 있는 동안은 무엇으로 확인할지 묻는다
+- 스택: Spring Boot 4.0 · Java 25 · Gradle 9.8(Kotlin DSL) · Spring Data JPA · Flyway · PostgreSQL 18(`pgvector/pgvector:pg18`) · Testcontainers
+- 실행: `docker compose -f compose-local.yaml up -d` → `./gradlew bootRun` (자세한 건 README)
+- 검증 명령: `./gradlew build` (Docker 실행 중이어야 한다 — Testcontainers 통합 테스트, JDK 25 필요)
 - 영역 담당(논의 상대 — 이슈 담당은 시작하는 사람): @tkddud06 백엔드 · 클라우드
