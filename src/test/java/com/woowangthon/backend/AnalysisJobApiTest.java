@@ -58,6 +58,8 @@ class AnalysisJobApiTest {
 
     static final HttpServer FAKE_AI;
     static final List<String> RECEIVED = new CopyOnWriteArrayList<>();
+    // uvicorn 은 Upgrade: h2c 요청을 400 으로 거절한다 — BE 는 HTTP/1.1 로만 부른다
+    static final List<String> UPGRADE_HEADERS = new CopyOnWriteArrayList<>();
     static volatile FakeReply reply;
 
     static {
@@ -69,6 +71,10 @@ class AnalysisJobApiTest {
         FAKE_AI.setExecutor(Executors.newCachedThreadPool());
         FAKE_AI.createContext("/extract", exchange -> {
             RECEIVED.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String upgrade = exchange.getRequestHeaders().getFirst("Upgrade");
+            if (upgrade != null) {
+                UPGRADE_HEADERS.add(upgrade);
+            }
             FakeReply r = reply;
             if (r.delayMillis() > 0) {
                 try {
@@ -163,6 +169,7 @@ class AnalysisJobApiTest {
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).build();
         RECEIVED.clear();
+        UPGRADE_HEADERS.clear();
         reply = new FakeReply(200, CONTRACT_EXAMPLE, 0);
     }
 
@@ -194,6 +201,7 @@ class AnalysisJobApiTest {
 
         // AI 서버에는 저장한 원본을 글자 하나 다르지 않게 보낸다
         assertThat(RECEIVED).hasSize(1);
+        assertThat(UPGRADE_HEADERS).isEmpty();
         assertThat((String) JsonPath.read(RECEIVED.getFirst(), "$.text")).isEqualTo(SOURCE_TEXT);
         assertThat((String) JsonPath.read(RECEIVED.getFirst(), "$.sourceName")).isEqualTo("바꿔요-회고.md");
         assertThat(sources.findById(sourceId).orElseThrow().getText()).isEqualTo(SOURCE_TEXT);

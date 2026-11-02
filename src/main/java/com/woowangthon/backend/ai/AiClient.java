@@ -37,7 +37,11 @@ public class AiClient {
     public AiClient(@Value("${app.ai.base-url}") String baseUrl,
             @Value("${app.ai.timeout-seconds}") long timeoutSeconds) {
         this.timeoutSeconds = timeoutSeconds;
-        HttpClient http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+        // JDK 기본은 HTTP/2 라 평문 http 에 Upgrade: h2c 를 보내는데, uvicorn(AI 서버)은 이를 400 으로 거절한다
+        HttpClient http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(Duration.ofSeconds(timeoutSeconds));
         this.rest = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
