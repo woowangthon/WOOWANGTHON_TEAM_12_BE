@@ -1,0 +1,11 @@
+# 이미지 빌드에 보내지 않는 것 — 빌드 결과 · 비밀값 · 에디터
+.git/
+.gradle/
+build/
+bin/
+out/
+.env
+.env.*
+.idea/
+.vscode/
+.claude/
