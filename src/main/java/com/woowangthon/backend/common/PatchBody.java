@@ -1,5 +1,6 @@
 package com.woowangthon.backend.common;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,6 +28,10 @@ public final class PatchBody {
 
     public Optional<Field<Boolean>> bool(String name) {
         return field(name, Boolean.class, "true · false");
+    }
+
+    public Optional<Field<List<?>>> list(String name) {
+        return field(name, List.class, "배열").map(f -> new Field<>((List<?>) f.value()));
     }
 
     @SuppressWarnings("unchecked")
