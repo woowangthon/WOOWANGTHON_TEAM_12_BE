@@ -50,16 +50,21 @@ $env:SEED_SAMPLE='true'; .\gradlew.bat bootRun   # Windows PowerShell
 
 | 메서드 · 경로 | 하는 일 |
 | --- | --- |
+| `POST /api/sources` | 자료 넣기 — 원본 저장 · 분석 작업 시작(202, 분석은 뒤에서) |
+| `GET /api/jobs/{id}` | 분석 작업 상태: `ANALYZING` → `COMPLETED` / `FAILED`(이유) |
+| `POST /api/jobs/{id}/retry` | 실패한 작업 다시 시도 |
 | `GET /api/activities` | 활동 목록 |
 | `GET /api/activities/{id}` | 활동 하나 |
 | `PATCH /api/activities/{id}` | 활동 고치기 |
 | `PATCH /api/experiences/{id}` | 경험 고치기 |
 
+분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
+
 로그인(BE#10) 전까지 모든 데이터는 고정 사용자 1 의 것이다(`SAMPLE(fixed-user)`).
 
 ## 환경변수
 
-변수와 기본값은 [`.env.example`](.env.example) 에 있다: `SEED_SAMPLE` · `CORS_ALLOWED_ORIGINS` · `DB_URL` · `DB_USERNAME` · `DB_PASSWORD`. `.env` 는 커밋하지 않는다.
+변수와 기본값은 [`.env.example`](.env.example) 에 있다: `SEED_SAMPLE` · `CORS_ALLOWED_ORIGINS` · `DB_URL` · `DB_USERNAME` · `DB_PASSWORD` · `AI_BASE_URL` · `AI_TIMEOUT_SECONDS`. `.env` 는 커밋하지 않는다.
 
 ## 검증
 
