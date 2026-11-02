@@ -23,6 +23,11 @@ docker compose -f compose-local.yaml up -d   # 로컬 DB 만 띄운다
 - 앱: http://localhost:8080 · API 는 `/api` 아래.
 - `compose-local.yaml` 은 DB 전용이다. 서버 배포용 compose 는 따로 둔다(BE#9).
 
+### 포트가 겹치면
+
+- DB(5432)를 이미 쓰고 있으면 — `compose-local.yaml` 의 `127.0.0.1:5432:5432` 앞쪽 번호를 `5433` 처럼 바꾸고, 앱은 `DB_URL=jdbc:postgresql://localhost:5433/woowang` 으로 실행한다(이 변경은 커밋하지 않는다).
+- 앱(8080)을 이미 쓰고 있으면 — `SERVER_PORT=8081` 로 실행한다.
+
 ### 예시 데이터 켜기
 
 기본은 꺼져 있다. 로컬에서 화면을 채우려면 `SEED_SAMPLE=true` 로 실행한다.
