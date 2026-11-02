@@ -64,6 +64,7 @@ public class SampleSeeder implements ApplicationRunner {
         long userId = CurrentUser.id();
         // 활동이 하나라도 있으면 넣지 않는다 — 재시작할 때마다 늘어나지 않게
         if (activities.existsByUserId(userId)) {
+            log.info("SEED_SAMPLE=true — 활동이 이미 있어서 예시 데이터를 넣지 않았습니다");
             return;
         }
 
