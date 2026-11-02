@@ -105,6 +105,12 @@ public class Experience {
         }
     }
 
+    /** 다른 활동으로 옮긴다 — 묶음만 바뀌고 내용 · 근거 · 출처 상태는 그대로다(S-12). */
+    public void moveTo(Activity target, int newPosition) {
+        this.activity = target;
+        this.position = newPosition;
+    }
+
     public Long getId() {
         return id;
     }

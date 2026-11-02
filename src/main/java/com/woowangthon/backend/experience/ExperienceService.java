@@ -86,6 +86,41 @@ public class ExperienceService {
         experiences.flush();
     }
 
+    /** 경험이 속한 활동만 바꾼다. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤에 붙는다(계약 「경험 옮기기」 · S-12). */
+    @Transactional
+    public ExperienceResponse move(long experienceId, PatchBody body) {
+        Long toActivityId = body.id("toActivityId").map(PatchBody.Field::value).orElse(null);
+        if (toActivityId == null) {
+            throw ApiException.invalidRequest("toActivityId 가 없습니다");
+        }
+        Experience experience = findOwned(experienceId);
+        Activity target = activities.findByIdAndUserId(toActivityId, CurrentUser.id())
+                .orElseThrow(() -> ApiException.notFound("ACTIVITY_NOT_FOUND", "활동 " + toActivityId + " 이(가) 없습니다"));
+
+        // 이미 그 활동에 있으면 아무것도 바꾸지 않는다
+        if (!experience.getActivity().getId().equals(target.getId())) {
+            moveToEnd(List.of(experience), target);
+            experiences.flush();
+        }
+        return ExperienceResponse.from(experience);
+    }
+
+    /** 경험들을 받은 순서대로 활동의 맨 뒤로 옮긴다(옮기기 · 합치기가 같이 쓴다). */
+    public void moveToEnd(List<Experience> moving, Activity target) {
+        int position = experiences.findLastPosition(target.getId());
+        for (Experience experience : List.copyOf(moving)) {
+            Activity from = experience.getActivity();
+            experience.moveTo(target, ++position);
+            // 같은 요청 · 같은 영속성 컨텍스트에서 두 활동 세부를 다시 읽어도 보이게
+            if (Hibernate.isInitialized(from.getExperiences())) {
+                from.getExperiences().remove(experience);
+            }
+            if (Hibernate.isInitialized(target.getExperiences())) {
+                target.getExperiences().add(experience);
+            }
+        }
+    }
+
     private Experience findOwned(long experienceId) {
         return experiences.findOwned(experienceId, CurrentUser.id())
                 .orElseThrow(() -> ApiException.notFound("EXPERIENCE_NOT_FOUND",

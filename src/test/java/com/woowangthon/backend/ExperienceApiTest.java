@@ -1,6 +1,8 @@
 package com.woowangthon.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -29,11 +31,13 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
- * ETC docs/contracts/experience-api.md 의 활동 목록 · 세부 · 활동 수정 · 경험 수정 · 직접 추가 · 지우기.
+ * ETC docs/contracts/experience-api.md 의 활동 목록 · 세부 · 활동 수정 · 경험 수정 · 직접 추가 · 지우기 · 옮기기 · 합치기.
  * 시드(계약 예시 데이터)를 켜고 돌린다. 테스트마다 롤백해 시드 상태에서 시작한다.
  */
 @Import(TestcontainersConfiguration.class)
@@ -55,6 +59,9 @@ class ExperienceApiTest {
 
     @Autowired
     SourceRepository sources;
+
+    @Autowired
+    JdbcTemplate jdbc;
 
     MockMvc mvc;
     long studyId;
@@ -375,6 +382,155 @@ class ExperienceApiTest {
     @Test
     void 없는_경험을_지우면_404() throws Exception {
         expectError(mvc.perform(delete("/api/experiences/{id}", 999_999)), 404, "EXPERIENCE_NOT_FOUND");
+    }
+
+    // --- 경험 옮기기 ---
+
+    @Test
+    void 옮긴_경험은_새_활동_맨_뒤에_붙고_내용_근거_출처_상태는_그대로다() throws Exception {
+        long experienceId = firstExperienceId(appId, 1);
+
+        postJson("/api/experiences/" + experienceId + "/move", "{\"toActivityId\": " + studyId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(experienceId))
+                .andExpect(jsonPath("$.activityId").value(studyId))
+                .andExpect(jsonPath("$.content").value("매주 금요일 스프린트 회고를 했다"))
+                .andExpect(jsonPath("$.competencies[0]").value("COLLABORATION"))
+                .andExpect(jsonPath("$.actor").value("TEAM"))
+                .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"))
+                .andExpect(jsonPath("$.citations.length()").value(1))
+                .andExpect(jsonPath("$.citations[0].quote").value("팀은 매주 금요일 스프린트 회고를 했다."));
+
+        mvc.perform(get("/api/activities/{id}", studyId))
+                .andExpect(jsonPath("$.experiences.length()").value(2))
+                .andExpect(jsonPath("$.experiences[1].id").value(experienceId))
+                .andExpect(jsonPath("$.experiences[1].activityId").value(studyId))
+                .andExpect(jsonPath("$.experiences[1].sourceStatus").value("SOURCE_CONFIRMED"));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(3))
+                .andExpect(jsonPath("$.experiences[*].id", not(hasItem((int) experienceId))));
+    }
+
+    @Test
+    void 이미_그_활동에_있으면_그대로_200() throws Exception {
+        long experienceId = firstExperienceId(appId, 0);
+
+        postJson("/api/experiences/" + experienceId + "/move", "{\"toActivityId\": " + appId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activityId").value(appId));
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(4))
+                .andExpect(jsonPath("$.experiences[0].id").value(experienceId));
+    }
+
+    @Test
+    void 경험이_다_빠진_활동도_옮긴_뒤_남는다() throws Exception {
+        postJson("/api/experiences/" + firstExperienceId(studyId, 0) + "/move", "{\"toActivityId\": " + appId + "}")
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/activities/{id}", studyId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experiences.length()").value(0));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(5));
+    }
+
+    @Test
+    void 경험_옮기기_오류() throws Exception {
+        String url = "/api/experiences/" + firstExperienceId(appId, 0) + "/move";
+        expectError(postJson(url, "{}"), 400, "INVALID_REQUEST");
+        expectError(postJson(url, "{\"toActivityId\": null}"), 400, "INVALID_REQUEST");
+        expectError(postJson(url, "{\"toActivityId\": \"8\"}"), 400, "INVALID_REQUEST");
+        expectError(postJson(url, "{\"toActivityId\": 1.5}"), 400, "INVALID_REQUEST");
+        expectError(mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON)), 400, "INVALID_REQUEST");
+        expectError(postJson(url, "{\"toActivityId\": 999999}"), 404, "ACTIVITY_NOT_FOUND");
+        expectError(postJson("/api/experiences/999999/move", "{\"toActivityId\": " + studyId + "}"),
+                404, "EXPERIENCE_NOT_FOUND");
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(4));
+    }
+
+    // --- 활동 합치기 ---
+
+    @Test
+    void 합치면_경험이_남길_활동_뒤에_모이고_다른_활동은_사라진다() throws Exception {
+        Experience studyExperience = activities.findById(studyId).orElseThrow().getExperiences().get(0);
+        long studyExperienceId = studyExperience.getId();
+        long citationId = studyExperience.getCitations().get(0).getId();
+
+        postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + studyId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(appId))
+                .andExpect(jsonPath("$.name").value("바꿔요 — 캠퍼스 중고거래 앱"))
+                .andExpect(jsonPath("$.period.start").value("2025-03"))
+                .andExpect(jsonPath("$.period.end").value("2025-06"))
+                .andExpect(jsonPath("$.experiences.length()").value(5))
+                .andExpect(jsonPath("$.experiences[4].id").value(studyExperienceId))
+                .andExpect(jsonPath("$.experiences[4].activityId").value(appId))
+                .andExpect(jsonPath("$.experiences[4].sourceStatus").value("SOURCE_CONFIRMED"))
+                .andExpect(jsonPath("$.experiences[4].citations[0].id").value(citationId));
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(5))
+                .andExpect(jsonPath("$.experiences[4].id").value(studyExperienceId));
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities.length()").value(1))
+                .andExpect(jsonPath("$.activities[0].id").value(appId));
+        expectError(mvc.perform(get("/api/activities/{id}", studyId)), 404, "ACTIVITY_NOT_FOUND");
+        expectError(postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + studyId + "}"),
+                404, "ACTIVITY_NOT_FOUND");
+    }
+
+    @Test
+    void 빈_활동도_합칠_수_있다() throws Exception {
+        long emptyId = activities.save(new Activity(CurrentUser.id(), "빈 활동", new Period(null, null, false))).getId();
+
+        postJson("/api/activities/" + studyId + "/merge", "{\"fromActivityId\": " + emptyId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experiences.length()").value(1));
+        expectError(mvc.perform(get("/api/activities/{id}", emptyId)), 404, "ACTIVITY_NOT_FOUND");
+    }
+
+    @Test
+    void 활동_합치기_오류() throws Exception {
+        String url = "/api/activities/" + appId + "/merge";
+        expectError(postJson(url, "{}"), 400, "INVALID_REQUEST");
+        expectError(postJson(url, "{\"fromActivityId\": \"x\"}"), 400, "INVALID_REQUEST");
+        expectError(mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON)), 400, "INVALID_REQUEST");
+        expectError(postJson(url, "{\"fromActivityId\": " + appId + "}"), 400, "SAME_ACTIVITY");
+        expectError(postJson(url, "{\"fromActivityId\": 999999}"), 404, "ACTIVITY_NOT_FOUND");
+        expectError(postJson("/api/activities/999999/merge", "{\"fromActivityId\": " + studyId + "}"),
+                404, "ACTIVITY_NOT_FOUND");
+
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities.length()").value(2));
+    }
+
+    // 테스트 트랜잭션 밖에서 돌려 합치기 자체의 트랜잭션을 본다. 활동 DELETE 를 DB 트리거로 실패시킨다
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void 합치기가_중간에_실패하면_아무것도_바뀌지_않는다() throws Exception {
+        String experienceOwners = "select activity_id from experience order by id";
+        List<Long> before = jdbc.queryForList(experienceOwners, Long.class);
+        jdbc.execute("""
+                create function fail_activity_delete() returns trigger language plpgsql as
+                $$ begin raise exception 'test: activity delete blocked'; end $$""");
+        jdbc.execute("""
+                create trigger fail_activity_delete before delete on activity
+                for each row execute function fail_activity_delete()""");
+        try {
+            postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + studyId + "}")
+                    .andExpect(status().isInternalServerError());
+
+            assertThat(jdbc.queryForList(experienceOwners, Long.class)).isEqualTo(before);
+            assertThat(jdbc.queryForObject("select count(*) from activity where id = ?", Long.class, studyId))
+                    .isEqualTo(1L);
+        } finally {
+            jdbc.execute("drop trigger fail_activity_delete on activity");
+            jdbc.execute("drop function fail_activity_delete()");
+        }
     }
 
     // --- 시드 · CORS ---
