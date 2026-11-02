@@ -30,6 +30,17 @@ public final class PatchBody {
         return field(name, Boolean.class, "true · false");
     }
 
+    /** 정수 id — JSON 숫자 중 소수가 아닌 것만 받는다. */
+    public Optional<Field<Long>> id(String name) {
+        return field(name, Number.class, "정수").map(f -> {
+            Number value = f.value();
+            if (value != null && !(value instanceof Integer || value instanceof Long)) {
+                throw ApiException.invalidRequest(name + " 은(는) 정수여야 합니다");
+            }
+            return new Field<>(value == null ? null : value.longValue());
+        });
+    }
+
     public Optional<Field<List<?>>> list(String name) {
         return field(name, List.class, "배열").map(f -> new Field<>((List<?>) f.value()));
     }

@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** ETC docs/contracts/experience-api.md — 경험 수정 · 직접 추가 · 지우기 (SPEC S-10 · S-11). */
+/** ETC docs/contracts/experience-api.md — 경험 수정 · 직접 추가 · 지우기 · 옮기기 (SPEC S-10 · S-11 · S-12). */
 @RestController
 public class ExperienceController {
 
@@ -32,6 +32,12 @@ public class ExperienceController {
     public ExperienceResponse add(@PathVariable long activityId,
             @RequestBody(required = false) Map<String, Object> body) {
         return service.add(activityId, new PatchBody(body));
+    }
+
+    @PostMapping("/api/experiences/{experienceId}/move")
+    public ExperienceResponse move(@PathVariable long experienceId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        return service.move(experienceId, new PatchBody(body));
     }
 
     @DeleteMapping("/api/experiences/{experienceId}")
