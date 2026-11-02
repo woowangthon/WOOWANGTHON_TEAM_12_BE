@@ -5,7 +5,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/** FE(Vercel · 로컬)가 다른 도메인에서 API 를 부를 수 있게 허용할 주소. CORS_ALLOWED_ORIGINS 로 정한다. */
+/**
+ * FE(Vercel · 로컬)가 다른 도메인에서 API 를 부를 수 있게 허용할 주소. CORS_ALLOWED_ORIGINS 로 정한다.
+ * 쿠키가 실린 요청(FE fetch credentials: 'include')의 응답도 FE 가 읽을 수 있게 한다 — 공개 전엔 Cloudflare Access 로그인 쿠키,
+ * 로그인(BE#10) 뒤엔 우리 로그인 쿠키. 그래서 허용 주소는 우리 FE 만 정확히 넣는다.
+ */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
 
@@ -19,6 +23,7 @@ public class CorsConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
                 .allowedOriginPatterns(allowedOrigins)
-                .allowedMethods("GET", "POST", "PATCH", "DELETE", "OPTIONS");
+                .allowedMethods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
+                .allowCredentials(true);
     }
 }
