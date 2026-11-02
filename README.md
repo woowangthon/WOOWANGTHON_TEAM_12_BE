@@ -57,6 +57,8 @@ $env:SEED_SAMPLE='true'; .\gradlew.bat bootRun   # Windows PowerShell
 | `GET /api/activities/{id}` | 활동 하나 |
 | `PATCH /api/activities/{id}` | 활동 고치기 |
 | `PATCH /api/experiences/{id}` | 경험 고치기 |
+| `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
+| `DELETE /api/experiences/{id}` | 경험 지우기 — 근거도 지우고 원본 · 활동은 남김(204) |
 
 분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
 

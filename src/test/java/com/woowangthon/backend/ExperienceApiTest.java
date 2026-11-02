@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -14,7 +15,10 @@ import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.common.CurrentUser;
+import com.woowangthon.backend.experience.CitationRepository;
+import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.seed.SampleSeeder;
+import com.woowangthon.backend.source.SourceRepository;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
- * ETC docs/contracts/experience-api.md 의 활동 목록 · 세부 · 활동 수정 · 경험 수정.
+ * ETC docs/contracts/experience-api.md 의 활동 목록 · 세부 · 활동 수정 · 경험 수정 · 직접 추가 · 지우기.
  * 시드(계약 예시 데이터)를 켜고 돌린다. 테스트마다 롤백해 시드 상태에서 시작한다.
  */
 @Import(TestcontainersConfiguration.class)
@@ -45,6 +49,12 @@ class ExperienceApiTest {
 
     @Autowired
     SampleSeeder seeder;
+
+    @Autowired
+    CitationRepository citations;
+
+    @Autowired
+    SourceRepository sources;
 
     MockMvc mvc;
     long studyId;
@@ -242,6 +252,111 @@ class ExperienceApiTest {
                 {"content": "x"}"""), 404, "EXPERIENCE_NOT_FOUND");
     }
 
+    // --- 경험 직접 추가 ---
+
+    @Test
+    void 직접_더한_경험은_내가_입력이고_근거가_없고_맨_뒤에_붙는다() throws Exception {
+        postJson("/api/activities/" + appId + "/experiences", """
+                {"content": "결제 실패 알림을 슬랙으로 받게 붙였다", "perspective": "운영", "actor": "ME"}
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.activityId").value(appId))
+                .andExpect(jsonPath("$.content").value("결제 실패 알림을 슬랙으로 받게 붙였다"))
+                .andExpect(jsonPath("$.perspective").value("운영"))
+                .andExpect(jsonPath("$.actor").value("ME"))
+                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"))
+                .andExpect(jsonPath("$.citations.length()").value(0));
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(5))
+                .andExpect(jsonPath("$.experiences[4].content").value("결제 실패 알림을 슬랙으로 받게 붙였다"))
+                .andExpect(jsonPath("$.experiences[4].sourceStatus").value("USER_ENTERED"))
+                .andExpect(jsonPath("$.experiences[4].citations.length()").value(0));
+    }
+
+    @Test
+    void 관점을_빼면_null_이고_경험이_없는_활동에도_더할_수_있다() throws Exception {
+        long emptyId = activities.save(new Activity(CurrentUser.id(), "빈 활동", new Period(null, null, false))).getId();
+
+        postJson("/api/activities/" + emptyId + "/experiences", """
+                {"content": "첫 경험", "actor": "UNKNOWN"}
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.perspective").value(nullValue()))
+                .andExpect(jsonPath("$.actor").value("UNKNOWN"));
+        postJson("/api/activities/" + emptyId + "/experiences", """
+                {"content": "둘째 경험", "actor": "TEAM"}
+                """)
+                .andExpect(status().isCreated());
+
+        mvc.perform(get("/api/activities/{id}", emptyId))
+                .andExpect(jsonPath("$.experiences.length()").value(2))
+                .andExpect(jsonPath("$.experiences[0].content").value("첫 경험"))
+                .andExpect(jsonPath("$.experiences[1].content").value("둘째 경험"));
+    }
+
+    @Test
+    void 경험_직접_추가_오류() throws Exception {
+        String url = "/api/activities/" + appId + "/experiences";
+        expectError(postJson(url, """
+                {"content": "  ", "actor": "ME"}"""), 400, "INVALID_REQUEST");
+        expectError(postJson(url, """
+                {"actor": "ME"}"""), 400, "INVALID_REQUEST");
+        expectError(postJson(url, """
+                {"content": "x"}"""), 400, "INVALID_REQUEST");
+        expectError(postJson(url, """
+                {"content": "x", "actor": "BOSS"}"""), 400, "INVALID_REQUEST");
+        expectError(postJson(url, """
+                {"content": 3, "actor": "ME"}"""), 400, "INVALID_REQUEST");
+        expectError(mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON)), 400, "INVALID_REQUEST");
+        expectError(postJson("/api/activities/999999/experiences", """
+                {"content": "x", "actor": "ME"}"""), 404, "ACTIVITY_NOT_FOUND");
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(4));
+    }
+
+    // --- 경험 지우기 ---
+
+    @Test
+    void 경험을_지우면_근거도_사라지고_원본은_남는다() throws Exception {
+        Experience target = activities.findById(appId).orElseThrow().getExperiences().get(0);
+        long experienceId = target.getId();
+        long citationId = target.getCitations().get(0).getId();
+        long sourceId = target.getCitations().get(0).getSource().getId();
+
+        mvc.perform(delete("/api/experiences/{id}", experienceId))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences.length()").value(3))
+                .andExpect(jsonPath("$.experiences[0].id").value(
+                        activities.findById(appId).orElseThrow().getExperiences().get(0).getId()));
+        assertThat(citations.findById(citationId)).isEmpty();
+        assertThat(sources.findById(sourceId)).isPresent();
+        expectError(mvc.perform(delete("/api/experiences/{id}", experienceId)), 404, "EXPERIENCE_NOT_FOUND");
+    }
+
+    @Test
+    void 경험이_다_빠진_활동도_남는다() throws Exception {
+        long experienceId = firstExperienceId(studyId, 0);
+
+        mvc.perform(delete("/api/experiences/{id}", experienceId))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/activities/{id}", studyId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experiences.length()").value(0));
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities.length()").value(2));
+    }
+
+    @Test
+    void 없는_경험을_지우면_404() throws Exception {
+        expectError(mvc.perform(delete("/api/experiences/{id}", 999_999)), 404, "EXPERIENCE_NOT_FOUND");
+    }
+
     // --- 시드 · CORS ---
 
     @Test
@@ -271,6 +386,10 @@ class ExperienceApiTest {
 
     private ResultActions patchJson(String url, String json) throws Exception {
         return mvc.perform(patch(url).contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private ResultActions postJson(String url, String json) throws Exception {
+        return mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON).content(json));
     }
 
     private static void expectError(ResultActions result, int status, String code) throws Exception {
