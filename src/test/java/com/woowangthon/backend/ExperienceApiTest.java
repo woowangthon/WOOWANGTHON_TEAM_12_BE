@@ -391,7 +391,8 @@ class ExperienceApiTest {
                         .header("Origin", "http://localhost:3000")
                         .header("Access-Control-Request-Method", "PATCH"))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"));
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
+                .andExpect(header().string("Access-Control-Allow-Credentials", "true"));
     }
 
     @Test
