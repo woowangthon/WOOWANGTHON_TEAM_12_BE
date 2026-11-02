@@ -1,5 +1,5 @@
 # 로컬 개발용 DB 하나만 띄운다 — docker compose -f compose-local.yaml up -d
-# 서버 배포용 Compose(BE · AI · DB)는 따로 둔다(BE#9).
+# 서버 배포용은 docker-compose.yml(BE · AI · DB · Tunnel).
 # 아래 계정은 내 PC 에서만 쓰는 개발용 값이다. 서버 비밀번호는 .env 로.
 services:
   db:

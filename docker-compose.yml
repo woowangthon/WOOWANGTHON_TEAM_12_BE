@@ -1,0 +1,58 @@
+# 서버 배포용 — OCI 서버 하나에 BE · AI · DB + Cloudflare Tunnel (ETC ADR-004). 로컬 개발 DB 는 compose-local.yaml.
+# 준비: 이 레포와 AI 레포를 같은 상위 폴더에 클론하고 두 레포에 각각 .env (README 「서버에 띄우기」)
+# 밖에서 들어오는 길은 Tunnel(cloudflared → be) 하나뿐이다. AI · DB 는 포트를 열지 않는다.
+# 프로젝트 이름을 고정 — 같은 폴더의 compose-local.yaml(폴더 이름)과 컨테이너 · 볼륨이 섞이지 않게
+name: woowang
+
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: woowang
+      POSTGRES_USER: woowang
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 를 .env 에 넣는다}
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U woowang -d woowang"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ai:
+    build: ${AI_DIR:-../WOOWANGTHON_TEAM_12_AI}
+    # 변수 이름은 AI 레포 .env.example (OPENAI_API_KEY 등). 이미지에 HEALTHCHECK(GET /health, LLM 안 부름)가 있다
+    env_file:
+      - ${AI_DIR:-../WOOWANGTHON_TEAM_12_AI}/.env
+    restart: unless-stopped
+
+  be:
+    build: .
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/woowang
+      DB_USERNAME: woowang
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 를 .env 에 넣는다}
+      AI_BASE_URL: http://ai:8000
+      SEED_SAMPLE: ${SEED_SAMPLE:-false}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:8080:8080" # 서버 안에서 curl 로 확인하는 용도. 밖에서는 Tunnel 로만
+    depends_on:
+      db:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7
+    # 토큰은 Cloudflare Zero Trust 에서 Tunnel 을 만들 때 받는다. 공개 주소 → http://be:8080 은 대시보드에서 정한다
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - be
+    restart: unless-stopped
+
+volumes:
+  db-data:
