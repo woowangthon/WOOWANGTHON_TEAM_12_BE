@@ -11,3 +11,11 @@ Thumbs.db
 
 # 에이전트 개인 설정
 .claude/settings.local.json
+
+# Gradle · 빌드 결과
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+bin/
+out/
+*.iml
