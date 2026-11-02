@@ -10,6 +10,7 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
+import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
@@ -21,7 +22,12 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -33,6 +39,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class AnalysisService {
+
+    private static final Logger log = LoggerFactory.getLogger(AnalysisService.class);
 
     private static final DateTimeFormatter PASTED_NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -131,7 +139,7 @@ public class AnalysisService {
         SourceStatus status = sourceStatus(e.sourceStatus(), found);
 
         Experience experience = experiences.save(new Experience(activity, required(e.content(), "experiences[].content"),
-                e.perspective(), actor(e.actor()), status, position));
+                competencies(e.competencies()), actor(e.actor()), status, position));
         for (ExtractResponse.CitationResult c : found) {
             ExtractResponse.LocationResult location = c.location();
             citations.save(new Citation(experience, source, required(c.quote(), "citations[].quote"), c.matched(),
@@ -154,6 +162,26 @@ public class AnalysisService {
             throw AiCallException.invalidResponse("SOURCE_CONFIRMED 인데 원본에서 찾지 못한(또는 대조하지 않은) 근거가 있습니다");
         }
         return SourceStatus.SOURCE_CONFIRMED;
+    }
+
+    // AI 가 준 순서 그대로. 응답에 없으면 [](AI 쪽 변경과 머지 순서 상관없게).
+    // 목록 밖 값 · 중복 · 3개 넘는 것은 그 값만 버리고 로그를 남긴다 — 역량은 해석이라 경험 전체를 버리지 않는다
+    private static List<Competency> competencies(List<String> values) {
+        if (values == null) {
+            return List.of();
+        }
+        Set<Competency> kept = new LinkedHashSet<>();
+        for (String value : values) {
+            Optional<Competency> c = Competency.parse(value);
+            if (c.isEmpty()) {
+                log.warn("AI 응답의 competencies 에서 목록 밖 값을 버렸습니다: {}", value);
+            } else if (kept.size() >= Competency.MAX_PER_EXPERIENCE) {
+                log.warn("AI 응답의 competencies 가 {}개를 넘어 뒤의 값을 버렸습니다: {}", Competency.MAX_PER_EXPERIENCE, value);
+            } else if (!kept.add(c.get())) {
+                log.warn("AI 응답의 competencies 에서 중복 값을 버렸습니다: {}", value);
+            }
+        }
+        return List.copyOf(kept);
     }
 
     private static Actor actor(String value) {

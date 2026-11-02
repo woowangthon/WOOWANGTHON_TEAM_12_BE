@@ -111,19 +111,19 @@ class AnalysisJobApiTest {
                   "experiences": [
                     {
                       "content": "채팅 메시지가 늦게 도착하는 문제를 폴링에서 WebSocket 으로 바꿔 해결했다",
-                      "perspective": "문제 해결", "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
+                      "competencies": ["PROBLEM_SOLVING", "IMPLEMENTATION"], "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
                       "citations": [{ "quote": "채팅 메시지가 늦게 도착하는 문제가 있었다. 내가 폴링을 WebSocket 으로 바꿔 해결했다.",
                                       "matched": true, "location": { "startLine": 5, "endLine": 5 } }]
                     },
                     {
                       "content": "서비스를 AWS 에 배포했다",
-                      "perspective": "기술 구현", "actor": "TEAM", "sourceStatus": "SOURCE_CONFIRMED",
+                      "competencies": ["IMPLEMENTATION"], "actor": "TEAM", "sourceStatus": "SOURCE_CONFIRMED",
                       "citations": [{ "quote": "배포는 팀원이 맡아 AWS 에 올렸다.", "matched": true,
                                       "location": { "startLine": 7, "endLine": 7 } }]
                     },
                     {
                       "content": "백엔드 API 설계를 맡았다",
-                      "perspective": "기술 구현", "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
+                      "competencies": ["IMPLEMENTATION"], "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
                       "citations": [{ "quote": "나는 백엔드 API 설계를 전부 맡았다.", "matched": false, "location": null }]
                     }
                   ]
@@ -134,7 +134,7 @@ class AnalysisJobApiTest {
                   "experiences": [
                     {
                       "content": "매주 풀 문제를 고른다",
-                      "perspective": "운영", "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
+                      "competencies": ["OPERATION"], "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
                       "citations": [{ "quote": "내가 문제 선정을 맡는다.", "matched": null, "location": null }]
                     }
                   ]
@@ -211,7 +211,8 @@ class AnalysisJobApiTest {
                 .andExpect(jsonPath("$.name").value("바꿔요 — 캠퍼스 중고거래 앱"))
                 .andExpect(jsonPath("$.period.start").value("2025-03"))
                 .andExpect(jsonPath("$.experiences.length()").value(3))
-                .andExpect(jsonPath("$.experiences[0].perspective").value("문제 해결"))
+                .andExpect(jsonPath("$.experiences[0].competencies[0]").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.experiences[0].competencies[1]").value("IMPLEMENTATION"))
                 .andExpect(jsonPath("$.experiences[0].sourceStatus").value("SOURCE_CONFIRMED"))
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceId").value(sourceId))
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceName").value("바꿔요-회고.md"))
@@ -283,6 +284,25 @@ class AnalysisJobApiTest {
     }
 
     @Test
+    void 역량이_없으면_빈_배열이고_목록_밖_값_중복_넘친_값만_버린다() throws Exception {
+        reply = new FakeReply(200, """
+                {"activities": [{"name": "스터디", "period": null, "experiences": [
+                  {"content": "문제를 골랐다", "actor": "ME", "sourceStatus": "NEEDS_REVIEW", "citations": []},
+                  {"content": "발표를 했다", "competencies": ["협업", "PRESENTATION", "PRESENTATION", "LEARNING", "ANALYSIS", "PLANNING"],
+                   "actor": "ME", "sourceStatus": "NEEDS_REVIEW", "citations": []}]}]}""", 0);
+        String done = awaitDone(submitText());
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        List<Integer> activityIds = JsonPath.read(done, "$.activityIds");
+
+        mvc.perform(get("/api/activities/{id}", activityIds.get(0)))
+                .andExpect(jsonPath("$.experiences[0].competencies.length()").value(0))
+                .andExpect(jsonPath("$.experiences[1].competencies.length()").value(3))
+                .andExpect(jsonPath("$.experiences[1].competencies[0]").value("PRESENTATION"))
+                .andExpect(jsonPath("$.experiences[1].competencies[1]").value("LEARNING"))
+                .andExpect(jsonPath("$.experiences[1].competencies[2]").value("ANALYSIS"));
+    }
+
+    @Test
     void 제한_시간을_넘기면_AI_TIMEOUT() throws Exception {
         reply = new FakeReply(200, CONTRACT_EXAMPLE, 2_500);
         String failed = awaitDone(submitText());
@@ -294,7 +314,7 @@ class AnalysisJobApiTest {
     void 확인하지_않은_근거로_원문에서_확인이라_하면_저장하지_않고_실패() throws Exception {
         reply = new FakeReply(200, """
                 {"activities": [{"name": "스터디", "period": null, "experiences": [
-                  {"content": "문제를 골랐다", "perspective": "운영", "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
+                  {"content": "문제를 골랐다", "competencies": ["OPERATION"], "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
                    "citations": [{"quote": "내가 문제 선정을 맡는다.", "matched": null, "location": null}]}]}]}""", 0);
         String failed = awaitDone(submitText());
         assertThat((String) JsonPath.read(failed, "$.error.code")).isEqualTo("AI_FAILED");
@@ -306,7 +326,7 @@ class AnalysisJobApiTest {
     void 계약과_다른_응답이면_실패() throws Exception {
         reply = new FakeReply(200, """
                 {"activities": [{"name": "스터디", "period": null, "experiences": [
-                  {"content": "문제를 골랐다", "perspective": "운영", "actor": "BOSS", "sourceStatus": "NEEDS_REVIEW",
+                  {"content": "문제를 골랐다", "competencies": ["OPERATION"], "actor": "BOSS", "sourceStatus": "NEEDS_REVIEW",
                    "citations": []}]}]}""", 0);
         String failed = awaitDone(submitText());
         assertThat((String) JsonPath.read(failed, "$.error.message")).contains("actor");

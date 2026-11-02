@@ -21,7 +21,7 @@ public record ExtractResponse(List<ActivityResult> activities, String model) {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ExperienceResult(
             String content,
-            String perspective,
+            List<String> competencies,
             String actor,
             String sourceStatus,
             List<CitationResult> citations) {

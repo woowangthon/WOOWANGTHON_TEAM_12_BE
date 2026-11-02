@@ -106,7 +106,8 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.period.start").value("2025-03"))
                 .andExpect(jsonPath("$.experiences.length()").value(4))
                 .andExpect(jsonPath("$.experiences[0].activityId").value(appId))
-                .andExpect(jsonPath("$.experiences[0].perspective").value("문제 해결"))
+                .andExpect(jsonPath("$.experiences[0].competencies[0]").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.experiences[0].competencies[1]").value("IMPLEMENTATION"))
                 .andExpect(jsonPath("$.experiences[0].actor").value("ME"))
                 .andExpect(jsonPath("$.experiences[0].sourceStatus").value("SOURCE_CONFIRMED"))
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceName").value("바꿔요-회고.md"))
@@ -205,7 +206,7 @@ class ExperienceApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(experienceId))
                 .andExpect(jsonPath("$.content").value("백엔드 API 중 채팅 · 거래 API 를 설계했다"))
-                .andExpect(jsonPath("$.perspective").value("기술 구현"))
+                .andExpect(jsonPath("$.competencies[0]").value("IMPLEMENTATION"))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"))
                 .andExpect(jsonPath("$.citations.length()").value(1))
                 .andExpect(jsonPath("$.citations[0].quote").value("나는 백엔드 API 설계를 전부 맡았다."))
@@ -221,22 +222,38 @@ class ExperienceApiTest {
         long experienceId = firstExperienceId(appId, 0);
 
         patchJson("/api/experiences/" + experienceId, """
-                {"actor": "ME", "perspective": "문제 해결"}
+                {"actor": "ME", "competencies": ["PROBLEM_SOLVING", "IMPLEMENTATION"]}
                 """)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"));
     }
 
     @Test
-    void 관점은_null_로_지울_수_있다() throws Exception {
+    void 역량은_빈_배열로_지울_수_있다() throws Exception {
         long experienceId = firstExperienceId(appId, 1);
 
         patchJson("/api/experiences/" + experienceId, """
-                {"perspective": null}
+                {"competencies": []}
                 """)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.perspective").value(nullValue()))
+                .andExpect(jsonPath("$.competencies.length()").value(0))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
+    }
+
+    @Test
+    void 역량은_통째로_바뀌고_순서만_달라도_바뀐_것이다() throws Exception {
+        long experienceId = firstExperienceId(appId, 0);
+
+        patchJson("/api/experiences/" + experienceId, """
+                {"competencies": ["IMPLEMENTATION", "PROBLEM_SOLVING"]}
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.competencies[0]").value("IMPLEMENTATION"))
+                .andExpect(jsonPath("$.competencies[1]").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences[0].competencies[0]").value("IMPLEMENTATION"));
     }
 
     @Test
@@ -248,6 +265,7 @@ class ExperienceApiTest {
                 {"actor": "BOSS"}"""), 400, "INVALID_REQUEST");
         expectError(patchJson(url, """
                 {"content": 3}"""), 400, "INVALID_REQUEST");
+        expectBadCompetencies(this::patchJson, url, "");
         expectError(patchJson("/api/experiences/999999", """
                 {"content": "x"}"""), 404, "EXPERIENCE_NOT_FOUND");
     }
@@ -257,13 +275,14 @@ class ExperienceApiTest {
     @Test
     void 직접_더한_경험은_내가_입력이고_근거가_없고_맨_뒤에_붙는다() throws Exception {
         postJson("/api/activities/" + appId + "/experiences", """
-                {"content": "결제 실패 알림을 슬랙으로 받게 붙였다", "perspective": "운영", "actor": "ME"}
+                {"content": "결제 실패 알림을 슬랙으로 받게 붙였다", "competencies": ["OPERATION"], "actor": "ME"}
                 """)
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNumber())
                 .andExpect(jsonPath("$.activityId").value(appId))
                 .andExpect(jsonPath("$.content").value("결제 실패 알림을 슬랙으로 받게 붙였다"))
-                .andExpect(jsonPath("$.perspective").value("운영"))
+                .andExpect(jsonPath("$.competencies.length()").value(1))
+                .andExpect(jsonPath("$.competencies[0]").value("OPERATION"))
                 .andExpect(jsonPath("$.actor").value("ME"))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"))
                 .andExpect(jsonPath("$.citations.length()").value(0));
@@ -276,14 +295,14 @@ class ExperienceApiTest {
     }
 
     @Test
-    void 관점을_빼면_null_이고_경험이_없는_활동에도_더할_수_있다() throws Exception {
+    void 역량을_빼면_빈_배열이고_경험이_없는_활동에도_더할_수_있다() throws Exception {
         long emptyId = activities.save(new Activity(CurrentUser.id(), "빈 활동", new Period(null, null, false))).getId();
 
         postJson("/api/activities/" + emptyId + "/experiences", """
                 {"content": "첫 경험", "actor": "UNKNOWN"}
                 """)
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.perspective").value(nullValue()))
+                .andExpect(jsonPath("$.competencies.length()").value(0))
                 .andExpect(jsonPath("$.actor").value("UNKNOWN"));
         postJson("/api/activities/" + emptyId + "/experiences", """
                 {"content": "둘째 경험", "actor": "TEAM"}
@@ -310,6 +329,7 @@ class ExperienceApiTest {
         expectError(postJson(url, """
                 {"content": 3, "actor": "ME"}"""), 400, "INVALID_REQUEST");
         expectError(mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON)), 400, "INVALID_REQUEST");
+        expectBadCompetencies(this::postJson, url, "\"content\": \"x\", \"actor\": \"ME\", ");
         expectError(postJson("/api/activities/999999/experiences", """
                 {"content": "x", "actor": "ME"}"""), 404, "ACTIVITY_NOT_FOUND");
 
@@ -390,6 +410,19 @@ class ExperienceApiTest {
 
     private ResultActions postJson(String url, String json) throws Exception {
         return mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    interface JsonCall {
+        ResultActions call(String url, String json) throws Exception;
+    }
+
+    // 계약: 목록 밖 값 · 중복 · 4개 이상 · null · 배열 아님 → 400
+    private static void expectBadCompetencies(JsonCall call, String url, String otherFields) throws Exception {
+        for (String competencies : List.of("[\"FRIENDSHIP\"]", "[\"협업\"]", "[\"PLANNING\", \"PLANNING\"]",
+                "[\"PLANNING\", \"ANALYSIS\", \"LEARNING\", \"OPERATION\"]", "null", "\"PLANNING\"", "[3]")) {
+            expectError(call.call(url, "{" + otherFields + "\"competencies\": " + competencies + "}"),
+                    400, "INVALID_REQUEST");
+        }
     }
 
     private static void expectError(ResultActions result, int status, String code) throws Exception {
