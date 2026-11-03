@@ -46,7 +46,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 
 ## API
 
-계약: [ETC `docs/contracts/experience-api.md`](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/experience-api.md)
+계약: [ETC `docs/contracts/experience-api.md`](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/experience-api.md)(자료 · 활동 · 경험) · [`question-api.md`](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/question-api.md)(지원 · 문항 · 되묻기)
 
 | 메서드 · 경로 | 하는 일 |
 | --- | --- |
@@ -59,6 +59,12 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `PATCH /api/experiences/{id}` | 경험 고치기 |
 | `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
 | `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |
+| `POST /api/experiences/{id}/move` | 경험 옮기기 — 속한 활동만 바꿈. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤 |
+| `POST /api/activities/{id}/merge` | 활동 합치기 — `fromActivityId` 의 경험을 전부 이 활동으로 옮기고 그 활동을 지움(한 번에) |
+| `POST /api/applications` | 지원 넣기 — 지원처 + 문항 1 ~ 10개 저장 · 문항마다 추천 작업 시작(202) |
+| `GET /api/applications` | 넣었던 지원 목록(최근 것부터) |
+| `GET /api/applications/{id}` | 지원 하나 — 문항 목록 · 분석 상태 |
+| `POST /api/applications/{id}/questions` | 지원에 문항 더하기(202) — 지원 하나에 최대 20개 |
 | `POST /api/questions` | 지원 문항 넣기 — 문항 저장 · 추천 작업 시작(202, AI `/match` 는 뒤에서) |
 | `GET /api/questions` | 넣었던 문항 목록(최근 것부터) |
 | `GET /api/questions/{id}` | 문항 하나: `ANALYZING` → `COMPLETED`(요구사항 · 추천 · 되묻기) / `FAILED`(이유) |
@@ -78,8 +84,8 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /api/auth/logout` | 로그아웃(204) |
 | `GET /api/auth/me` | 내 아이디 · 오늘 쓴 분석 횟수 / 한도 |
 
-- 위 가입 · 로그인 · 로그아웃 말고는 전부 로그인해야 쓴다 — 아니면 401 `UNAUTHENTICATED`. 원본 · 활동 · 경험 · 문항은 사용자별로 나뉜다.
-- 분석을 시작하는 네 곳(`POST /api/sources` · `/api/jobs/{id}/retry` · `POST /api/questions` · `/api/questions/{id}/retry`)이 하루 횟수를 하나씩 쓴다. 다 쓰면 429 `DAILY_LIMIT_EXCEEDED` 로 시작하지 않는다. 한도는 `DAILY_ANALYSIS_LIMIT`(기본 20), 한국 시간 자정에 다시 채워진다.
+- 위 가입 · 로그인 · 로그아웃 말고는 전부 로그인해야 쓴다 — 아니면 401 `UNAUTHENTICATED`. 원본 · 활동 · 경험 · 지원 · 문항은 사용자별로 나뉜다.
+- 분석을 시작하는 곳이 하루 횟수를 쓴다 — `POST /api/sources` · `/api/jobs/{id}/retry` · `POST /api/questions` · `/api/questions/{id}/retry` · `POST /api/applications/{id}/questions` 는 1회씩, `POST /api/applications` 는 문항 수만큼(남은 횟수가 모자라면 아무것도 저장하지 않는다). 다 쓰면 429 `DAILY_LIMIT_EXCEEDED` 로 시작하지 않는다. 한도는 `DAILY_ANALYSIS_LIMIT`(기본 20), 한국 시간 자정에 다시 채워진다.
 - 입력 크기 한도: 자료 텍스트 50000자 · 문항 5000자(계약).
 - 세션은 BE 메모리에 있다 — BE 를 다시 켜면 다들 다시 로그인한다.
 
