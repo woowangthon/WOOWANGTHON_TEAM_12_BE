@@ -598,6 +598,110 @@ class QuestionApiTest {
         answer(second, "가".repeat(2_000)).andExpect(status().isCreated());
     }
 
+    // --- 보완 고치기 · 지우기 — BE#24 (S-24) ---
+
+    @Test
+    void 보완을_고치면_답만_바뀌고_질문_경험은_그대로다() throws Exception {
+        long questionId = submit(QUESTION_A);
+        long first = ((Number) JsonPath.read(awaitDone(questionId), "$.clarifications[0].id")).longValue();
+        long supplementId = answeredSupplement(first);
+
+        String fixed = "서버에 STOMP 엔드포인트를 만들고, 앱의 폴링 코드를 구독 방식으로 바꿨다. 재연결도 붙였다";
+        patchSupplement(supplementId, "{\"answer\": \"" + fixed + "\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(supplementId))
+                .andExpect(jsonPath("$.question").value("폴링을 WebSocket 으로 바꿀 때 직접 고친 부분은 어디였나요?"))
+                .andExpect(jsonPath("$.answer").value(fixed))
+                .andExpect(jsonPath("$.questionId").value(questionId))
+                .andExpect(jsonPath("$.updatedAt").isString());
+
+        // 새로고침해도 남고, 경험의 본문 · 근거 · 출처 상태는 그대로 · 되묻기는 여전히 답한 상태
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences[0].id").value(chat))
+                .andExpect(jsonPath("$.experiences[0].content").value("채팅 메시지가 늦게 도착하는 문제를 폴링에서 WebSocket 으로 바꿔 해결했다"))
+                .andExpect(jsonPath("$.experiences[0].sourceStatus").value("SOURCE_CONFIRMED"))
+                .andExpect(jsonPath("$.experiences[0].citations.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].supplements.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].supplements[0].answer").value(fixed));
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.clarifications[0].supplementId").value(supplementId));
+    }
+
+    @Test
+    void 보완을_지우면_경험_되묻기_끝난_추천_다음_매칭에서_빠진다() throws Exception {
+        long questionA = submit(QUESTION_A);
+        long first = ((Number) JsonPath.read(awaitDone(questionA), "$.clarifications[0].id")).longValue();
+        long supplementId = answeredSupplement(first);
+
+        // 문항 B — AI 가 그 보완을 근거로 골랐다
+        reply = new FakeReply(200, """
+                {
+                  "requirements": [{ "text": "맡은 역할", "status": "SUPPORTED", "experienceIds": [%1$d] }],
+                  "recommendations": [{
+                    "experienceId": %1$d, "reason": "직접 고친 범위가 보완에 있다", "emphasis": "구독 방식으로 바꾼 일",
+                    "evidence": [{ "type": "CITATION", "id": %2$d }, { "type": "SUPPLEMENT", "id": %3$d }], "gaps": []
+                  }],
+                  "clarifications": []
+                }""".formatted(chat, chatCitation, supplementId), 0);
+        long questionB = submit("""
+                {"organization": "OO 연합 동아리", "text": "팀 프로젝트에서 맡은 역할을 적어 주세요."}""");
+        assertThat((List<?>) JsonPath.read(awaitDone(questionB), "$.recommendations[0].evidence")).hasSize(2);
+
+        mvc.perform(delete("/api/supplements/{id}", supplementId)).andExpect(status().isNoContent());
+
+        // 경험에서 빠진다
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences[0].id").value(chat))
+                .andExpect(jsonPath("$.experiences[0].supplements.length()").value(0))
+                .andExpect(jsonPath("$.experiences[0].citations.length()").value(1));
+        // 끝난 추천의 근거에서 빠진다 — 근거(citation)는 남는다
+        mvc.perform(get("/api/questions/{id}", questionB))
+                .andExpect(jsonPath("$.recommendations[0].evidence.length()").value(1))
+                .andExpect(jsonPath("$.recommendations[0].evidence[0].type").value("CITATION"))
+                .andExpect(jsonPath("$.recommendations[0].evidence[0].id").value(chatCitation));
+        // 그 보완을 만든 되묻기는 안 답한 상태로 돌아간다
+        mvc.perform(get("/api/questions/{id}", questionA))
+                .andExpect(jsonPath("$.clarifications[0].supplementId").value(nullValue()));
+
+        // 다음 매칭 후보에 실리지 않는다
+        reply = new FakeReply(200, contractExample(), 0);
+        awaitDone(submit(QUESTION_A));
+        assertThat((List<?>) JsonPath.read(RECEIVED.get(2), "$.experiences[1].supplements")).isEmpty();
+
+        // 다시 답할 수 있다
+        answer(first, CHAT_ANSWER).andExpect(status().isCreated());
+    }
+
+    @Test
+    void 보완_고치기_지우기_오류() throws Exception {
+        long first = ((Number) JsonPath.read(awaitDone(submit(QUESTION_A)), "$.clarifications[0].id")).longValue();
+        long supplementId = answeredSupplement(first);
+
+        expectError(patchSupplement(supplementId, "{\"answer\": \"  \\n \"}"), 400, "EMPTY_ANSWER");
+        expectError(patchSupplement(supplementId, "{\"answer\": \"\"}"), 400, "EMPTY_ANSWER");
+        expectError(patchSupplement(supplementId, "{}"), 400, "INVALID_REQUEST");
+        expectError(patchSupplement(supplementId, "{not json"), 400, "INVALID_REQUEST");
+        expectError(patchSupplement(supplementId, "{\"answer\": \"" + "가".repeat(2_001) + "\"}"), 400, "INVALID_REQUEST");
+        expectError(patchSupplement(999_999, "{\"answer\": \"답\"}"), 404, "SUPPLEMENT_NOT_FOUND");
+        expectError(mvc.perform(delete("/api/supplements/{id}", 999_999)), 404, "SUPPLEMENT_NOT_FOUND");
+
+        // 다른 사용자의 보완은 없는 것과 같다
+        Long other = jdbc.queryForObject("insert into app_user (name) values ('다른 사용자') returning id", Long.class);
+        try {
+            MockMvc otherMvc = TestLogin.mvc(context, other);
+            expectError(otherMvc.perform(patch("/api/supplements/{id}", supplementId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"answer\": \"남의 답\"}")), 404, "SUPPLEMENT_NOT_FOUND");
+            expectError(otherMvc.perform(delete("/api/supplements/{id}", supplementId)), 404, "SUPPLEMENT_NOT_FOUND");
+        } finally {
+            jdbc.update("delete from app_user where id = ?", other);
+        }
+
+        // 아무것도 바뀌지 않았고, 한도 딱 맞는 길이는 받는다
+        assertThat(jdbc.queryForObject("select answer from supplement where id = ?", String.class, supplementId))
+                .isEqualTo(CHAT_ANSWER);
+        patchSupplement(supplementId, "{\"answer\": \"" + "가".repeat(2_000) + "\"}").andExpect(status().isOk());
+    }
+
     // --- 오류 ---
 
     @Test
@@ -810,6 +914,17 @@ class QuestionApiTest {
 
     private ResultActions postAnswer(long clarificationId, String json) throws Exception {
         return mvc.perform(post("/api/clarifications/{id}/answer", clarificationId)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private long answeredSupplement(long clarificationId) throws Exception {
+        String body = answer(clarificationId, CHAT_ANSWER).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return ((Number) JsonPath.read(body, "$.supplement.id")).longValue();
+    }
+
+    private ResultActions patchSupplement(long supplementId, String json) throws Exception {
+        return mvc.perform(patch("/api/supplements/{id}", supplementId)
                 .contentType(MediaType.APPLICATION_JSON).content(json));
     }
 

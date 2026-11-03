@@ -70,6 +70,8 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `GET /api/questions/{id}` | 문항 하나: `ANALYZING` → `COMPLETED`(요구사항 · 추천 · 되묻기) / `FAILED`(이유) |
 | `POST /api/questions/{id}/retry` | 실패한 문항 다시 시도 |
 | `POST /api/clarifications/{id}/answer` | 되묻기에 답하기 — 답을 그 경험의 보완으로 저장(201). 경험 본문 · 근거 · 출처 상태는 그대로, 다음 문항부터 AI 후보에 실림 |
+| `PATCH /api/supplements/{id}` | 보완 고치기 — 답만 바꿈. 질문 · 경험 본문 · 근거 · 출처 상태는 그대로 |
+| `DELETE /api/supplements/{id}` | 보완 지우기(204) — 경험 · 다음 문항의 AI 후보 · 끝난 추천의 `evidence` 에서 빠지고, 그 되묻기에 다시 답할 수 있다 |
 
 분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
 
