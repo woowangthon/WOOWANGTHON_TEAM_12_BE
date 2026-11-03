@@ -6,6 +6,7 @@ import com.woowangthon.backend.common.ErrorResponse;
 import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceResponse;
+import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.job.JobStatus;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -52,7 +53,7 @@ public final class QuestionResponses {
             List<String> gaps) {
     }
 
-    // supplementId — 되묻기에 답하면 생기는 보완(BE#23). 아직 답을 받지 않으므로 늘 null
+    // supplementId — 답했으면 그 보완(experience.supplements[] 에 있다), 아직이면 null
     public record ClarificationResponse(Long id, Long experienceId, String question, Long supplementId) {
     }
 
@@ -92,7 +93,10 @@ public final class QuestionResponses {
                     .toList();
             List<ClarificationResponse> clarifications = q.getClarifications().stream()
                     .filter(c -> existing.containsKey(c.getExperienceId()))
-                    .map(c -> new ClarificationResponse(c.getId(), c.getExperienceId(), c.getText(), null))
+                    .map(c -> new ClarificationResponse(c.getId(), c.getExperienceId(), c.getText(),
+                            existing.get(c.getExperienceId()).getSupplements().stream()
+                                    .filter(s -> c.getId().equals(s.getClarificationId()))
+                                    .map(Supplement::getId).findFirst().orElse(null)))
                     .toList();
             return new Detail(q.getId(), q.getOrganization(), q.getText(), q.getStatus(), error, requirements,
                     recommendations, clarifications, Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));

@@ -23,7 +23,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
-/** 경험 — 활동 안에서 실제로 한 일 하나. 근거 여럿이 붙는다. */
+/** 경험 — 활동 안에서 실제로 한 일 하나. 근거 여럿 · 보완 여럿이 붙는다. */
 @Entity
 @Table(name = "experience")
 public class Experience {
@@ -64,6 +64,11 @@ public class Experience {
     @OneToMany(mappedBy = "experience")
     @OrderBy("id asc")
     private List<Citation> citations = new ArrayList<>();
+
+    // 되묻기에 답해 쌓인 보완 — 만든 순서(BE#23)
+    @OneToMany(mappedBy = "experience")
+    @OrderBy("id asc")
+    private List<Supplement> supplements = new ArrayList<>();
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
@@ -152,5 +157,9 @@ public class Experience {
 
     public List<Citation> getCitations() {
         return citations;
+    }
+
+    public List<Supplement> getSupplements() {
+        return supplements;
     }
 }

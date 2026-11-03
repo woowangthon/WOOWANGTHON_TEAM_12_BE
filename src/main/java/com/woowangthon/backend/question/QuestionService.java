@@ -88,7 +88,7 @@ public class QuestionService {
         return detail(question);
     }
 
-    /** AI 에 보낼 후보 — 그 사용자의 경험 전부를 지금 상태로(ADR-003). */
+    /** AI 에 보낼 후보 — 그 사용자의 경험 전부를 근거 · 보완과 함께 지금 상태로(ADR-003). */
     @Transactional(readOnly = true)
     public MatchRequest matchRequest(long questionId) {
         Question question = questions.findById(questionId).orElseThrow();
@@ -97,8 +97,9 @@ public class QuestionService {
                         e.getActivity().getPeriod(), e.getContent(), e.getCompetencies(), e.getActor(),
                         e.getSourceStatus(),
                         e.getCitations().stream().map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
-                        // 보완 저장은 BE#23 — 그 전엔 어떤 경험에도 보완이 없다
-                        List.of()))
+                        // 앞 문항에서 답한 보완도 근거로 쓸 수 있게 싣는다(S-25)
+                        e.getSupplements().stream()
+                                .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList()))
                 .toList();
         return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText()), candidates);
     }

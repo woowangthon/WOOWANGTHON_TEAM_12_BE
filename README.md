@@ -58,11 +58,12 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `PATCH /api/activities/{id}` | 활동 고치기 |
 | `PATCH /api/experiences/{id}` | 경험 고치기 |
 | `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
-| `DELETE /api/experiences/{id}` | 경험 지우기 — 근거도 지우고 원본 · 활동은 남김(204) |
+| `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |
 | `POST /api/questions` | 지원 문항 넣기 — 문항 저장 · 추천 작업 시작(202, AI `/match` 는 뒤에서) |
 | `GET /api/questions` | 넣었던 문항 목록(최근 것부터) |
 | `GET /api/questions/{id}` | 문항 하나: `ANALYZING` → `COMPLETED`(요구사항 · 추천 · 되묻기) / `FAILED`(이유) |
 | `POST /api/questions/{id}/retry` | 실패한 문항 다시 시도 |
+| `POST /api/clarifications/{id}/answer` | 되묻기에 답하기 — 답을 그 경험의 보완으로 저장(201). 경험 본문 · 근거 · 출처 상태는 그대로, 다음 문항부터 AI 후보에 실림 |
 
 분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
 
