@@ -14,7 +14,6 @@ import com.sun.net.httpserver.HttpServer;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
-import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
 import com.woowangthon.backend.experience.CitationRepository;
@@ -49,7 +48,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
@@ -142,13 +140,13 @@ class QuestionApiTest {
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        mvc = TestLogin.mvc(context);
         RECEIVED.clear();
 
-        Source source = sources.save(new Source(CurrentUser.id(), SourceKind.FILE, "바꿔요-회고.md", "회고"));
-        Activity app = activities.save(new Activity(CurrentUser.id(), "바꿔요 — 캠퍼스 중고거래 앱",
+        Source source = sources.save(new Source(TestLogin.USER_ID, SourceKind.FILE, "바꿔요-회고.md", "회고"));
+        Activity app = activities.save(new Activity(TestLogin.USER_ID, "바꿔요 — 캠퍼스 중고거래 앱",
                 new Period("2025-03", "2025-06", false)));
-        Activity studyGroup = activities.save(new Activity(CurrentUser.id(), "알고리즘 스터디",
+        Activity studyGroup = activities.save(new Activity(TestLogin.USER_ID, "알고리즘 스터디",
                 new Period("2024-09", null, true)));
         appId = app.getId();
         Experience e101 = experiences.save(new Experience(app, "채팅 메시지가 늦게 도착하는 문제를 폴링에서 WebSocket 으로 바꿔 해결했다",
@@ -171,7 +169,7 @@ class QuestionApiTest {
     @AfterEach
     void cleanUp() {
         jdbc.execute("truncate table question_recommendation_evidence, question_recommendation, question_requirement, "
-                + "clarification, question, analysis_job_activity, analysis_job, citation, experience, activity, source");
+                + "clarification, question, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
     }
 
     // ai-api.md 응답 예시(문항 A 모양) — ID 는 이 테스트가 만든 경험 · 근거
@@ -435,7 +433,7 @@ class QuestionApiTest {
 
     @Test
     void 서버가_다시_켜지면_분석_중이던_문항은_실패가_된다() {
-        Question question = questions.save(new Question(CurrentUser.id(), null, "끊긴 문항"));
+        Question question = questions.save(new Question(TestLogin.USER_ID, null, "끊긴 문항"));
 
         cleaner.run(null);
 

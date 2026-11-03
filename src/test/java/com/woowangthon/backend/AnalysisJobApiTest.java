@@ -13,7 +13,6 @@ import com.sun.net.httpserver.HttpServer;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.AiClient;
 import com.woowangthon.backend.ai.ExtractRequest;
-import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.job.AnalysisJob;
 import com.woowangthon.backend.job.AnalysisJobRepository;
 import com.woowangthon.backend.job.InterruptedJobCleaner;
@@ -41,7 +40,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
@@ -167,7 +165,7 @@ class AnalysisJobApiTest {
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        mvc = TestLogin.mvc(context);
         RECEIVED.clear();
         UPGRADE_HEADERS.clear();
         reply = new FakeReply(200, CONTRACT_EXAMPLE, 0);
@@ -175,7 +173,7 @@ class AnalysisJobApiTest {
 
     @AfterEach
     void cleanUp() {
-        jdbc.execute("truncate table analysis_job_activity, analysis_job, citation, experience, activity, source");
+        jdbc.execute("truncate table analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
     }
 
     // --- 자료 넣기 → 완료 ---
@@ -350,8 +348,8 @@ class AnalysisJobApiTest {
 
     @Test
     void 서버가_다시_켜지면_분석_중이던_작업은_실패가_된다() {
-        Source source = sources.save(new Source(CurrentUser.id(), SourceKind.TEXT, "끊긴 자료", "내용"));
-        AnalysisJob job = jobs.save(new AnalysisJob(CurrentUser.id(), source));
+        Source source = sources.save(new Source(TestLogin.USER_ID, SourceKind.TEXT, "끊긴 자료", "내용"));
+        AnalysisJob job = jobs.save(new AnalysisJob(TestLogin.USER_ID, source));
 
         cleaner.run(null);
 

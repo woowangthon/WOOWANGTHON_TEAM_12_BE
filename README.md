@@ -30,17 +30,17 @@ docker compose -f compose-local.yaml up -d   # 로컬 DB 만 띄운다
 
 ### 예시 데이터 켜기
 
-기본은 꺼져 있다. 로컬에서 화면을 채우려면 `SEED_SAMPLE=true` 로 실행한다.
+기본은 꺼져 있다. 로컬에서 화면을 채우려면 `SEED_SAMPLE=true` 로 실행한다. 예시 데이터는 테스트 계정(아래 「테스트 계정」)에 들어가니 `TEST_ACCOUNT_PASSWORD` 도 같이 넣는다.
 
 ```bash
-SEED_SAMPLE=true ./gradlew bootRun
+SEED_SAMPLE=true TEST_ACCOUNT_PASSWORD=local-test-pw ./gradlew bootRun
 ```
 
 ```powershell
-$env:SEED_SAMPLE='true'; .\gradlew.bat bootRun   # Windows PowerShell
+$env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.bat bootRun   # Windows PowerShell
 ```
 
-고정 사용자(1)에게 활동이 없을 때만 계약 예시를 한 번 넣는다(`SAMPLE(dev-seed-activities)`).
+테스트 계정에 활동이 없을 때만 계약 예시를 한 번 넣는다(`SAMPLE(dev-seed-activities)`).
 
 > **공개 전에 끄고 시드 데이터를 지운다.** 로컬 · Access 뒤 개발 서버에서만 켠다.
 
@@ -66,11 +66,37 @@ $env:SEED_SAMPLE='true'; .\gradlew.bat bootRun   # Windows PowerShell
 
 분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
 
-로그인(BE#10) 전까지 모든 데이터는 고정 사용자 1 의 것이다(`SAMPLE(fixed-user)`).
+### 로그인 · 하루 한도
+
+계약: [ETC `docs/contracts/auth-api.md`](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/auth-api.md)
+
+| 메서드 · 경로 | 하는 일 |
+| --- | --- |
+| `POST /api/auth/signup` | 가입(아이디 · 비밀번호) — 바로 로그인된다(201) |
+| `POST /api/auth/login` | 로그인 — 세션 쿠키(`JSESSIONID`)를 준다 |
+| `POST /api/auth/logout` | 로그아웃(204) |
+| `GET /api/auth/me` | 내 아이디 · 오늘 쓴 분석 횟수 / 한도 |
+
+- 위 가입 · 로그인 · 로그아웃 말고는 전부 로그인해야 쓴다 — 아니면 401 `UNAUTHENTICATED`. 원본 · 활동 · 경험 · 문항은 사용자별로 나뉜다.
+- 분석을 시작하는 네 곳(`POST /api/sources` · `/api/jobs/{id}/retry` · `POST /api/questions` · `/api/questions/{id}/retry`)이 하루 횟수를 하나씩 쓴다. 다 쓰면 429 `DAILY_LIMIT_EXCEEDED` 로 시작하지 않는다. 한도는 `DAILY_ANALYSIS_LIMIT`(기본 20), 한국 시간 자정에 다시 채워진다.
+- 입력 크기 한도: 자료 텍스트 50000자 · 문항 5000자(계약).
+- 세션은 BE 메모리에 있다 — BE 를 다시 켜면 다들 다시 로그인한다.
+
+### 테스트 계정 (`SAMPLE(test-account)`)
+
+`TEST_ACCOUNT_PASSWORD` 를 넣고 켜면 테스트 계정이 생긴다(켤 때마다 비밀번호 · 한도를 설정값으로 맞춘다). 데이터는 미리 넣지 않는다 — 진짜 흐름을 그대로 탄다.
+
+| 아이디 | 비밀번호 | 하루 분석 |
+| --- | --- | --- |
+| `test` | 제출 전에 정해 여기와 제출 폼에 적는다 | 200회 |
+
+`SEED_SAMPLE=true` 면 예시 데이터(`SAMPLE(dev-seed-activities)`)를 이 계정에 넣는다 — 그래서 로컬에서 예시 데이터를 보려면 테스트 계정 비밀번호도 같이 넣는다.
+
+V1 마이그레이션의 사용자 1(`SAMPLE(fixed-user)`)은 아이디 · 비밀번호가 없어 로그인할 수 없다 — 로그인 전 개발 데이터의 주인으로만 남는다.
 
 ## 환경변수
 
-변수와 기본값은 [`.env.example`](.env.example) 에 있다: `SEED_SAMPLE` · `CORS_ALLOWED_ORIGINS` · `DB_URL` · `DB_USERNAME` · `DB_PASSWORD` · `AI_BASE_URL` · `AI_TIMEOUT_SECONDS` · (서버) `TUNNEL_TOKEN` · `AI_DIR`. `.env` 는 커밋하지 않는다.
+변수와 기본값은 [`.env.example`](.env.example) 에 있다: `SEED_SAMPLE` · `CORS_ALLOWED_ORIGINS` · `DAILY_ANALYSIS_LIMIT` · `TEST_ACCOUNT_LOGIN_ID` · `TEST_ACCOUNT_PASSWORD` · `TEST_ACCOUNT_DAILY_LIMIT` · `SESSION_COOKIE_SECURE` · `SESSION_COOKIE_SAME_SITE` · `DB_URL` · `DB_USERNAME` · `DB_PASSWORD` · `AI_BASE_URL` · `AI_TIMEOUT_SECONDS` · (서버) `TUNNEL_TOKEN` · `AI_DIR`. `.env` 는 커밋하지 않는다.
 
 ## 서버에 띄우기
 
@@ -94,7 +120,7 @@ cp WOOWANGTHON_TEAM_12_AI/.env.example WOOWANGTHON_TEAM_12_AI/.env
 
 | 파일 | 채울 것 |
 | --- | --- |
-| BE `.env` | `DB_PASSWORD`(새로 만든 긴 값) · `SEED_SAMPLE`(Access 뒤 개발 서버면 `true`) · `CORS_ALLOWED_ORIGINS`(FE 주소) · `TUNNEL_TOKEN`(3단계) |
+| BE `.env` | `DB_PASSWORD`(새로 만든 긴 값) · `SEED_SAMPLE`(Access 뒤 개발 서버면 `true`) · `CORS_ALLOWED_ORIGINS`(FE 주소) · `TEST_ACCOUNT_PASSWORD`(심사용 테스트 계정) · `TUNNEL_TOKEN`(3단계) |
 | AI `.env` | `OPENAI_API_KEY`(팀 키). 나머지는 그 레포 `.env.example` 기본값 |
 
 BE `.env` 의 `DB_URL` · `AI_BASE_URL` 은 서버에선 쓰이지 않는다 — compose 가 `db` · `ai` 서비스 이름으로 정한다.
@@ -105,7 +131,7 @@ BE `.env` 의 `DB_URL` · `AI_BASE_URL` 은 서버에선 쓰이지 않는다 —
 cd WOOWANGTHON_TEAM_12_BE
 docker compose up -d --build db ai be
 docker compose ps                                # db · ai 가 healthy, be 가 running
-curl http://127.0.0.1:8080/api/activities        # 서버 안에서만 열린다
+curl -i http://127.0.0.1:8080/api/auth/me          # 서버 안에서만 열린다. 로그인 전이라 401 이면 정상
 docker compose logs -f be                        # 로그
 ```
 
@@ -129,7 +155,7 @@ docker compose up -d --build                     # 바뀐 이미지만 다시 �
 docker compose down                              # 끄기(DB 데이터는 볼륨에 남는다)
 ```
 
-> **공개 전**: BE `.env` 에 `SEED_SAMPLE=false`, DB 를 비우고 새로 시작(`docker compose down -v` — 볼륨까지 지운다, 되돌릴 수 없음) · Access 해제는 로그인(BE#10)이 붙은 뒤.
+> **공개 전**: BE `.env` 에 `SEED_SAMPLE=false`, DB 를 비우고 새로 시작(`docker compose down -v` — 볼륨까지 지운다, 되돌릴 수 없음) · BE `.env` 에 `TEST_ACCOUNT_PASSWORD`(DB 를 비운 뒤 켜면 테스트 계정이 다시 생긴다) · FE 로그인 화면이 붙은 뒤 Access 해제.
 
 ## 검증
 

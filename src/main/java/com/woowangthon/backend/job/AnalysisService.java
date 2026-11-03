@@ -1,5 +1,6 @@
 package com.woowangthon.backend.job;
 
+import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
@@ -50,16 +51,18 @@ public class AnalysisService {
     private final ActivityRepository activities;
     private final ExperienceRepository experiences;
     private final CitationRepository citations;
+    private final UsageLimiter limiter;
     private final int maxTextLength;
 
     public AnalysisService(SourceRepository sources, AnalysisJobRepository jobs, ActivityRepository activities,
-            ExperienceRepository experiences, CitationRepository citations,
+            ExperienceRepository experiences, CitationRepository citations, UsageLimiter limiter,
             @Value("${app.source.max-text-length}") int maxTextLength) {
         this.sources = sources;
         this.jobs = jobs;
         this.activities = activities;
         this.experiences = experiences;
         this.citations = citations;
+        this.limiter = limiter;
         this.maxTextLength = maxTextLength;
     }
 
@@ -72,6 +75,7 @@ public class AnalysisService {
         SourceKind kind = parseKind(request.kind());
         String name = kind == SourceKind.FILE ? fileName(request.name()) : pastedName();
         String text = checkText(request.text());
+        limiter.consume(CurrentUser.id());
 
         Source source = sources.save(new Source(CurrentUser.id(), kind, name, text));
         AnalysisJob job = jobs.save(new AnalysisJob(CurrentUser.id(), source));
@@ -92,6 +96,7 @@ public class AnalysisService {
             throw new ApiException(HttpStatus.CONFLICT, "JOB_NOT_FAILED",
                     "작업 " + jobId + " 은(는) 실패 상태가 아닙니다(" + job.getStatus() + ")");
         }
+        limiter.consume(job.getUserId());
         job.restart();
         jobs.flush();
         return JobResponses.Job.from(job);

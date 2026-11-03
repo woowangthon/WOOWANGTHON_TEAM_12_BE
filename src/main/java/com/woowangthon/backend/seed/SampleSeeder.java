@@ -3,7 +3,8 @@ package com.woowangthon.backend.seed;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
-import com.woowangthon.backend.common.CurrentUser;
+import com.woowangthon.backend.account.AppUser;
+import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
 import com.woowangthon.backend.experience.CompetenciesBy;
@@ -18,19 +19,22 @@ import com.woowangthon.backend.source.SourceRepository;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * SAMPLE(dev-seed-activities): SEED_SAMPLE=true 일 때 계약 예시(「바꿔요」 회고 · 알고리즘 스터디)를
- * 고정 사용자의 원본 · 활동 · 경험 · 근거로 한 번 넣는다. AI 가 뽑은 결과가 아니라 손으로 넣은 데이터다.
+ * 테스트 계정(TestAccountSeeder)의 원본 · 활동 · 경험 · 근거로 한 번 넣는다. 테스트 계정이 없으면 넣지 않는다. AI 가 뽑은 결과가 아니라 손으로 넣은 데이터다.
  * 자료 넣기(BE#5)가 붙기 전에 타임라인 · 세부 · 고치기를 확인하려고 둔다. 공개 전엔 끄고 지운다.
  */
 @Component
 @ConditionalOnProperty(name = "app.seed-sample", havingValue = "true")
+@Order(1)
 public class SampleSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SampleSeeder.class);
@@ -52,19 +56,29 @@ public class SampleSeeder implements ApplicationRunner {
     private final ActivityRepository activities;
     private final ExperienceRepository experiences;
     private final CitationRepository citations;
+    private final AppUserRepository users;
+    private final String testLoginId;
 
     public SampleSeeder(SourceRepository sources, ActivityRepository activities,
-            ExperienceRepository experiences, CitationRepository citations) {
+            ExperienceRepository experiences, CitationRepository citations, AppUserRepository users,
+            @Value("${app.test-account.login-id}") String testLoginId) {
         this.sources = sources;
         this.activities = activities;
         this.experiences = experiences;
         this.citations = citations;
+        this.users = users;
+        this.testLoginId = testLoginId;
     }
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        long userId = CurrentUser.id();
+        AppUser testAccount = users.findByLoginId(testLoginId).orElse(null);
+        if (testAccount == null) {
+            log.warn("SEED_SAMPLE=true 인데 테스트 계정이 없어 예시 데이터를 넣지 않았습니다(TEST_ACCOUNT_PASSWORD)");
+            return;
+        }
+        long userId = testAccount.getId();
         // 활동이 하나라도 있으면 넣지 않는다 — 재시작할 때마다 늘어나지 않게
         if (activities.existsByUserId(userId)) {
             log.info("SEED_SAMPLE=true — 활동이 이미 있어서 예시 데이터를 넣지 않았습니다");

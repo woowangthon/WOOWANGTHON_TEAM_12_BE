@@ -16,7 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
-import com.woowangthon.backend.common.CurrentUser;
+import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.seed.SampleSeeder;
@@ -30,7 +30,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,10 +37,10 @@ import org.springframework.web.context.WebApplicationContext;
 
 /**
  * ETC docs/contracts/experience-api.md 의 활동 목록 · 세부 · 활동 수정 · 경험 수정 · 직접 추가 · 지우기 · 옮기기 · 합치기.
- * 시드(계약 예시 데이터)를 켜고 돌린다. 테스트마다 롤백해 시드 상태에서 시작한다.
+ * 시드(계약 예시 데이터)를 켜고 테스트 계정으로 돌린다. 테스트마다 롤백해 시드 상태에서 시작한다.
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(properties = "app.seed-sample=true")
+@SpringBootTest(properties = {"app.seed-sample=true", "app.test-account.password=test-password"})
 @Transactional
 class ExperienceApiTest {
 
@@ -63,14 +62,20 @@ class ExperienceApiTest {
     @Autowired
     JdbcTemplate jdbc;
 
+    @Autowired
+    AppUserRepository users;
+
     MockMvc mvc;
+    long userId;
     long studyId;
     long appId;
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).build();
-        List<Activity> timeline = activities.findTimeline(CurrentUser.id());
+        // 시드는 테스트 계정에 들어간다
+        userId = users.findByLoginId("test").orElseThrow().getId();
+        mvc = TestLogin.mvc(context, userId);
+        List<Activity> timeline = activities.findTimeline(userId);
         studyId = timeline.get(0).getId();
         appId = timeline.get(1).getId();
     }
@@ -93,8 +98,8 @@ class ExperienceApiTest {
 
     @Test
     void 시작을_모르는_활동은_맨_뒤에_온다() throws Exception {
-        activities.save(new Activity(CurrentUser.id(), "기간 모름", new Period(null, null, false)));
-        activities.save(new Activity(CurrentUser.id(), "옛날 활동", new Period("2020", null, false)));
+        activities.save(new Activity(userId, "기간 모름", new Period(null, null, false)));
+        activities.save(new Activity(userId, "옛날 활동", new Period("2020", null, false)));
 
         mvc.perform(get("/api/activities"))
                 .andExpect(jsonPath("$.activities.length()").value(4))
@@ -333,7 +338,7 @@ class ExperienceApiTest {
 
     @Test
     void 역량을_빼면_빈_배열이고_경험이_없는_활동에도_더할_수_있다() throws Exception {
-        long emptyId = activities.save(new Activity(CurrentUser.id(), "빈 활동", new Period(null, null, false))).getId();
+        long emptyId = activities.save(new Activity(userId, "빈 활동", new Period(null, null, false))).getId();
 
         postJson("/api/activities/" + emptyId + "/experiences", """
                 {"content": "첫 경험", "actor": "UNKNOWN"}
@@ -516,7 +521,7 @@ class ExperienceApiTest {
 
     @Test
     void 빈_활동도_합칠_수_있다() throws Exception {
-        long emptyId = activities.save(new Activity(CurrentUser.id(), "빈 활동", new Period(null, null, false))).getId();
+        long emptyId = activities.save(new Activity(userId, "빈 활동", new Period(null, null, false))).getId();
 
         postJson("/api/activities/" + studyId + "/merge", "{\"fromActivityId\": " + emptyId + "}")
                 .andExpect(status().isOk())
@@ -569,7 +574,7 @@ class ExperienceApiTest {
     @Test
     void 시드는_다시_돌려도_늘어나지_않는다() throws Exception {
         seeder.run(null);
-        assertThat(activities.findTimeline(CurrentUser.id())).hasSize(2);
+        assertThat(activities.findTimeline(userId)).hasSize(2);
     }
 
     @Test
