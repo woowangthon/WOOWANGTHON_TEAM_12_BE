@@ -34,6 +34,7 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
@@ -51,7 +52,8 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.web.context.WebApplicationContext;
 
 /**
- * ETC docs/contracts/question-api.md 「문항 넣기」 · 「목록」 · 「문항 하나」 · 「다시 시도」 와 ai-api.md 「POST /match」.
+ * ETC docs/contracts/question-api.md 「문항 넣기」 · 「목록」 · 「문항 하나」 · 「다시 시도」 · 「되묻기에 답하기」 와
+ * ai-api.md 「POST /match」.
  * AI 서버 자리에 가짜 HTTP 서버를 띄워 응답 · 오류를 돌려준다(테스트 전용 — 앱은 진짜 AI 서버만 부른다).
  * 추천이 다른 스레드에서 돌아 트랜잭션 롤백을 못 쓰므로 테스트마다 표를 비운다.
  */
@@ -132,6 +134,7 @@ class QuestionApiTest {
 
     // 계약 예시의 「바꿔요」 경험 101(ME) · 102(TEAM) 과 근거 201 · 202, 다른 활동의 경험 105
     long appId;
+    long studyId;
     long chat;
     long retro;
     long study;
@@ -149,6 +152,7 @@ class QuestionApiTest {
         Activity studyGroup = activities.save(new Activity(TestLogin.USER_ID, "알고리즘 스터디",
                 new Period("2024-09", null, true)));
         appId = app.getId();
+        studyId = studyGroup.getId();
         Experience e101 = experiences.save(new Experience(app, "채팅 메시지가 늦게 도착하는 문제를 폴링에서 WebSocket 으로 바꿔 해결했다",
                 List.of(Competency.PROBLEM_SOLVING, Competency.IMPLEMENTATION), CompetenciesBy.AI, Actor.ME,
                 SourceStatus.SOURCE_CONFIRMED, 0));
@@ -169,7 +173,7 @@ class QuestionApiTest {
     @AfterEach
     void cleanUp() {
         jdbc.execute("truncate table question_recommendation_evidence, question_recommendation, question_requirement, "
-                + "clarification, question, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
+                + "supplement, clarification, question, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
     }
 
     // ai-api.md 응답 예시(문항 A 모양) — ID 는 이 테스트가 만든 경험 · 근거
@@ -275,7 +279,7 @@ class QuestionApiTest {
 
     @Test
     void 경험이_없어도_받고_AI_에_빈_후보를_보낸다() throws Exception {
-        jdbc.execute("truncate table citation, experience, activity");
+        jdbc.execute("truncate table supplement, citation, experience, activity");
         reply = new FakeReply(200, """
                 {"requirements": [{"text": "기술 문제를 해결한 경험", "status": "NOT_FOUND", "experienceIds": []}],
                  "recommendations": [], "clarifications": []}""", 0);
@@ -442,6 +446,149 @@ class QuestionApiTest {
         assertThat(after.getErrorCode()).isEqualTo("INTERNAL_ERROR");
     }
 
+    // --- 되묻기에 답하기 → 보완 (S-23 · S-25) ---
+
+    static final String CHAT_ANSWER = "서버에 STOMP 엔드포인트를 만들고, 앱의 3초 폴링 코드를 구독 방식으로 바꿨다";
+
+    @Test
+    void 되묻기에_답하면_그_경험의_보완이_되고_본문_근거_출처는_그대로다() throws Exception {
+        long questionId = submit(QUESTION_A);
+        String done = awaitDone(questionId);
+        long first = ((Number) JsonPath.read(done, "$.clarifications[0].id")).longValue();
+
+        String answered = answer(first, CHAT_ANSWER)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.experienceId").value(chat))
+                .andExpect(jsonPath("$.supplement.id").isNumber())
+                .andExpect(jsonPath("$.supplement.question").value("폴링을 WebSocket 으로 바꿀 때 직접 고친 부분은 어디였나요?"))
+                .andExpect(jsonPath("$.supplement.answer").value(CHAT_ANSWER))
+                .andExpect(jsonPath("$.supplement.questionId").value(questionId))
+                .andReturn().getResponse().getContentAsString();
+        long supplementId = ((Number) JsonPath.read(answered, "$.supplement.id")).longValue();
+        assertThat((String) JsonPath.read(answered, "$.supplement.createdAt")).matches(".*\\+09:00");
+        assertThat((String) JsonPath.read(answered, "$.supplement.updatedAt")).matches(".*\\+09:00");
+
+        // 활동 세부(S-08)의 그 경험에 보완이 실리고, 본문 · 근거 · 출처 상태 · 역량 출처는 그대로다
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experiences[0].id").value(chat))
+                .andExpect(jsonPath("$.experiences[0].content").value("채팅 메시지가 늦게 도착하는 문제를 폴링에서 WebSocket 으로 바꿔 해결했다"))
+                .andExpect(jsonPath("$.experiences[0].sourceStatus").value("SOURCE_CONFIRMED"))
+                .andExpect(jsonPath("$.experiences[0].competenciesBy").value("AI"))
+                .andExpect(jsonPath("$.experiences[0].citations.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].citations[0].id").value(chatCitation))
+                .andExpect(jsonPath("$.experiences[0].supplements.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].supplements[0].id").value(supplementId))
+                .andExpect(jsonPath("$.experiences[0].supplements[0].answer").value(CHAT_ANSWER))
+                .andExpect(jsonPath("$.experiences[0].supplements[0].questionId").value(questionId))
+                .andExpect(jsonPath("$.experiences[1].supplements.length()").value(0));
+
+        // 문항에선 답한 되묻기에 보완 ID 가, 건너뛴 되묻기엔 null 이 남는다
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.clarifications[0].supplementId").value(supplementId))
+                .andExpect(jsonPath("$.clarifications[1].supplementId").value(nullValue()))
+                .andExpect(jsonPath("$.recommendations[0].experience.supplements[0].id").value(supplementId))
+                .andExpect(jsonPath("$.recommendations[0].evidence.length()").value(1));
+
+        // 같은 되묻기에 두 번 답하면 409 — 보완은 하나다
+        expectError(answer(first, "다른 답"), 409, "CLARIFICATION_ALREADY_ANSWERED");
+        assertThat(jdbc.queryForObject("select count(*) from supplement", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void 다음_문항의_추천에_보완이_후보와_근거로_실린다() throws Exception {
+        String done = awaitDone(submit(QUESTION_A));
+        long first = ((Number) JsonPath.read(done, "$.clarifications[0].id")).longValue();
+        String answered = answer(first, CHAT_ANSWER).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long supplementId = ((Number) JsonPath.read(answered, "$.supplement.id")).longValue();
+
+        // 문항 B — AI 가 보완을 근거로 고른다(S-25)
+        reply = new FakeReply(200, """
+                {
+                  "requirements": [{ "text": "맡은 역할", "status": "SUPPORTED", "experienceIds": [%1$d] }],
+                  "recommendations": [{
+                    "experienceId": %1$d, "reason": "직접 고친 범위가 보완에 있다", "emphasis": "구독 방식으로 바꾼 일",
+                    "evidence": [{ "type": "CITATION", "id": %2$d }, { "type": "SUPPLEMENT", "id": %3$d }], "gaps": []
+                  }],
+                  "clarifications": []
+                }""".formatted(chat, chatCitation, supplementId), 0);
+        String second = awaitDone(submit("""
+                {"organization": "OO 연합 동아리", "text": "팀 프로젝트에서 맡은 역할을 적어 주세요."}"""));
+
+        String sent = RECEIVED.get(1);
+        assertThat((List<?>) JsonPath.read(sent, "$.experiences[1].supplements")).hasSize(1);
+        assertThat(((Number) JsonPath.read(sent, "$.experiences[1].supplements[0].id")).longValue()).isEqualTo(supplementId);
+        assertThat((String) JsonPath.read(sent, "$.experiences[1].supplements[0].question")).startsWith("폴링을 WebSocket");
+        assertThat((String) JsonPath.read(sent, "$.experiences[1].supplements[0].answer")).isEqualTo(CHAT_ANSWER);
+        // 계약은 { id, question, answer } 만
+        assertThat((Map<String, ?>) JsonPath.read(sent, "$.experiences[1].supplements[0]"))
+                .containsOnlyKeys("id", "question", "answer");
+        assertThat((List<?>) JsonPath.read(sent, "$.experiences[2].supplements")).isEmpty();
+
+        assertThat((String) JsonPath.read(second, "$.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(second, "$.recommendations[0].evidence[1].type")).isEqualTo("SUPPLEMENT");
+        assertThat(((Number) JsonPath.read(second, "$.recommendations[0].evidence[1].id")).longValue()).isEqualTo(supplementId);
+    }
+
+    @Test
+    void 보완은_경험을_따라_옮겨지고_합쳐지고_경험을_지우면_사라진다() throws Exception {
+        String done = awaitDone(submit(QUESTION_A));
+        long first = ((Number) JsonPath.read(done, "$.clarifications[0].id")).longValue();
+        answer(first, CHAT_ANSWER).andExpect(status().isCreated());
+
+        // 옮기기 — 보완이 경험을 따라간다
+        mvc.perform(post("/api/experiences/{id}/move", chat).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toActivityId\": " + studyId + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.supplements[0].answer").value(CHAT_ANSWER));
+        mvc.perform(get("/api/activities/{id}", studyId))
+                .andExpect(jsonPath("$.experiences[1].id").value(chat))
+                .andExpect(jsonPath("$.experiences[1].supplements[0].answer").value(CHAT_ANSWER));
+
+        // 합치기 — 스터디를 바꿔요로 합쳐도 보완은 그 경험에 남는다
+        mvc.perform(post("/api/activities/{id}/merge", appId).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromActivityId\": " + studyId + "}"))
+                .andExpect(status().isOk());
+        String merged = mvc.perform(get("/api/activities/{id}", appId))
+                .andReturn().getResponse().getContentAsString();
+        assertThat((List<String>) JsonPath.read(merged, "$.experiences[?(@.id == " + chat + ")].supplements[0].answer"))
+                .containsExactly(CHAT_ANSWER);
+
+        // 경험을 지우면 보완도 지워지고, 그 되묻기에 다시 답하면 404 EXPERIENCE_NOT_FOUND
+        mvc.perform(delete("/api/experiences/{id}", chat)).andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("select count(*) from supplement", Integer.class)).isZero();
+        expectError(answer(first, CHAT_ANSWER), 404, "EXPERIENCE_NOT_FOUND");
+    }
+
+    @Test
+    void 되묻기에_답하기_오류() throws Exception {
+        String done = awaitDone(submit(QUESTION_A));
+        long first = ((Number) JsonPath.read(done, "$.clarifications[0].id")).longValue();
+        long second = ((Number) JsonPath.read(done, "$.clarifications[1].id")).longValue();
+
+        expectError(answer(first, "  \n "), 400, "EMPTY_ANSWER");
+        expectError(answer(first, ""), 400, "EMPTY_ANSWER");
+        expectError(postAnswer(first, "{}"), 400, "INVALID_REQUEST");
+        expectError(postAnswer(first, "{not json"), 400, "INVALID_REQUEST");
+        expectError(answer(first, "가".repeat(2_001)), 400, "INVALID_REQUEST");
+        expectError(answer(999_999, CHAT_ANSWER), 404, "CLARIFICATION_NOT_FOUND");
+        assertThat(jdbc.queryForObject("select count(*) from supplement", Integer.class)).isZero();
+
+        // 다른 사용자의 되묻기는 없는 것과 같다
+        Long other = jdbc.queryForObject("insert into app_user (name) values ('다른 사용자') returning id", Long.class);
+        try {
+            expectError(TestLogin.mvc(context, other).perform(post("/api/clarifications/{id}/answer", first)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"answer\": \"남의 답\"}")),
+                    404, "CLARIFICATION_NOT_FOUND");
+        } finally {
+            jdbc.update("delete from app_user where id = ?", other);
+        }
+
+        // 한도 딱 맞는 길이는 받는다
+        answer(second, "가".repeat(2_000)).andExpect(status().isCreated());
+    }
+
     // --- 오류 ---
 
     @Test
@@ -476,6 +623,15 @@ class QuestionApiTest {
     private long submit(String json) throws Exception {
         String body = postQuestion(json).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
         return ((Number) JsonPath.read(body, "$.questionId")).longValue();
+    }
+
+    private ResultActions answer(long clarificationId, String text) throws Exception {
+        return postAnswer(clarificationId, "{\"answer\": \"" + text.replace("\n", "\\n") + "\"}");
+    }
+
+    private ResultActions postAnswer(long clarificationId, String json) throws Exception {
+        return mvc.perform(post("/api/clarifications/{id}/answer", clarificationId)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
     }
 
     private ResultActions postQuestion(String json) throws Exception {

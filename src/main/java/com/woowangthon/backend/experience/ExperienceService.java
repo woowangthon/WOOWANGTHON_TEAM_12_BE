@@ -15,12 +15,14 @@ public class ExperienceService {
 
     private final ExperienceRepository experiences;
     private final CitationRepository citations;
+    private final SupplementRepository supplements;
     private final ActivityRepository activities;
 
     public ExperienceService(ExperienceRepository experiences, CitationRepository citations,
-            ActivityRepository activities) {
+            SupplementRepository supplements, ActivityRepository activities) {
         this.experiences = experiences;
         this.citations = citations;
+        this.supplements = supplements;
         this.activities = activities;
     }
 
@@ -75,11 +77,12 @@ public class ExperienceService {
         return ExperienceResponse.from(experience);
     }
 
-    /** 경험과 그 근거를 지운다. 원본과 활동은 남는다(계약 「경험 지우기」 · S-11). */
+    /** 경험과 그 근거 · 보완을 지운다. 원본과 활동은 남는다(계약 「경험 지우기」 · S-11). */
     @Transactional
     public void delete(long experienceId) {
         Experience experience = findOwned(experienceId);
         citations.deleteAll(experience.getCitations());
+        supplements.deleteAll(experience.getSupplements());
         experiences.delete(experience);
         if (Hibernate.isInitialized(experience.getActivity().getExperiences())) {
             experience.getActivity().getExperiences().remove(experience);

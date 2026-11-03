@@ -47,6 +47,10 @@ public class Clarification {
         return id;
     }
 
+    public Question getQuestion() {
+        return question;
+    }
+
     public Long getExperienceId() {
         return experienceId;
     }
