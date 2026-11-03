@@ -20,8 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ClarificationService {
 
-    static final int MAX_ANSWER_LENGTH = 2000;
-
     private final ClarificationRepository clarifications;
     private final ExperienceRepository experiences;
     private final SupplementRepository supplements;
@@ -41,7 +39,7 @@ public class ClarificationService {
 
     @Transactional
     public Answered answer(long clarificationId, AnswerRequest request) {
-        String answer = checkAnswer(request == null ? null : request.answer());
+        String answer = Supplement.checkAnswer(request == null ? null : request.answer());
         long userId = CurrentUser.id();
         Clarification clarification = clarifications.findOwned(clarificationId, userId)
                 .orElseThrow(() -> ApiException.notFound("CLARIFICATION_NOT_FOUND",
@@ -66,20 +64,6 @@ public class ClarificationService {
             experience.getSupplements().add(supplement);
         }
         return new Answered(experience.getId(), ExperienceResponse.SupplementResponse.from(supplement));
-    }
-
-    // 한도는 String.length()(UTF-16) 기준 — FE(JS length)와 같은 숫자
-    private static String checkAnswer(String answer) {
-        if (answer == null) {
-            throw ApiException.invalidRequest("answer 가 없습니다");
-        }
-        if (answer.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "EMPTY_ANSWER", "answer 가 비었습니다");
-        }
-        if (answer.length() > MAX_ANSWER_LENGTH) {
-            throw ApiException.invalidRequest("answer 는 " + MAX_ANSWER_LENGTH + "자까지입니다");
-        }
-        return answer;
     }
 
     private static ApiException alreadyAnswered(long clarificationId) {

@@ -91,7 +91,8 @@ public final class QuestionResponses {
 
         /**
          * 추천 · 되묻기의 경험은 지금 상태로 싣는다(문항을 넣은 뒤 고치거나 옮겼으면 그대로). 그새 지워진 경험(existing 에 없음)은
-         * 요구사항의 experienceIds · 추천 · 되묻기에서 뺀다.
+         * 요구사항의 experienceIds · 추천 · 되묻기에서 뺀다. 추천의 evidence 에서 그새 지워진 보완도 뺀다(S-24) — 근거 줄은
+         * 번호만 들고 있어 보완을 지워도 남는다(BE#37).
          */
         static Detail from(Question q, Map<Long, Experience> existing) {
             ErrorResponse.Error error = q.getErrorCode() == null
@@ -107,7 +108,9 @@ public final class QuestionResponses {
                         Experience e = existing.get(r.getExperienceId());
                         return new RecommendationResponse(ActivityRef.from(e.getActivity()), ExperienceResponse.from(e),
                                 r.getReason(), r.getEmphasis(),
-                                r.getEvidence().stream().map(v -> new EvidenceResponse(v.getType(), v.getRefId())).toList(),
+                                r.getEvidence().stream()
+                                        .filter(v -> v.getType() != EvidenceType.SUPPLEMENT || hasSupplement(e, v.getRefId()))
+                                        .map(v -> new EvidenceResponse(v.getType(), v.getRefId())).toList(),
                                 List.copyOf(r.getGaps()));
                     })
                     .toList();
@@ -120,6 +123,10 @@ public final class QuestionResponses {
                     .toList();
             return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getStatus(), error, requirements,
                     recommendations, clarifications, Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));
+        }
+
+        private static boolean hasSupplement(Experience e, Long supplementId) {
+            return e.getSupplements().stream().anyMatch(s -> s.getId().equals(supplementId));
         }
     }
 }
