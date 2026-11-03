@@ -22,6 +22,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
+    // 비밀번호 BCrypt 해시만 쓴다 — Spring Security 의 필터 · 자동 설정은 들이지 않는다
+    implementation("org.springframework.security:spring-security-crypto")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")

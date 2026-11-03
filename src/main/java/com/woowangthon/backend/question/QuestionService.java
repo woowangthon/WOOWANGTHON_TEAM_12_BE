@@ -1,5 +1,6 @@
 package com.woowangthon.backend.question;
 
+import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.MatchRequest;
 import com.woowangthon.backend.ai.MatchResponse;
@@ -38,10 +39,12 @@ public class QuestionService {
 
     private final QuestionRepository questions;
     private final ExperienceRepository experiences;
+    private final UsageLimiter limiter;
 
-    public QuestionService(QuestionRepository questions, ExperienceRepository experiences) {
+    public QuestionService(QuestionRepository questions, ExperienceRepository experiences, UsageLimiter limiter) {
         this.questions = questions;
         this.experiences = experiences;
+        this.limiter = limiter;
     }
 
     public record QuestionRequest(String organization, String text) {
@@ -52,6 +55,7 @@ public class QuestionService {
     public QuestionResponses.Submitted submit(QuestionRequest request) {
         String text = checkText(request.text());
         String organization = checkOrganization(request.organization());
+        limiter.consume(CurrentUser.id());
         Question question = questions.save(new Question(CurrentUser.id(), organization, text));
         return new QuestionResponses.Submitted(question.getId(), question.getStatus());
     }
@@ -78,6 +82,7 @@ public class QuestionService {
             throw new ApiException(HttpStatus.CONFLICT, "QUESTION_NOT_FAILED",
                     "문항 " + questionId + " 은(는) 실패 상태가 아닙니다(" + question.getStatus() + ")");
         }
+        limiter.consume(question.getUserId());
         question.restart();
         questions.flush();
         return detail(question);
