@@ -44,6 +44,11 @@ public class Experience {
     @Column(nullable = false, columnDefinition = "text[]")
     private String[] competencies = new String[0];
 
+    // 지금 competencies 를 누가 붙였나 — 역량이 실제로 바뀔 때만 USER 가 된다
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private CompetenciesBy competenciesBy;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Actor actor;
@@ -71,11 +76,12 @@ public class Experience {
     protected Experience() {
     }
 
-    public Experience(Activity activity, String content, List<Competency> competencies, Actor actor,
-            SourceStatus sourceStatus, int position) {
+    public Experience(Activity activity, String content, List<Competency> competencies, CompetenciesBy competenciesBy,
+            Actor actor, SourceStatus sourceStatus, int position) {
         this.activity = activity;
         this.content = content;
         this.competencies = toNames(competencies);
+        this.competenciesBy = competenciesBy;
         this.actor = actor;
         this.sourceStatus = sourceStatus;
         this.position = position;
@@ -83,7 +89,7 @@ public class Experience {
 
     /**
      * 사용자가 고친 값을 넣는다(null 인 인자는 안 보낸 필드 — competencies 를 지우는 건 빈 목록). 실제로 바뀐 값이 하나라도 있으면
-     * 출처 상태를 「내가 입력」으로 바꾼다. 근거는 건드리지 않는다(S-10).
+     * 출처 상태를 「내가 입력」으로 바꾼다. 역량이 실제로 바뀌었을 때만 역량 출처를 USER 로 바꾼다. 근거는 건드리지 않는다(S-10).
      */
     public void editByUser(String newContent, List<Competency> newCompetencies, Actor newActor) {
         boolean changed = false;
@@ -94,6 +100,7 @@ public class Experience {
         // 통째로 바꾼다 — 순서가 다르면 바뀐 것
         if (newCompetencies != null && !Arrays.equals(toNames(newCompetencies), competencies)) {
             competencies = toNames(newCompetencies);
+            competenciesBy = CompetenciesBy.USER;
             changed = true;
         }
         if (newActor != null && newActor != actor) {
@@ -125,6 +132,10 @@ public class Experience {
 
     public List<Competency> getCompetencies() {
         return Arrays.stream(competencies).map(Competency::valueOf).toList();
+    }
+
+    public CompetenciesBy getCompetenciesBy() {
+        return competenciesBy;
     }
 
     private static String[] toNames(List<Competency> values) {

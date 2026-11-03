@@ -213,6 +213,7 @@ class AnalysisJobApiTest {
                 .andExpect(jsonPath("$.experiences.length()").value(3))
                 .andExpect(jsonPath("$.experiences[0].competencies[0]").value("PROBLEM_SOLVING"))
                 .andExpect(jsonPath("$.experiences[0].competencies[1]").value("IMPLEMENTATION"))
+                .andExpect(jsonPath("$.experiences[0].competenciesBy").value("AI"))
                 .andExpect(jsonPath("$.experiences[0].sourceStatus").value("SOURCE_CONFIRMED"))
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceId").value(sourceId))
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceName").value("바꿔요-회고.md"))

@@ -10,6 +10,7 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
+import com.woowangthon.backend.experience.CompetenciesBy;
 import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
@@ -139,7 +140,7 @@ public class AnalysisService {
         SourceStatus status = sourceStatus(e.sourceStatus(), found);
 
         Experience experience = experiences.save(new Experience(activity, required(e.content(), "experiences[].content"),
-                competencies(e.competencies()), actor(e.actor()), status, position));
+                competencies(e.competencies()), CompetenciesBy.AI, actor(e.actor()), status, position));
         for (ExtractResponse.CitationResult c : found) {
             ExtractResponse.LocationResult location = c.location();
             citations.save(new Citation(experience, source, required(c.quote(), "citations[].quote"), c.matched(),

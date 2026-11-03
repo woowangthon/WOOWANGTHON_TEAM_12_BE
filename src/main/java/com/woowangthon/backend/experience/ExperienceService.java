@@ -49,7 +49,7 @@ public class ExperienceService {
 
     /**
      * 사용자가 직접 적은 경험 — 출처는 「내가 입력」, 근거는 없다. 활동의 경험 맨 뒤에 붙는다(계약 「경험 직접 추가」 · S-11).
-     * competencies 는 선택(빼면 []).
+     * competencies 는 선택(빼면 []), 역량 출처는 USER.
      */
     @Transactional
     public ExperienceResponse add(long activityId, PatchBody body) {
@@ -66,7 +66,8 @@ public class ExperienceService {
 
         int position = experiences.findLastPosition(activityId) + 1;
         Experience experience = experiences.saveAndFlush(
-                new Experience(activity, content, competencies, actor, SourceStatus.USER_ENTERED, position));
+                new Experience(activity, content, competencies, CompetenciesBy.USER, actor,
+                        SourceStatus.USER_ENTERED, position));
         // 같은 요청 · 같은 영속성 컨텍스트에서 활동 세부를 다시 읽어도 보이게
         if (Hibernate.isInitialized(activity.getExperiences())) {
             activity.getExperiences().add(experience);

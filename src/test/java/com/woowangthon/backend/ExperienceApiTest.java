@@ -115,6 +115,7 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.experiences[0].activityId").value(appId))
                 .andExpect(jsonPath("$.experiences[0].competencies[0]").value("PROBLEM_SOLVING"))
                 .andExpect(jsonPath("$.experiences[0].competencies[1]").value("IMPLEMENTATION"))
+                .andExpect(jsonPath("$.experiences[0].competenciesBy").value("AI"))
                 .andExpect(jsonPath("$.experiences[0].actor").value("ME"))
                 .andExpect(jsonPath("$.experiences[0].sourceStatus").value("SOURCE_CONFIRMED"))
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceName").value("바꿔요-회고.md"))
@@ -214,6 +215,7 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.id").value(experienceId))
                 .andExpect(jsonPath("$.content").value("백엔드 API 중 채팅 · 거래 API 를 설계했다"))
                 .andExpect(jsonPath("$.competencies[0]").value("IMPLEMENTATION"))
+                .andExpect(jsonPath("$.competenciesBy").value("AI"))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"))
                 .andExpect(jsonPath("$.citations.length()").value(1))
                 .andExpect(jsonPath("$.citations[0].quote").value("나는 백엔드 API 설계를 전부 맡았다."))
@@ -221,6 +223,7 @@ class ExperienceApiTest {
 
         mvc.perform(get("/api/activities/{id}", appId))
                 .andExpect(jsonPath("$.experiences[3].sourceStatus").value("USER_ENTERED"))
+                .andExpect(jsonPath("$.experiences[3].competenciesBy").value("AI"))
                 .andExpect(jsonPath("$.experiences[3].citations[0].quote").value("나는 백엔드 API 설계를 전부 맡았다."));
     }
 
@@ -232,7 +235,8 @@ class ExperienceApiTest {
                 {"actor": "ME", "competencies": ["PROBLEM_SOLVING", "IMPLEMENTATION"]}
                 """)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"));
+                .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"))
+                .andExpect(jsonPath("$.competenciesBy").value("AI"));
     }
 
     @Test
@@ -244,6 +248,7 @@ class ExperienceApiTest {
                 """)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.competencies.length()").value(0))
+                .andExpect(jsonPath("$.competenciesBy").value("USER"))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
     }
 
@@ -257,10 +262,33 @@ class ExperienceApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.competencies[0]").value("IMPLEMENTATION"))
                 .andExpect(jsonPath("$.competencies[1]").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.competenciesBy").value("USER"))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
 
         mvc.perform(get("/api/activities/{id}", appId))
-                .andExpect(jsonPath("$.experiences[0].competencies[0]").value("IMPLEMENTATION"));
+                .andExpect(jsonPath("$.experiences[0].competencies[0]").value("IMPLEMENTATION"))
+                .andExpect(jsonPath("$.experiences[0].competenciesBy").value("USER"));
+
+        // 그 뒤 본문만 고쳐도 USER 는 그대로다
+        patchJson("/api/experiences/" + experienceId, """
+                {"content": "채팅 API 의 재연결 문제를 고쳤다"}
+                """)
+                .andExpect(jsonPath("$.competenciesBy").value("USER"));
+    }
+
+    @Test
+    void 보낸_역량_출처는_받지_않는다() throws Exception {
+        patchJson("/api/experiences/" + firstExperienceId(appId, 0), """
+                {"competenciesBy": "USER"}
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.competenciesBy").value("AI"))
+                .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"));
+        postJson("/api/activities/" + appId + "/experiences", """
+                {"content": "직접 적은 경험", "actor": "ME", "competenciesBy": "AI"}
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.competenciesBy").value("USER"));
     }
 
     @Test
@@ -291,6 +319,7 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.competencies.length()").value(1))
                 .andExpect(jsonPath("$.competencies[0]").value("OPERATION"))
                 .andExpect(jsonPath("$.actor").value("ME"))
+                .andExpect(jsonPath("$.competenciesBy").value("USER"))
                 .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"))
                 .andExpect(jsonPath("$.citations.length()").value(0));
 
@@ -298,6 +327,7 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.experiences.length()").value(5))
                 .andExpect(jsonPath("$.experiences[4].content").value("결제 실패 알림을 슬랙으로 받게 붙였다"))
                 .andExpect(jsonPath("$.experiences[4].sourceStatus").value("USER_ENTERED"))
+                .andExpect(jsonPath("$.experiences[4].competenciesBy").value("USER"))
                 .andExpect(jsonPath("$.experiences[4].citations.length()").value(0));
     }
 
@@ -396,6 +426,7 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.activityId").value(studyId))
                 .andExpect(jsonPath("$.content").value("매주 금요일 스프린트 회고를 했다"))
                 .andExpect(jsonPath("$.competencies[0]").value("COLLABORATION"))
+                .andExpect(jsonPath("$.competenciesBy").value("AI"))
                 .andExpect(jsonPath("$.actor").value("TEAM"))
                 .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"))
                 .andExpect(jsonPath("$.citations.length()").value(1))
