@@ -48,10 +48,18 @@ public class AiClient {
     }
 
     public ExtractResponse extract(ExtractRequest request) {
-        ExtractResponse body;
+        return post("/extract", request, ExtractResponse.class);
+    }
+
+    public MatchResponse match(MatchRequest request) {
+        return post("/match", request, MatchResponse.class);
+    }
+
+    private <T> T post(String uri, Object request, Class<T> type) {
+        T body;
         try {
             body = rest.post()
-                    .uri("/extract")
+                    .uri(uri)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(request)
                     .retrieve()
@@ -59,7 +67,7 @@ public class AiClient {
                         throw new AiCallException("AI_FAILED",
                                 aiErrorCode(res.getBody()) + " (HTTP " + res.getStatusCode().value() + ")");
                     })
-                    .body(ExtractResponse.class);
+                    .body(type);
         } catch (ResourceAccessException e) {
             throw classify(e);
         } catch (RestClientException e) {
