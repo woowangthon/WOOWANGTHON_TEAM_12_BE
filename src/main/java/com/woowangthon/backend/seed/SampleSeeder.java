@@ -6,6 +6,7 @@ import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
+import com.woowangthon.backend.experience.CompetenciesBy;
 import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
@@ -102,7 +103,7 @@ public class SampleSeeder implements ApplicationRunner {
     private void experience(Activity activity, int position, String content, List<Competency> competencies, Actor actor,
             SourceStatus status, Source source, String quote, Boolean matched, Integer line) {
         Experience experience = experiences.save(
-                new Experience(activity, content, competencies, actor, status, position));
+                new Experience(activity, content, competencies, CompetenciesBy.AI, actor, status, position));
         citations.save(new Citation(experience, source, quote, matched, line, line));
     }
 }

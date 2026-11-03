@@ -8,6 +8,7 @@ public record ExperienceResponse(
         Long activityId,
         String content,
         List<Competency> competencies,
+        CompetenciesBy competenciesBy,
         Actor actor,
         SourceStatus sourceStatus,
         List<CitationResponse> citations) {
@@ -32,6 +33,6 @@ public record ExperienceResponse(
 
     public static ExperienceResponse from(Experience e) {
         return new ExperienceResponse(e.getId(), e.getActivity().getId(), e.getContent(), e.getCompetencies(),
-                e.getActor(), e.getSourceStatus(), e.getCitations().stream().map(CitationResponse::from).toList());
+                e.getCompetenciesBy(), e.getActor(), e.getSourceStatus(), e.getCitations().stream().map(CitationResponse::from).toList());
     }
 }
