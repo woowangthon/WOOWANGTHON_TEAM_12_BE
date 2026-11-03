@@ -21,4 +21,6 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     Optional<Question> findForUpdate(Long id, Long userId);
 
     List<Question> findByStatus(JobStatus status);
+
+    long countByApplicationId(Long applicationId);
 }

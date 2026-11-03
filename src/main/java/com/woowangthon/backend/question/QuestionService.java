@@ -38,11 +38,14 @@ public class QuestionService {
     private static final int MAX_CLARIFICATIONS = 3;
 
     private final QuestionRepository questions;
+    private final ApplicationRepository applications;
     private final ExperienceRepository experiences;
     private final UsageLimiter limiter;
 
-    public QuestionService(QuestionRepository questions, ExperienceRepository experiences, UsageLimiter limiter) {
+    public QuestionService(QuestionRepository questions, ApplicationRepository applications,
+            ExperienceRepository experiences, UsageLimiter limiter) {
         this.questions = questions;
+        this.applications = applications;
         this.experiences = experiences;
         this.limiter = limiter;
     }
@@ -50,14 +53,15 @@ public class QuestionService {
     public record QuestionRequest(String organization, String text) {
     }
 
-    /** 문항을 저장한다. 추천은 이 트랜잭션이 끝난 뒤 따로 시작한다. */
+    /** 문항 하나짜리 지원을 새로 만들어 문항을 저장한다. 추천은 이 트랜잭션이 끝난 뒤 따로 시작한다. */
     @Transactional
     public QuestionResponses.Submitted submit(QuestionRequest request) {
         String text = checkText(request.text());
         String organization = checkOrganization(request.organization());
         limiter.consume(CurrentUser.id());
-        Question question = questions.save(new Question(CurrentUser.id(), organization, text));
-        return new QuestionResponses.Submitted(question.getId(), question.getStatus());
+        Application application = applications.save(new Application(CurrentUser.id(), organization));
+        Question question = questions.save(new Question(application, text));
+        return new QuestionResponses.Submitted(question.getId(), application.getId(), question.getStatus());
     }
 
     @Transactional(readOnly = true)
@@ -250,7 +254,7 @@ public class QuestionService {
     }
 
     // 한도는 Java String.length()(UTF-16) 기준 — FE(JS length)와 같은 숫자
-    private static String checkText(String text) {
+    static String checkText(String text) {
         if (text == null) {
             throw ApiException.invalidRequest("text 가 없습니다");
         }
@@ -265,7 +269,7 @@ public class QuestionService {
     }
 
     // 선택 칸 — 공백뿐이면 안 넣은 것(null)으로 본다
-    private static String checkOrganization(String organization) {
+    static String checkOrganization(String organization) {
         if (organization == null || organization.isBlank()) {
             return null;
         }

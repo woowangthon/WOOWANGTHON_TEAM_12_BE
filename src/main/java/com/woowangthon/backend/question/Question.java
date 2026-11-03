@@ -8,10 +8,12 @@ import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.OrderColumn;
@@ -23,7 +25,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 /**
- * 지원 문항 — 지원처 이름(선택)과 문항 텍스트. 문항 하나 = 추천 작업 하나라 상태 · 실패 이유 · 결과(요구사항 · 추천 · 되묻기)가
+ * 지원 문항 — 늘 어느 지원(Application)에 딸린다. 지원처 이름은 그 지원의 것이다. 문항 하나 = 추천 작업 하나라 상태 · 실패 이유 · 결과(요구사항 · 추천 · 되묻기)가
  * 여기에 붙는다(question-api.md).
  */
 @Entity
@@ -37,7 +39,9 @@ public class Question {
     @Column(nullable = false)
     private Long userId;
 
-    private String organization;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "application_id", nullable = false)
+    private Application application;
 
     @Column(nullable = false)
     private String text;
@@ -74,9 +78,9 @@ public class Question {
     protected Question() {
     }
 
-    public Question(Long userId, String organization, String text) {
-        this.userId = userId;
-        this.organization = organization;
+    public Question(Application application, String text) {
+        this.userId = application.getUserId();
+        this.application = application;
         this.text = text;
         this.status = JobStatus.ANALYZING;
     }
@@ -122,8 +126,13 @@ public class Question {
         return userId;
     }
 
+    public Application getApplication() {
+        return application;
+    }
+
+    /** 그 지원의 지원처 이름. */
     public String getOrganization() {
-        return organization;
+        return application.getOrganization();
     }
 
     public String getText() {

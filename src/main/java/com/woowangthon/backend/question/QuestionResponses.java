@@ -12,20 +12,39 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
-/** question-api.md 의 응답 모양 — 문항 넣기 · QuestionSummary · 목록 · 문항 하나. */
+/** question-api.md 의 응답 모양 — 지원 넣기 · Application · 문항 넣기 · QuestionSummary · 목록 · 문항 하나. */
 public final class QuestionResponses {
 
     private QuestionResponses() {
     }
 
-    public record Submitted(Long questionId, JobStatus status) {
+    // 문항 넣기 · 지원에 문항 더하기의 응답 — applicationId 는 문항 더하기 계약엔 없지만 더 실어도 깨지지 않는다
+    public record Submitted(Long questionId, Long applicationId, JobStatus status) {
     }
 
-    public record Summary(Long id, String organization, String text, JobStatus status, OffsetDateTime createdAt) {
+    // 지원 넣기 — questionIds 는 넣은 순서
+    public record ApplicationSubmitted(Long applicationId, List<Long> questionIds) {
+    }
+
+    public record Summary(Long id, Long applicationId, String organization, String text, JobStatus status,
+            OffsetDateTime createdAt) {
 
         static Summary from(Question q) {
-            return new Summary(q.getId(), q.getOrganization(), q.getText(), q.getStatus(), Times.seoul(q.getCreatedAt()));
+            return new Summary(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getStatus(),
+                    Times.seoul(q.getCreatedAt()));
         }
+    }
+
+    // questions — 넣은 순서(지원서의 문항 순서)
+    public record ApplicationResponse(Long id, String organization, List<Summary> questions, OffsetDateTime createdAt) {
+
+        static ApplicationResponse from(Application a) {
+            return new ApplicationResponse(a.getId(), a.getOrganization(),
+                    a.getQuestions().stream().map(Summary::from).toList(), Times.seoul(a.getCreatedAt()));
+        }
+    }
+
+    public record Applications(List<ApplicationResponse> applications) {
     }
 
     public record Questions(List<Summary> questions) {
@@ -59,6 +78,7 @@ public final class QuestionResponses {
 
     public record Detail(
             Long id,
+            Long applicationId,
             String organization,
             String text,
             JobStatus status,
@@ -98,7 +118,7 @@ public final class QuestionResponses {
                                     .filter(s -> c.getId().equals(s.getClarificationId()))
                                     .map(Supplement::getId).findFirst().orElse(null)))
                     .toList();
-            return new Detail(q.getId(), q.getOrganization(), q.getText(), q.getStatus(), error, requirements,
+            return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getStatus(), error, requirements,
                     recommendations, clarifications, Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));
         }
     }
