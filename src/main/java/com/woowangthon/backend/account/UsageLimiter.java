@@ -14,7 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 사용자별 하루 분석 횟수 한도(S-15, ADR-004 「한도 세 겹」의 첫째). 하루는 한국 날짜로 센다.
- * AI 를 부르는 일(자료 넣기 · 분석 다시 시도 · 문항 넣기 · 문항 다시 시도)을 시작할 때마다 1 — 실패한 분석도 센다(LLM 은 이미 불렸을 수 있다).
+ * AI 를 부르는 일(자료 넣기 · 분석 다시 시도 · 문항 넣기 · 문항 다시 시도)을 시작할 때마다 1, 지원 넣기는 문항마다 1
+ * — 실패한 분석도 센다(LLM 은 이미 불렸을 수 있다).
  */
 @Service
 public class UsageLimiter {
@@ -39,14 +40,23 @@ public class UsageLimiter {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void consume(long userId) {
+        consume(userId, 1);
+    }
+
+    /**
+     * 오늘 횟수를 count 만큼 한꺼번에 쓴다(지원 넣기 — 문항마다 1). 남은 횟수가 count 보다 적으면 하나도 쓰지 않고 429 —
+     * 일부만 넣지 않는다(question-api.md 「POST /api/applications」).
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void consume(long userId, int count) {
         int limit = limitOf(userId);
-        // 한도 안일 때만 1 을 더한다 — 동시에 눌러도 행 잠금으로 한도를 넘지 않는다
-        List<Integer> counted = limit <= 0 ? List.of() : jdbc.queryForList("""
-                insert into analysis_usage (user_id, day, count) values (?, ?, 1)
-                on conflict (user_id, day) do update set count = analysis_usage.count + 1
-                where analysis_usage.count < ?
+        // 한도 안일 때만 더한다 — 동시에 눌러도 행 잠금으로 한도를 넘지 않는다
+        List<Integer> counted = count <= 0 || count > limit ? List.of() : jdbc.queryForList("""
+                insert into analysis_usage (user_id, day, count) values (?, ?, ?)
+                on conflict (user_id, day) do update set count = analysis_usage.count + excluded.count
+                where analysis_usage.count + excluded.count <= ?
                 returning count
-                """, Integer.class, userId, Date.valueOf(today()), limit);
+                """, Integer.class, userId, Date.valueOf(today()), count, limit);
         if (counted.isEmpty()) {
             throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "DAILY_LIMIT_EXCEEDED",
                     "오늘 분석 횟수(" + limit + "회)를 다 썼습니다. 한국 시간 자정에 다시 채워집니다");

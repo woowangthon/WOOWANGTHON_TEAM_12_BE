@@ -23,6 +23,8 @@ import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.job.JobStatus;
+import com.woowangthon.backend.question.Application;
+import com.woowangthon.backend.question.ApplicationRepository;
 import com.woowangthon.backend.question.InterruptedQuestionCleaner;
 import com.woowangthon.backend.question.Question;
 import com.woowangthon.backend.question.QuestionRepository;
@@ -128,6 +130,9 @@ class QuestionApiTest {
     QuestionRepository questions;
 
     @Autowired
+    ApplicationRepository applications;
+
+    @Autowired
     InterruptedQuestionCleaner cleaner;
 
     MockMvc mvc;
@@ -172,8 +177,9 @@ class QuestionApiTest {
 
     @AfterEach
     void cleanUp() {
+        jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table question_recommendation_evidence, question_recommendation, question_requirement, "
-                + "supplement, clarification, question, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
+                + "supplement, clarification, question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
     }
 
     // ai-api.md 응답 예시(문항 A 모양) — ID 는 이 테스트가 만든 경험 · 근거
@@ -217,8 +223,10 @@ class QuestionApiTest {
         String submitted = postQuestion(QUESTION_A)
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("ANALYZING"))
+                .andExpect(jsonPath("$.applicationId").isNumber())
                 .andReturn().getResponse().getContentAsString();
         long questionId = ((Number) JsonPath.read(submitted, "$.questionId")).longValue();
+        long applicationId = ((Number) JsonPath.read(submitted, "$.applicationId")).longValue();
 
         String done = awaitDone(questionId);
         assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
@@ -247,6 +255,7 @@ class QuestionApiTest {
         mvc.perform(get("/api/questions/{id}", questionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(questionId))
+                .andExpect(jsonPath("$.applicationId").value(applicationId))
                 .andExpect(jsonPath("$.organization").value("OO 백엔드 부트캠프"))
                 .andExpect(jsonPath("$.requirements.length()").value(3))
                 .andExpect(jsonPath("$.requirements[0].status").value("SUPPORTED"))
@@ -437,7 +446,7 @@ class QuestionApiTest {
 
     @Test
     void 서버가_다시_켜지면_분석_중이던_문항은_실패가_된다() {
-        Question question = questions.save(new Question(TestLogin.USER_ID, null, "끊긴 문항"));
+        Question question = questions.save(new Question(applications.save(new Application(TestLogin.USER_ID, null)), "끊긴 문항"));
 
         cleaner.run(null);
 
@@ -603,6 +612,7 @@ class QuestionApiTest {
         expectError(postQuestion("{\"organization\": null, \"text\": \"" + "가".repeat(5_001) + "\"}"),
                 413, "TEXT_TOO_LONG");
         assertThat(questions.count()).isZero();
+        assertThat(applications.count()).isZero();
 
         // 한도 딱 맞는 길이는 받는다
         long questionId = submit("{\"organization\": \"" + "가".repeat(100) + "\", \"text\": \"" + "가".repeat(5_000) + "\"}");
@@ -616,6 +626,175 @@ class QuestionApiTest {
         expectError(mvc.perform(post("/api/questions/{id}/retry", questionId)), 409, "QUESTION_NOT_FAILED");
         expectError(mvc.perform(post("/api/questions/{id}/retry", 999_999)), 404, "QUESTION_NOT_FOUND");
         expectError(mvc.perform(get("/api/questions/{id}", 999_999)), 404, "QUESTION_NOT_FOUND");
+    }
+
+    // --- 지원(지원처 + 문항 여러 개) — BE#30 ---
+
+    static final String APPLICATION = """
+            {"organization": "OO 백엔드 부트캠프", "questions": [
+              {"text": "기술적인 문제를 해결한 경험을 구체적으로 적어 주세요."},
+              {"text": "지원 동기와 수료 후 목표를 적어 주세요."},
+              {"text": "팀 프로젝트에서 맡은 역할을 적어 주세요."}
+            ]}""";
+
+    @Test
+    void 지원을_넣으면_문항마다_추천이_돌고_넣은_순서로_보인다() throws Exception {
+        String body = postApplication(APPLICATION)
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.questionIds.length()").value(3))
+                .andReturn().getResponse().getContentAsString();
+        long applicationId = ((Number) JsonPath.read(body, "$.applicationId")).longValue();
+        List<Long> questionIds = ((List<Number>) JsonPath.read(body, "$.questionIds")).stream()
+                .map(Number::longValue).toList();
+        for (long id : questionIds) {
+            String done = awaitDone(id);
+            assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+            assertThat(((Number) JsonPath.read(done, "$.applicationId")).longValue()).isEqualTo(applicationId);
+            assertThat((String) JsonPath.read(done, "$.organization")).isEqualTo("OO 백엔드 부트캠프");
+        }
+
+        // 문항마다 따로 /match — 지원처 이름은 지원의 것
+        assertThat(RECEIVED).hasSize(3);
+        assertThat(RECEIVED.stream().map(r -> (String) JsonPath.read(r, "$.question.organization")))
+                .containsOnly("OO 백엔드 부트캠프");
+        assertThat(RECEIVED.stream().map(r -> (String) JsonPath.read(r, "$.question.text")))
+                .containsExactlyInAnyOrder("기술적인 문제를 해결한 경험을 구체적으로 적어 주세요.",
+                        "지원 동기와 수료 후 목표를 적어 주세요.", "팀 프로젝트에서 맡은 역할을 적어 주세요.");
+
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(applicationId))
+                .andExpect(jsonPath("$.organization").value("OO 백엔드 부트캠프"))
+                .andExpect(jsonPath("$.createdAt").isString())
+                .andExpect(jsonPath("$.questions.length()").value(3))
+                .andExpect(jsonPath("$.questions[0].id").value(questionIds.get(0)))
+                .andExpect(jsonPath("$.questions[0].applicationId").value(applicationId))
+                .andExpect(jsonPath("$.questions[0].organization").value("OO 백엔드 부트캠프"))
+                .andExpect(jsonPath("$.questions[0].text").value("기술적인 문제를 해결한 경험을 구체적으로 적어 주세요."))
+                .andExpect(jsonPath("$.questions[0].status").value("COMPLETED"))
+                .andExpect(jsonPath("$.questions[1].id").value(questionIds.get(1)))
+                .andExpect(jsonPath("$.questions[2].id").value(questionIds.get(2)))
+                .andExpect(jsonPath("$.questions[2].text").value("팀 프로젝트에서 맡은 역할을 적어 주세요."));
+
+        // 문항 목록에도 지원 ID 가 붙는다
+        mvc.perform(get("/api/questions"))
+                .andExpect(jsonPath("$.questions.length()").value(3))
+                .andExpect(jsonPath("$.questions[0].applicationId").value(applicationId))
+                .andExpect(jsonPath("$.questions[0].organization").value("OO 백엔드 부트캠프"));
+        // 문항마다 분석 1회
+        assertThat(jdbc.queryForObject("select count from analysis_usage", Integer.class)).isEqualTo(3);
+    }
+
+    @Test
+    void 지원에_문항을_더하면_그_지원의_끝에_붙고_지원처_이름을_따른다() throws Exception {
+        long applicationId = submitApplication(APPLICATION);
+
+        String body = addQuestion(applicationId, "{\"organization\": \"무시된다\", \"text\": \"본인의 장단점을 적어 주세요.\"}")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("ANALYZING"))
+                .andReturn().getResponse().getContentAsString();
+        long added = ((Number) JsonPath.read(body, "$.questionId")).longValue();
+        String done = awaitDone(added);
+        assertThat((String) JsonPath.read(done, "$.organization")).isEqualTo("OO 백엔드 부트캠프");
+
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.questions.length()").value(4))
+                .andExpect(jsonPath("$.questions[3].id").value(added))
+                .andExpect(jsonPath("$.questions[3].text").value("본인의 장단점을 적어 주세요."));
+        awaitApplication(applicationId);
+    }
+
+    @Test
+    void 지원_목록은_최근에_넣은_것부터이고_문항_하나_넣기도_지원이_된다() throws Exception {
+        long first = submitApplication(APPLICATION);
+        String single = postQuestion(QUESTION_A).andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString();
+        long second = ((Number) JsonPath.read(single, "$.applicationId")).longValue();
+        long singleQuestion = ((Number) JsonPath.read(single, "$.questionId")).longValue();
+        awaitApplication(first);
+        awaitApplication(second);
+
+        mvc.perform(get("/api/applications"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applications.length()").value(2))
+                .andExpect(jsonPath("$.applications[0].id").value(second))
+                .andExpect(jsonPath("$.applications[0].questions.length()").value(1))
+                .andExpect(jsonPath("$.applications[0].questions[0].id").value(singleQuestion))
+                .andExpect(jsonPath("$.applications[1].id").value(first))
+                .andExpect(jsonPath("$.applications[1].questions.length()").value(3));
+    }
+
+    @Test
+    void 남은_분석_횟수가_문항_수보다_적으면_아무것도_저장하지_않는다() throws Exception {
+        jdbc.update("update app_user set daily_analysis_limit = 4 where id = ?", TestLogin.USER_ID);
+        awaitDone(submit(QUESTION_A)); // 1회 씀 — 남은 3회
+
+        expectError(postApplication("""
+                {"organization": null, "questions": [{"text": "1"}, {"text": "2"}, {"text": "3"}, {"text": "4"}]}"""),
+                429, "DAILY_LIMIT_EXCEEDED");
+        assertThat(applications.count()).isEqualTo(1);
+        assertThat(questions.count()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count from analysis_usage", Integer.class)).isEqualTo(1);
+
+        // 딱 맞으면 받는다 — 그 뒤엔 문항 더하기도 429
+        long applicationId = submitApplication("""
+                {"organization": null, "questions": [{"text": "1"}, {"text": "2"}, {"text": "3"}]}""");
+        expectError(addQuestion(applicationId, "{\"text\": \"4\"}"), 429, "DAILY_LIMIT_EXCEEDED");
+        assertThat(jdbc.queryForObject("select count from analysis_usage", Integer.class)).isEqualTo(4);
+        awaitApplication(applicationId);
+    }
+
+    @Test
+    void 지원_넣기_오류() throws Exception {
+        expectError(postApplication("{\"organization\": \"OO\"}"), 400, "INVALID_REQUEST");
+        expectError(postApplication("{\"questions\": []}"), 400, "INVALID_REQUEST");
+        expectError(postApplication("{\"questions\": [" + "{\"text\": \"문항\"},".repeat(10) + "{\"text\": \"문항\"}]}"),
+                400, "INVALID_REQUEST");
+        expectError(postApplication("{\"questions\": [{\"text\": \"문항\"}, {}]}"), 400, "INVALID_REQUEST");
+        expectError(postApplication("{\"questions\": [null]}"), 400, "INVALID_REQUEST");
+        expectError(postApplication("{\"questions\": [{\"text\": \"문항\"}, {\"text\": \" \"}]}"), 400, "EMPTY_TEXT");
+        expectError(postApplication("{\"organization\": \"" + "가".repeat(101) + "\", \"questions\": [{\"text\": \"문항\"}]}"),
+                400, "INVALID_REQUEST");
+        expectError(postApplication("{\"questions\": [{\"text\": \"" + "가".repeat(5_001) + "\"}]}"), 413, "TEXT_TOO_LONG");
+        expectError(postApplication("{not json"), 400, "INVALID_REQUEST");
+        assertThat(applications.count()).isZero();
+        assertThat(questions.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from analysis_usage", Integer.class)).isZero();
+
+        expectError(mvc.perform(get("/api/applications/{id}", 999_999)), 404, "APPLICATION_NOT_FOUND");
+        expectError(addQuestion(999_999, "{\"text\": \"문항\"}"), 404, "APPLICATION_NOT_FOUND");
+    }
+
+    @Test
+    void 지원_하나의_문항은_20개까지() throws Exception {
+        long applicationId = submitApplication("{\"questions\": [" + "{\"text\": \"문항\"},".repeat(9) + "{\"text\": \"문항\"}]}");
+        expectError(addQuestion(applicationId, "{\"text\": \"  \"}"), 400, "EMPTY_TEXT");
+        for (int i = 0; i < 10; i++) {
+            addQuestion(applicationId, "{\"text\": \"더한 문항\"}").andExpect(status().isAccepted());
+        }
+        expectError(addQuestion(applicationId, "{\"text\": \"21번째\"}"), 400, "INVALID_REQUEST");
+        assertThat(questions.count()).isEqualTo(20);
+        awaitApplication(applicationId);
+    }
+
+    @Test
+    void 다른_사용자의_지원은_보이지_않는다() throws Exception {
+        long applicationId = submitApplication(APPLICATION);
+        awaitApplication(applicationId);
+        Long other = jdbc.queryForObject(
+                "insert into app_user (name) values ('다른 사용자') returning id", Long.class);
+        try {
+            MockMvc otherMvc = TestLogin.mvc(context, other);
+            otherMvc.perform(get("/api/applications"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.applications.length()").value(0));
+            expectError(otherMvc.perform(get("/api/applications/{id}", applicationId)), 404, "APPLICATION_NOT_FOUND");
+            expectError(otherMvc.perform(post("/api/applications/{id}/questions", applicationId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"text\": \"문항\"}")), 404, "APPLICATION_NOT_FOUND");
+            assertThat(questions.count()).isEqualTo(3);
+        } finally {
+            jdbc.update("delete from app_user where id = ?", other);
+        }
     }
 
     // --- 도움 ---
@@ -636,6 +815,28 @@ class QuestionApiTest {
 
     private ResultActions postQuestion(String json) throws Exception {
         return mvc.perform(post("/api/questions").contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private ResultActions postApplication(String json) throws Exception {
+        return mvc.perform(post("/api/applications").contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private long submitApplication(String json) throws Exception {
+        String body = postApplication(json).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        return ((Number) JsonPath.read(body, "$.applicationId")).longValue();
+    }
+
+    private ResultActions addQuestion(long applicationId, String json) throws Exception {
+        return mvc.perform(post("/api/applications/{id}/questions", applicationId)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    // 지원의 문항 추천이 다 끝날 때까지 — 표를 비우기 전에 뒤에서 도는 작업을 끝낸다
+    private void awaitApplication(long applicationId) throws Exception {
+        String body = mvc.perform(get("/api/applications/{id}", applicationId)).andReturn().getResponse().getContentAsString();
+        for (Number id : (List<Number>) JsonPath.read(body, "$.questions[*].id")) {
+            awaitDone(id.longValue());
+        }
     }
 
     // 추천은 다른 스레드에서 돈다 — 끝날 때까지 문항을 조회한다(FE 폴링과 같다)
