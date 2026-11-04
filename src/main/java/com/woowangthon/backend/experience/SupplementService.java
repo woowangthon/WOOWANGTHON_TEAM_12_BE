@@ -2,6 +2,7 @@ package com.woowangthon.backend.experience;
 
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
+import java.util.List;
 import org.hibernate.Hibernate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +35,8 @@ public class SupplementService {
 
     /**
      * 지우면 그 경험의 보완 목록 · 다음 매칭 후보에서 빠지고, 그 보완을 만든 되묻기는 다시 답할 수 있다(둘 다 지금 보완으로 계산한다).
-     * 이미 끝난 추천의 근거에 남은 이 보완 번호는 응답을 만들 때 뺀다(QuestionResponses).
+     * 이미 끝난 추천의 근거에서 이 보완을 가리키는 줄도 지우고 남은 줄을 다시 매긴다(BE#37).
+     * 이 정리 전에 남은 줄이 있을 수 있어 응답을 만들 때도 거른다(QuestionResponses).
      */
     @Transactional
     public void delete(long supplementId) {
@@ -46,6 +48,17 @@ public class SupplementService {
             experience.getSupplements().remove(supplement);
         }
         supplements.flush();
+        deleteEvidenceCiting(supplementId);
+    }
+
+    private void deleteEvidenceCiting(long supplementId) {
+        List<Long> recommendationIds = supplements.findRecommendationIdsCiting(supplementId);
+        if (recommendationIds.isEmpty()) {
+            return;
+        }
+        supplements.deleteEvidenceCiting(supplementId);
+        supplements.moveEvidenceToNegativePositions(recommendationIds);
+        supplements.restoreEvidencePositions(recommendationIds);
     }
 
     private Supplement findOwned(long supplementId) {

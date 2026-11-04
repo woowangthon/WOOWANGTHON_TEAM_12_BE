@@ -633,13 +633,13 @@ class QuestionApiTest {
         long first = ((Number) JsonPath.read(awaitDone(questionA), "$.clarifications[0].id")).longValue();
         long supplementId = answeredSupplement(first);
 
-        // 문항 B — AI 가 그 보완을 근거로 골랐다
+        // 문항 B — AI 가 그 보완을 첫 근거로 골랐다(지우면 뒤 줄을 당겨 다시 매겨야 한다)
         reply = new FakeReply(200, """
                 {
                   "requirements": [{ "text": "맡은 역할", "status": "SUPPORTED", "experienceIds": [%1$d] }],
                   "recommendations": [{
                     "experienceId": %1$d, "reason": "직접 고친 범위가 보완에 있다", "emphasis": "구독 방식으로 바꾼 일",
-                    "evidence": [{ "type": "CITATION", "id": %2$d }, { "type": "SUPPLEMENT", "id": %3$d }], "gaps": []
+                    "evidence": [{ "type": "SUPPLEMENT", "id": %3$d }, { "type": "CITATION", "id": %2$d }], "gaps": []
                   }],
                   "clarifications": []
                 }""".formatted(chat, chatCitation, supplementId), 0);
@@ -648,6 +648,11 @@ class QuestionApiTest {
         assertThat((List<?>) JsonPath.read(awaitDone(questionB), "$.recommendations[0].evidence")).hasSize(2);
 
         mvc.perform(delete("/api/supplements/{id}", supplementId)).andExpect(status().isNoContent());
+
+        // 그 보완을 가리키던 근거 줄이 지워지고 남은 줄은 0부터 다시 매겨진다(BE#37)
+        assertThat(jdbc.queryForList("select position, type, ref_id from question_recommendation_evidence "
+                + "where recommendation_id = (select id from question_recommendation where question_id = ?)",
+                questionB)).containsExactly(Map.of("position", 0, "type", "CITATION", "ref_id", chatCitation));
 
         // 경험에서 빠진다
         mvc.perform(get("/api/activities/{id}", appId))
