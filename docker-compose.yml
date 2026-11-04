@@ -40,6 +40,7 @@ services:
       TEST_ACCOUNT_LOGIN_ID: ${TEST_ACCOUNT_LOGIN_ID:-test}
       TEST_ACCOUNT_PASSWORD: ${TEST_ACCOUNT_PASSWORD:-}
       TEST_ACCOUNT_DAILY_LIMIT: ${TEST_ACCOUNT_DAILY_LIMIT:-200}
+      MCP_BASE_URL: ${MCP_BASE_URL:-http://localhost:8080/mcp/}
     ports:
       - "127.0.0.1:8080:8080" # 서버 안에서 curl 로 확인하는 용도. 밖에서는 Tunnel 로만
     depends_on:

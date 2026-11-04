@@ -21,14 +21,26 @@ public class ActivityService {
 
     @Transactional(readOnly = true)
     public ActivityResponses.Timeline timeline() {
-        return new ActivityResponses.Timeline(activities.findTimeline(CurrentUser.id()).stream()
+        return timeline(CurrentUser.id());
+    }
+
+    /** 로그인 세션 밖(MCP 도구)에서 부를 때 — 사용자를 직접 받는다. */
+    @Transactional(readOnly = true)
+    public ActivityResponses.Timeline timeline(long userId) {
+        return new ActivityResponses.Timeline(activities.findTimeline(userId).stream()
                 .map(ActivityResponses.Summary::from)
                 .toList());
     }
 
     @Transactional(readOnly = true)
     public ActivityResponses.Detail detail(long activityId) {
-        return ActivityResponses.Detail.from(find(activityId));
+        return detail(CurrentUser.id(), activityId);
+    }
+
+    /** 로그인 세션 밖(MCP 도구)에서 부를 때 — 남의 활동은 없는 것과 같이 ACTIVITY_NOT_FOUND. */
+    @Transactional(readOnly = true)
+    public ActivityResponses.Detail detail(long userId, long activityId) {
+        return ActivityResponses.Detail.from(find(userId, activityId));
     }
 
     /** 보낸 필드만 바꾼다. period 는 세 칸을 통째로 받는다(계약 「PATCH /api/activities」). */
@@ -85,7 +97,11 @@ public class ActivityService {
     }
 
     private Activity find(long activityId) {
-        return activities.findByIdAndUserId(activityId, CurrentUser.id())
+        return find(CurrentUser.id(), activityId);
+    }
+
+    private Activity find(long userId, long activityId) {
+        return activities.findByIdAndUserId(activityId, userId)
                 .orElseThrow(() -> ApiException.notFound("ACTIVITY_NOT_FOUND", "활동 " + activityId + " 이(가) 없습니다"));
     }
 }
