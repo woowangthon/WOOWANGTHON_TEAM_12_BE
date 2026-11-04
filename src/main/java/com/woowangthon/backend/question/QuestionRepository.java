@@ -20,6 +20,11 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     @Query("select q from Question q where q.id = :id and q.userId = :userId")
     Optional<Question> findForUpdate(Long id, Long userId);
 
+    // 매칭 결과를 싣는 동안 사용자가 고른 유형(PATCH)을 덮어쓰지 않게 행을 잠근다(S-41)
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select q from Question q where q.id = :id")
+    Optional<Question> lockById(Long id);
+
     List<Question> findByStatus(JobStatus status);
 
     long countByApplicationId(Long applicationId);

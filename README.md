@@ -65,10 +65,12 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `GET /api/applications` | 넣었던 지원 목록(최근 것부터) |
 | `GET /api/applications/{id}` | 지원 하나 — 문항 목록 · 분석 상태 |
 | `POST /api/applications/{id}/questions` | 지원에 문항 더하기(202) — 지원 하나에 최대 20개 |
+| `PATCH /api/applications/{id}` | 지원처 종류 · 직무 바꾸기 · 비우기(보낸 칸만, 추천은 다시 돌지 않는다) |
 | `POST /api/questions` | 지원 문항 넣기 — 문항 저장 · 추천 작업 시작(202, AI `/match` 는 뒤에서) |
 | `GET /api/questions` | 넣었던 문항 목록(최근 것부터) |
 | `GET /api/questions/{id}` | 문항 하나: `ANALYZING` → `COMPLETED`(요구사항 · 추천 · 되묻기) / `FAILED`(이유) |
 | `POST /api/questions/{id}/retry` | 실패한 문항 다시 시도 |
+| `PATCH /api/questions/{id}` | 문항 유형 고르기 — `USER` 로, 그 뒤 매칭 · 다시 시도가 덮지 않는다 |
 | `POST /api/clarifications/{id}/answer` | 되묻기에 답하기 — 답을 그 경험의 보완으로 저장(201). 경험 본문 · 근거 · 출처 상태는 그대로, 다음 문항부터 AI 후보에 실림 |
 | `PATCH /api/supplements/{id}` | 보완 고치기 — 답만 바꿈. 질문 · 경험 본문 · 근거 · 출처 상태는 그대로 |
 | `DELETE /api/supplements/{id}` | 보완 지우기(204) — 경험 · 다음 문항의 AI 후보 · 끝난 추천의 `evidence` 에서 빠지고, 그 되묻기에 다시 답할 수 있다 |

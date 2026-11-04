@@ -1,7 +1,10 @@
 package com.woowangthon.backend.question;
 
+import com.woowangthon.backend.common.PatchBody;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -9,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** ETC docs/contracts/question-api.md — 지원 넣기 · 문항 더하기 · 지원 목록 · 지원 하나 (SPEC S-18 · S-21). */
+/** ETC docs/contracts/question-api.md — 지원 넣기 · 문항 더하기 · 목록 · 지원 하나 · 종류 · 직무 바꾸기 (SPEC S-18 · S-21 · S-42). */
 @RestController
 @RequestMapping("/api/applications")
 public class ApplicationController {
@@ -48,5 +51,11 @@ public class ApplicationController {
     @GetMapping("/{applicationId}")
     public QuestionResponses.ApplicationResponse get(@PathVariable long applicationId) {
         return service.get(applicationId);
+    }
+
+    @PatchMapping("/{applicationId}")
+    public QuestionResponses.ApplicationResponse update(@PathVariable long applicationId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        return service.update(applicationId, new PatchBody(body));
     }
 }
