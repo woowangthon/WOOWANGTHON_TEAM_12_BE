@@ -6,6 +6,7 @@ import com.woowangthon.backend.ai.MatchRequest;
 import com.woowangthon.backend.ai.MatchResponse;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
+import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.job.JobStatus;
@@ -50,7 +51,8 @@ public class QuestionService {
         this.limiter = limiter;
     }
 
-    public record QuestionRequest(String organization, String text) {
+    // organizationType · jobRole — 새로 만드는 지원의 것(선택). 문자열로 받아 목록 밖이면 400
+    public record QuestionRequest(String organization, String organizationType, String jobRole, String text) {
     }
 
     /** 문항 하나짜리 지원을 새로 만들어 문항을 저장한다. 추천은 이 트랜잭션이 끝난 뒤 따로 시작한다. */
@@ -58,8 +60,11 @@ public class QuestionService {
     public QuestionResponses.Submitted submit(QuestionRequest request) {
         String text = checkText(request.text());
         String organization = checkOrganization(request.organization());
+        OrganizationType organizationType = value(OrganizationType.class, request.organizationType(), "organizationType");
+        JobRole jobRole = value(JobRole.class, request.jobRole(), "jobRole");
         limiter.consume(CurrentUser.id());
-        Application application = applications.save(new Application(CurrentUser.id(), organization));
+        Application application = applications.save(
+                new Application(CurrentUser.id(), organization, organizationType, jobRole));
         Question question = questions.save(new Question(application, text));
         return new QuestionResponses.Submitted(question.getId(), application.getId(), question.getStatus());
     }
@@ -92,6 +97,22 @@ public class QuestionService {
         return detail(question);
     }
 
+    /** 문항 유형을 사용자가 고른다(S-41) — 분석 중 · 실패한 문항도 된다. null 로 AI 값에 되돌리기는 없다. */
+    @Transactional
+    public QuestionResponses.Detail updateType(long questionId, PatchBody body) {
+        String raw = body.string("questionType").map(PatchBody.Field::value)
+                .orElseThrow(() -> ApiException.invalidRequest("questionType 이 없습니다"));
+        QuestionType type = value(QuestionType.class, raw, "questionType");
+        if (type == null) {
+            throw ApiException.invalidRequest("questionType 은 null 일 수 없습니다");
+        }
+        Question question = questions.findForUpdate(questionId, CurrentUser.id())
+                .orElseThrow(() -> notFound(questionId));
+        question.chooseType(type);
+        questions.flush();
+        return detail(question);
+    }
+
     /** AI 에 보낼 후보 — 그 사용자의 경험 전부를 근거 · 보완과 함께 지금 상태로(ADR-003). */
     @Transactional(readOnly = true)
     public MatchRequest matchRequest(long questionId) {
@@ -105,6 +126,7 @@ public class QuestionService {
                         e.getSupplements().stream()
                                 .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList()))
                 .toList();
+        // 지원처 종류 · 직무는 싣지 않는다 — 추천 · 되묻기가 그 칸으로 바뀌지 않는다(S-42)
         return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText()), candidates);
     }
 
@@ -114,9 +136,15 @@ public class QuestionService {
      */
     @Transactional
     public void complete(long questionId, MatchRequest sent, MatchResponse result) {
-        Question question = questions.findById(questionId).orElseThrow();
+        Question question = questions.lockById(questionId).orElseThrow();
         Map<Long, MatchRequest.ExperiencePart> candidates = sent.experiences().stream()
                 .collect(Collectors.toMap(MatchRequest.ExperiencePart::id, Function.identity()));
+
+        // AI 이슈 머지 전엔 없을 수 있다 — 없으면 null 로 두고 실패로 보지 않는다(BE#50). 목록 밖 값은 위반
+        QuestionType questionType = result.questionType() == null ? null
+                : Stream.of(QuestionType.values()).filter(t -> t.name().equals(result.questionType())).findFirst()
+                        .orElseThrow(() -> AiCallException.invalidResponse(
+                                "questionType 이 목록 밖 값입니다: " + result.questionType()));
 
         List<Requirement> requirements = requirements(result.requirements(), candidates);
 
@@ -152,12 +180,12 @@ public class QuestionService {
                     required(c.question(), "clarifications[].question")));
         }
 
-        question.complete(requirements, recommendations, clarifications);
+        question.complete(questionType, requirements, recommendations, clarifications);
     }
 
     @Transactional
     public void fail(long questionId, String code, String message) {
-        questions.findById(questionId).orElseThrow().fail(code, message);
+        questions.lockById(questionId).orElseThrow().fail(code, message);
     }
 
     private QuestionResponses.Detail detail(Question question) {
@@ -277,6 +305,19 @@ public class QuestionService {
             throw ApiException.invalidRequest("organization 은 " + MAX_ORGANIZATION_LENGTH + "자까지입니다");
         }
         return organization;
+    }
+
+    /** 사용자가 보낸 값 목록 값 — null 이면 null(비움), 목록 밖이면 400 INVALID_REQUEST. */
+    static <E extends Enum<E>> E value(Class<E> type, String value, String field) {
+        if (value == null) {
+            return null;
+        }
+        for (E e : type.getEnumConstants()) {
+            if (e.name().equals(value)) {
+                return e;
+            }
+        }
+        throw ApiException.invalidRequest(field + " 이(가) 목록 밖 값입니다: " + value);
     }
 
     private static ApiException notFound(long questionId) {

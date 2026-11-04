@@ -54,6 +54,13 @@ public class Question {
 
     private String errorMessage;
 
+    // 문항 유형(S-41) — 매칭이 붙이고(AI) 사용자가 고친다(USER). USER 면 매칭 결과가 덮어쓰지 않는다
+    @Enumerated(EnumType.STRING)
+    private QuestionType questionType;
+
+    @Enumerated(EnumType.STRING)
+    private QuestionTypeBy questionTypeBy;
+
     @ElementCollection
     @CollectionTable(name = "question_requirement", joinColumns = @JoinColumn(name = "question_id"))
     @OrderColumn(name = "position")
@@ -85,10 +92,17 @@ public class Question {
         this.status = JobStatus.ANALYZING;
     }
 
-    /** AI 결과를 싣는다 — 추천 · 되묻기는 이 문항을 가리키게 만든 것이어야 한다. */
-    public void complete(List<Requirement> newRequirements, List<Recommendation> newRecommendations,
+    /**
+     * AI 결과를 싣는다 — 추천 · 되묻기는 이 문항을 가리키게 만든 것이어야 한다. AI 가 붙인 유형(없으면 null)은 사용자가 고르지 않았을 때만
+     * 싣는다.
+     */
+    public void complete(QuestionType aiType, List<Requirement> newRequirements, List<Recommendation> newRecommendations,
             List<Clarification> newClarifications) {
         clearResults();
+        if (questionTypeBy != QuestionTypeBy.USER) {
+            questionType = aiType;
+            questionTypeBy = aiType == null ? null : QuestionTypeBy.AI;
+        }
         requirements.addAll(newRequirements);
         recommendations.addAll(newRecommendations);
         clarifications.addAll(newClarifications);
@@ -112,10 +126,21 @@ public class Question {
         errorMessage = null;
     }
 
+    /** 사용자가 문항 유형을 고른다 — 분석 중 · 실패여도 된다. 그 뒤 매칭 결과가 덮어쓰지 않는다(S-41). */
+    public void chooseType(QuestionType type) {
+        questionType = type;
+        questionTypeBy = QuestionTypeBy.USER;
+    }
+
+    // 결과와 함께 AI 가 붙인 유형도 지운다 — 사용자가 고른 유형은 남긴다
     private void clearResults() {
         requirements.clear();
         recommendations.clear();
         clarifications.clear();
+        if (questionTypeBy == QuestionTypeBy.AI) {
+            questionType = null;
+            questionTypeBy = null;
+        }
     }
 
     public Long getId() {
@@ -137,6 +162,14 @@ public class Question {
 
     public String getText() {
         return text;
+    }
+
+    public QuestionType getQuestionType() {
+        return questionType;
+    }
+
+    public QuestionTypeBy getQuestionTypeBy() {
+        return questionTypeBy;
     }
 
     public JobStatus getStatus() {

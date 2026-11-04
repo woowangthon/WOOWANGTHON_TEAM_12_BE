@@ -26,20 +26,21 @@ public final class QuestionResponses {
     public record ApplicationSubmitted(Long applicationId, List<Long> questionIds) {
     }
 
-    public record Summary(Long id, Long applicationId, String organization, String text, JobStatus status,
-            OffsetDateTime createdAt) {
+    public record Summary(Long id, Long applicationId, String organization, String text, QuestionType questionType,
+            QuestionTypeBy questionTypeBy, JobStatus status, OffsetDateTime createdAt) {
 
         static Summary from(Question q) {
-            return new Summary(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getStatus(),
-                    Times.seoul(q.getCreatedAt()));
+            return new Summary(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(),
+                    q.getQuestionType(), q.getQuestionTypeBy(), q.getStatus(), Times.seoul(q.getCreatedAt()));
         }
     }
 
     // questions — 넣은 순서(지원서의 문항 순서)
-    public record ApplicationResponse(Long id, String organization, List<Summary> questions, OffsetDateTime createdAt) {
+    public record ApplicationResponse(Long id, String organization, OrganizationType organizationType, JobRole jobRole,
+            List<Summary> questions, OffsetDateTime createdAt) {
 
         static ApplicationResponse from(Application a) {
-            return new ApplicationResponse(a.getId(), a.getOrganization(),
+            return new ApplicationResponse(a.getId(), a.getOrganization(), a.getOrganizationType(), a.getJobRole(),
                     a.getQuestions().stream().map(Summary::from).toList(), Times.seoul(a.getCreatedAt()));
         }
     }
@@ -81,6 +82,8 @@ public final class QuestionResponses {
             Long applicationId,
             String organization,
             String text,
+            QuestionType questionType,
+            QuestionTypeBy questionTypeBy,
             JobStatus status,
             ErrorResponse.Error error,
             List<RequirementResponse> requirements,
@@ -121,8 +124,9 @@ public final class QuestionResponses {
                                     .filter(s -> c.getId().equals(s.getClarificationId()))
                                     .map(Supplement::getId).findFirst().orElse(null)))
                     .toList();
-            return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getStatus(), error, requirements,
-                    recommendations, clarifications, Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));
+            return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getQuestionType(),
+                    q.getQuestionTypeBy(), q.getStatus(), error, requirements, recommendations, clarifications,
+                    Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));
         }
 
         private static boolean hasSupplement(Experience e, Long supplementId) {

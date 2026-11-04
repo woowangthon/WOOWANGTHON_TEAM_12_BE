@@ -429,6 +429,8 @@ class QuestionApiTest {
                 """
                 {"requirements": [%s], "recommendations": [{"experienceId": %d, "reason": " ", "emphasis": "e",
                  "evidence": [], "gaps": []}], "clarifications": []}""".formatted(ok, chat),
+                // 목록 밖 문항 유형(S-41)
+                withType(contractExample(), "HOBBY"),
                 "not json");
 
         for (String body : broken) {
@@ -900,13 +902,207 @@ class QuestionApiTest {
             expectError(otherMvc.perform(get("/api/applications/{id}", applicationId)), 404, "APPLICATION_NOT_FOUND");
             expectError(otherMvc.perform(post("/api/applications/{id}/questions", applicationId)
                     .contentType(MediaType.APPLICATION_JSON).content("{\"text\": \"문항\"}")), 404, "APPLICATION_NOT_FOUND");
+            expectError(otherMvc.perform(patch("/api/applications/{id}", applicationId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"jobRole\": null}")), 404, "APPLICATION_NOT_FOUND");
+            long questionId = questions.findAll().getFirst().getId();
+            expectError(otherMvc.perform(patch("/api/questions/{id}", questionId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"questionType\": \"OTHER\"}")), 404, "QUESTION_NOT_FOUND");
             assertThat(questions.count()).isEqualTo(3);
         } finally {
             jdbc.update("delete from app_user where id = ?", other);
         }
     }
 
+    // --- 지원처 종류 · 직무 (S-42) · 문항 유형 (S-41) — BE#50 ---
+
+    @Test
+    void 지원처_종류_직무를_넣고_보낸_칸만_바꾸거나_비우고_매칭엔_싣지_않는다() throws Exception {
+        long applicationId = submitApplication("""
+                {"organization": "OO 백엔드 부트캠프", "organizationType": "BOOTCAMP", "jobRole": "BACKEND",
+                 "questions": [{"text": "기술적인 문제를 해결한 경험을 적어 주세요."}]}""");
+        awaitApplication(applicationId);
+
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.organizationType").value("BOOTCAMP"))
+                .andExpect(jsonPath("$.jobRole").value("BACKEND"))
+                // 문항 요약에는 싣지 않는다 — 지원의 것
+                .andExpect(jsonPath("$.questions[0].organizationType").doesNotExist());
+
+        // 직무만 비운다 — 종류는 그대로, 추천은 다시 돌지 않는다
+        patchApplication(applicationId, "{\"jobRole\": null}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(applicationId))
+                .andExpect(jsonPath("$.organizationType").value("BOOTCAMP"))
+                .andExpect(jsonPath("$.jobRole").value(nullValue()))
+                .andExpect(jsonPath("$.questions.length()").value(1))
+                .andExpect(jsonPath("$.questions[0].status").value("COMPLETED"));
+        patchApplication(applicationId, "{\"organizationType\": \"CLUB\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.organizationType").value("CLUB"))
+                .andExpect(jsonPath("$.jobRole").value(nullValue()));
+        patchApplication(applicationId, "{\"organizationType\": \"JOB\", \"jobRole\": \"INFRA\"}")
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/applications"))
+                .andExpect(jsonPath("$.applications[0].organizationType").value("JOB"))
+                .andExpect(jsonPath("$.applications[0].jobRole").value("INFRA"));
+
+        // 문항 하나 넣기도 새 지원의 종류 · 직무를 받는다 — 안 보내면 null
+        String single = postQuestion("""
+                {"organization": "OO 연합 동아리", "organizationType": "CLUB", "jobRole": null, "text": "팀 프로젝트에서 맡은 역할을 적어 주세요."}""")
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        long singleApplication = ((Number) JsonPath.read(single, "$.applicationId")).longValue();
+        long plain = submitApplication("{\"questions\": [{\"text\": \"지원 동기를 적어 주세요.\"}]}");
+        awaitApplication(singleApplication);
+        awaitApplication(plain);
+        mvc.perform(get("/api/applications/{id}", singleApplication))
+                .andExpect(jsonPath("$.organizationType").value("CLUB"))
+                .andExpect(jsonPath("$.jobRole").value(nullValue()));
+        mvc.perform(get("/api/applications/{id}", plain))
+                .andExpect(jsonPath("$.organizationType").value(nullValue()))
+                .andExpect(jsonPath("$.jobRole").value(nullValue()));
+
+        // 매칭 요청에는 종류 · 직무가 없다(S-42) — PATCH 로도 다시 돌지 않았다
+        assertThat(RECEIVED).hasSize(3);
+        assertThat(RECEIVED).allSatisfy(sent -> assertThat(sent)
+                .doesNotContain("organizationType").doesNotContain("jobRole")
+                .doesNotContain("BOOTCAMP").doesNotContain("CLUB").doesNotContain("BACKEND"));
+    }
+
+    @Test
+    void 지원처_종류_직무_오류() throws Exception {
+        expectError(postApplication("""
+                {"organizationType": "COMPANY", "questions": [{"text": "문항"}]}"""), 400, "INVALID_REQUEST");
+        expectError(postApplication("""
+                {"jobRole": "서버", "questions": [{"text": "문항"}]}"""), 400, "INVALID_REQUEST");
+        expectError(postQuestion("""
+                {"jobRole": "backend", "text": "문항"}"""), 400, "INVALID_REQUEST");
+        assertThat(applications.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from analysis_usage", Integer.class)).isZero();
+
+        long applicationId = submitApplication("""
+                {"organizationType": "BOOTCAMP", "jobRole": "BACKEND", "questions": [{"text": "문항"}]}""");
+        expectError(patchApplication(applicationId, "{}"), 400, "INVALID_REQUEST");
+        expectError(patchApplication(applicationId, "{\"organization\": \"새 이름\"}"), 400, "INVALID_REQUEST");
+        // 하나라도 틀리면 아무것도 바꾸지 않는다
+        expectError(patchApplication(applicationId, "{\"organizationType\": \"CLUB\", \"jobRole\": \"X\"}"),
+                400, "INVALID_REQUEST");
+        expectError(patchApplication(applicationId, "{\"jobRole\": 1}"), 400, "INVALID_REQUEST");
+        expectError(mvc.perform(patch("/api/applications/{id}", applicationId)), 400, "INVALID_REQUEST");
+        expectError(patchApplication(999_999, "{\"jobRole\": null}"), 404, "APPLICATION_NOT_FOUND");
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.organizationType").value("BOOTCAMP"))
+                .andExpect(jsonPath("$.jobRole").value("BACKEND"));
+        awaitApplication(applicationId);
+    }
+
+    @Test
+    void 매칭이_문항_유형을_AI_로_붙이고_없으면_null() throws Exception {
+        reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 0);
+        long typed = submit(QUESTION_A);
+        String done = awaitDone(typed);
+        assertThat((String) JsonPath.read(done, "$.questionType")).isEqualTo("PROBLEM_SOLVING");
+        assertThat((String) JsonPath.read(done, "$.questionTypeBy")).isEqualTo("AI");
+
+        // AI 가 아직 유형을 안 붙이면(AI 이슈 머지 전) null 로 두고 실패로 보지 않는다
+        reply = new FakeReply(200, contractExample(), 0);
+        long untyped = submit(QUESTION_A);
+        String plain = awaitDone(untyped);
+        assertThat((String) JsonPath.read(plain, "$.status")).isEqualTo("COMPLETED");
+        assertThat((Object) JsonPath.read(plain, "$.questionType")).isNull();
+        assertThat((Object) JsonPath.read(plain, "$.questionTypeBy")).isNull();
+
+        // 문항 요약(목록 · 지원)에도 실린다
+        mvc.perform(get("/api/questions"))
+                .andExpect(jsonPath("$.questions[0].id").value(untyped))
+                .andExpect(jsonPath("$.questions[0].questionType").value(nullValue()))
+                .andExpect(jsonPath("$.questions[0].questionTypeBy").value(nullValue()))
+                .andExpect(jsonPath("$.questions[1].questionType").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.questions[1].questionTypeBy").value("AI"));
+        long applicationId = ((Number) JsonPath.read(done, "$.applicationId")).longValue();
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.questions[0].questionType").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.questions[0].questionTypeBy").value("AI"));
+    }
+
+    @Test
+    void 사용자가_고친_유형은_매칭_다시_시도가_덮지_않는다() throws Exception {
+        // 끝난 문항 — AI 값을 고친다
+        reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 0);
+        long completed = submit(QUESTION_A);
+        awaitDone(completed);
+        patchQuestion(completed, "{\"questionType\": \"ACHIEVEMENT\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(completed))
+                .andExpect(jsonPath("$.questionType").value("ACHIEVEMENT"))
+                .andExpect(jsonPath("$.questionTypeBy").value("USER"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.recommendations.length()").value(2));
+
+        // 분석 중인 문항 — 고른 뒤 매칭이 끝나도 그대로
+        reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 500);
+        long analyzing = submit(QUESTION_A);
+        patchQuestion(analyzing, "{\"questionType\": \"GROWTH\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ANALYZING"))
+                .andExpect(jsonPath("$.questionTypeBy").value("USER"));
+        String afterMatch = awaitDone(analyzing);
+        assertThat((String) JsonPath.read(afterMatch, "$.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(afterMatch, "$.questionType")).isEqualTo("GROWTH");
+        assertThat((String) JsonPath.read(afterMatch, "$.questionTypeBy")).isEqualTo("USER");
+
+        // 실패한 문항 — 고른 뒤 다시 시도해도 그대로
+        reply = new FakeReply(502, "{\"error\": {\"code\": \"LLM_ERROR\", \"message\": \"down\"}}", 0);
+        long failed = submit(QUESTION_A);
+        String failedBody = awaitDone(failed);
+        assertThat((String) JsonPath.read(failedBody, "$.status")).isEqualTo("FAILED");
+        assertThat((Object) JsonPath.read(failedBody, "$.questionType")).isNull();
+        patchQuestion(failed, "{\"questionType\": \"CONFLICT\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.questionType").value("CONFLICT"));
+        reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 0);
+        mvc.perform(post("/api/questions/{id}/retry", failed))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.questionType").value("CONFLICT"))
+                .andExpect(jsonPath("$.questionTypeBy").value("USER"));
+        String retried = awaitDone(failed);
+        assertThat((String) JsonPath.read(retried, "$.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(retried, "$.questionType")).isEqualTo("CONFLICT");
+        assertThat((String) JsonPath.read(retried, "$.questionTypeBy")).isEqualTo("USER");
+    }
+
+    @Test
+    void 문항_유형_고치기_오류() throws Exception {
+        reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 0);
+        long questionId = submit(QUESTION_A);
+        awaitDone(questionId);
+        expectError(patchQuestion(questionId, "{}"), 400, "INVALID_REQUEST");
+        expectError(patchQuestion(questionId, "{\"questionType\": null}"), 400, "INVALID_REQUEST");
+        expectError(patchQuestion(questionId, "{\"questionType\": \"HOBBY\"}"), 400, "INVALID_REQUEST");
+        expectError(patchQuestion(questionId, "{\"questionType\": 3}"), 400, "INVALID_REQUEST");
+        expectError(mvc.perform(patch("/api/questions/{id}", questionId)), 400, "INVALID_REQUEST");
+        expectError(patchQuestion(999_999, "{\"questionType\": \"OTHER\"}"), 404, "QUESTION_NOT_FOUND");
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.questionType").value("PROBLEM_SOLVING"))
+                .andExpect(jsonPath("$.questionTypeBy").value("AI"));
+    }
+
     // --- 도움 ---
+
+    // AI 응답에 문항 유형을 붙인다(ai-api.md 「POST /match」 questionType)
+    private static String withType(String matchResponse, String questionType) {
+        return matchResponse.replaceFirst("\\{", "{\"questionType\": \"" + questionType + "\",");
+    }
+
+    private ResultActions patchApplication(long applicationId, String json) throws Exception {
+        return mvc.perform(patch("/api/applications/{id}", applicationId)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private ResultActions patchQuestion(long questionId, String json) throws Exception {
+        return mvc.perform(patch("/api/questions/{id}", questionId)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
 
     private long submit(String json) throws Exception {
         String body = postQuestion(json).andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();

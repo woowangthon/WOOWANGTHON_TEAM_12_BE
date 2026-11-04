@@ -9,6 +9,7 @@ import java.util.List;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MatchResponse(
+        String questionType,
         List<RequirementResult> requirements,
         List<RecommendationResult> recommendations,
         List<ClarificationResult> clarifications,
