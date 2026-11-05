@@ -341,7 +341,7 @@ class AnalysisJobApiTest {
         try (ServerSocket socket = new ServerSocket(0)) {
             closedPort = socket.getLocalPort();
         }
-        AiClient client = new AiClient("http://127.0.0.1:" + closedPort, 1);
+        AiClient client = new AiClient("http://127.0.0.1:" + closedPort, 1, 1);
         assertThatThrownBy(() -> client.extract(new ExtractRequest("a.md", "text")))
                 .isInstanceOfSatisfying(AiCallException.class, e -> assertThat(e.code()).isEqualTo("AI_UNAVAILABLE"));
     }

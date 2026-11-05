@@ -31,34 +31,48 @@ public class AiClient {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Pattern ERROR_CODE = Pattern.compile("\"code\"\\s*:\\s*\"([A-Za-z_]+)\"");
 
-    private final RestClient rest;
-    private final long timeoutSeconds;
+    /** 제한 시간이 다른 두 갈래 — 작업(추출 · 매칭)과 사용자가 화면에서 기다리는 동기 호출(입구 셋, ai-api.md). */
+    private record Caller(RestClient rest, long timeoutSeconds) {
+    }
+
+    private final Caller job;
+    private final Caller sync;
 
     public AiClient(@Value("${app.ai.base-url}") String baseUrl,
-            @Value("${app.ai.timeout-seconds}") long timeoutSeconds) {
-        this.timeoutSeconds = timeoutSeconds;
+            @Value("${app.ai.timeout-seconds}") long timeoutSeconds,
+            @Value("${app.ai.sync-timeout-seconds}") long syncTimeoutSeconds) {
         // JDK 기본은 HTTP/2 라 평문 http 에 Upgrade: h2c 를 보내는데, uvicorn(AI 서버)은 이를 400 으로 거절한다
         HttpClient http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
+        this.job = caller(http, baseUrl, timeoutSeconds);
+        this.sync = caller(http, baseUrl, syncTimeoutSeconds);
+    }
+
+    private static Caller caller(HttpClient http, String baseUrl, long timeoutSeconds) {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(Duration.ofSeconds(timeoutSeconds));
-        this.rest = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        return new Caller(RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build(), timeoutSeconds);
     }
 
     public ExtractResponse extract(ExtractRequest request) {
-        return post("/extract", request, ExtractResponse.class);
+        return post(job, "/extract", request, ExtractResponse.class);
     }
 
     public MatchResponse match(MatchRequest request) {
-        return post("/match", request, MatchResponse.class);
+        return post(job, "/match", request, MatchResponse.class);
     }
 
-    private <T> T post(String uri, Object request, Class<T> type) {
+    /** 홈 입력 가르기 — 동기(entrance-api). */
+    public RouteResponse route(RouteRequest request) {
+        return post(sync, "/route", request, RouteResponse.class);
+    }
+
+    private <T> T post(Caller caller, String uri, Object request, Class<T> type) {
         T body;
         try {
-            body = rest.post()
+            body = caller.rest().post()
                     .uri(uri)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(request)
@@ -69,7 +83,7 @@ public class AiClient {
                     })
                     .body(type);
         } catch (ResourceAccessException e) {
-            throw classify(e);
+            throw classify(e, caller.timeoutSeconds());
         } catch (RestClientException e) {
             throw AiCallException.invalidResponse("JSON 을 읽지 못했습니다 — " + e.getMessage());
         }
@@ -79,7 +93,7 @@ public class AiClient {
         return body;
     }
 
-    private AiCallException classify(ResourceAccessException e) {
+    private static AiCallException classify(ResourceAccessException e, long timeoutSeconds) {
         for (Throwable cause = e; cause != null; cause = cause.getCause()) {
             // HttpConnectTimeoutException 은 HttpTimeoutException 의 하위라 먼저 본다
             if (cause instanceof HttpConnectTimeoutException || cause instanceof ConnectException
