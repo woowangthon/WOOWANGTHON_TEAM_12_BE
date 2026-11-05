@@ -41,6 +41,9 @@ services:
       TEST_ACCOUNT_PASSWORD: ${TEST_ACCOUNT_PASSWORD:-}
       TEST_ACCOUNT_DAILY_LIMIT: ${TEST_ACCOUNT_DAILY_LIMIT:-200}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://localhost:8080/mcp/}
+      MCP_INTERNAL_BASE_URL: http://be:8080/mcp/
+      CHAGOK_TIMEOUT_SECONDS: ${CHAGOK_TIMEOUT_SECONDS:-120}
+      CHAGOK_MAX_TOOL_CALLS: ${CHAGOK_MAX_TOOL_CALLS:-8}
     ports:
       - "127.0.0.1:8080:8080" # 서버 안에서 curl 로 확인하는 용도. 밖에서는 Tunnel 로만
     depends_on:

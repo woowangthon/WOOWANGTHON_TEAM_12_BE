@@ -9,9 +9,13 @@ public interface AccessTokenRepository extends JpaRepository<AccessToken, Long> 
 
     Optional<AccessToken> findByTokenHash(String tokenHash);
 
-    Optional<AccessToken> findFirstByUserIdOrderByIdDesc(Long userId);
+    Optional<AccessToken> findFirstByUserIdAndScopeOrderByIdDesc(Long userId, String scope);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("delete from AccessToken t where t.userId = :userId")
-    void deleteAllOfUser(Long userId);
+    @Query("delete from AccessToken t where t.userId = :userId and t.scope = :scope")
+    void deleteOfUser(Long userId, String scope);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("delete from AccessToken t where t.scope = :scope")
+    int deleteAllOfScope(String scope);
 }
