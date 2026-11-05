@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** ETC docs/contracts/experience-api.md — 활동 목록 · 세부 · 수정 · 합치기 · 같은 활동 제안 따로 두기 (SPEC S-07 · S-08 · S-09 · S-10 · S-13 · S-44). */
+/** ETC docs/contracts/experience-api.md — 활동 목록 · 세부 · 수정 · 합치기 · 같은 활동 제안 따로 두기 (SPEC S-07 · S-08 · S-09 · S-10 · S-13 · S-34 · S-44). */
 @RestController
 @RequestMapping("/api/activities")
 public class ActivityController {

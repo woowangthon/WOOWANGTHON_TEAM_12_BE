@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ActivityService {
 
+    private static final int NOTE_MAX_LENGTH = 200;
+
     private final ActivityRepository activities;
     private final ExperienceService experiences;
 
@@ -77,6 +79,8 @@ public class ActivityService {
             activity.changePeriod(Period.validated(start, end, ongoing));
         });
 
+        body.string("note").ifPresent(note -> activity.changeNote(validNote(note.value())));
+
         activities.flush();
         return ActivityResponses.Summary.from(activity, suggestedFrom(activity, this::sameUser));
     }
@@ -98,6 +102,10 @@ public class ActivityService {
         Activity from = find(fromActivityId);
 
         experiences.moveToEnd(from.getExperiences(), keep);
+        // 계기(S-34): 남길 활동 것을 그대로 두고, 없을 때만 옮겨 온다 — 이어 붙이지 않는다
+        if (keep.getNote() == null) {
+            keep.changeNote(from.getNote());
+        }
         // 같은 활동 제안(S-44): from 에 붙은 제안은 from 과 같이 사라지고, from 을 가리키던 제안은 null.
         // 남길 활동의 제안은 그대로 — from 을 가리키고 있었으면 null(벌크 UPDATE 는 관리 중인 keep 을 고치지 않는다)
         if (fromActivityId.equals(keep.getMergeSuggestionActivityId())) {
@@ -114,6 +122,21 @@ public class ActivityService {
     @Transactional
     public void dismissMergeSuggestion(long activityId) {
         find(activityId).dismissMergeSuggestion();
+    }
+
+    // 앞뒤 공백을 걷은 뒤 확인한다. null · 빈 문자열은 지움(계약 「PATCH /api/activities」)
+    private static String validNote(String note) {
+        if (note == null || note.isBlank()) {
+            return null;
+        }
+        String stripped = note.strip();
+        if (stripped.length() > NOTE_MAX_LENGTH) {
+            throw ApiException.invalidRequest("note 는 " + NOTE_MAX_LENGTH + "자까지입니다");
+        }
+        if (stripped.indexOf('\n') >= 0 || stripped.indexOf('\r') >= 0) {
+            throw ApiException.invalidRequest("note 에 줄바꿈을 넣을 수 없습니다");
+        }
+        return stripped;
     }
 
     private ActivityResponses.Detail detail(Activity activity) {

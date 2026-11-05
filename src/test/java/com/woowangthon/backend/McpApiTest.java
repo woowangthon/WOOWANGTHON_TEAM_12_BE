@@ -324,13 +324,14 @@ class McpApiTest {
     void list_activities_는_활동_목록_API_와_같다() throws Exception {
         String rest = web.perform(get("/api/activities")).andReturn().getResponse().getContentAsString();
 
-        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안)은 MCP 에 싣지 않는다
+        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안) · note(S-34)는 MCP 에 싣지 않는다
         JsonNode expected = json.readTree(rest);
-        expected.get("activities").forEach(a -> ((ObjectNode) a).remove("mergeSuggestion"));
+        expected.get("activities").forEach(a -> ((ObjectNode) a).remove(List.of("mergeSuggestion", "note")));
         JsonNode result = toolResult(call(token, "list_activities", "{}"));
 
         assertThat(result).isEqualTo(expected);
         assertThat(result.get("activities").get(0).has("mergeSuggestion")).isFalse();
+        assertThat(result.get("activities").get(0).has("note")).isFalse();
     }
 
     @Test
@@ -341,10 +342,11 @@ class McpApiTest {
 
         JsonNode result = toolResult(call(token, "get_activity", "{\"activityId\":" + appId + "}"));
         ObjectNode expected = (ObjectNode) json.readTree(rest);
-        expected.remove("mergeSuggestion");
+        expected.remove(List.of("mergeSuggestion", "note"));
 
         assertThat(result).isEqualTo(expected);
         assertThat(result.has("mergeSuggestion")).isFalse();
+        assertThat(result.has("note")).isFalse();
         assertThat(result.get("experiences").get(0).get("supplements").get(0).get("answer").asString()).isEqualTo("답");
     }
 

@@ -294,6 +294,19 @@ class DraftApiTest {
     }
 
     @Test
+    void 활동의_계기는_초안_요청에_싣지_않는다() throws Exception {
+        Activity app = activities.findById(appId).orElseThrow();
+        app.changeNote("계기 비밀");
+        activities.save(app);
+
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+
+        assertThat(RECEIVED).hasSize(1);
+        assertThat(RECEIVED.getFirst()).doesNotContain("계기 비밀").doesNotContain("note");
+    }
+
+    @Test
     void 받칠_것이_없으면_문장_없이_완료된다() throws Exception {
         draftReply = new FakeReply(200, "{\"sentences\": [], \"omitted\": [\"경험 전부\"]}", 0);
         start(bare).andExpect(status().isAccepted());
