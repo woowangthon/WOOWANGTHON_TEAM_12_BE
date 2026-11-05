@@ -23,12 +23,14 @@ public class ClarificationService {
     private final ClarificationRepository clarifications;
     private final ExperienceRepository experiences;
     private final SupplementRepository supplements;
+    private final QuestionRepository questions;
 
     public ClarificationService(ClarificationRepository clarifications, ExperienceRepository experiences,
-            SupplementRepository supplements) {
+            SupplementRepository supplements, QuestionRepository questions) {
         this.clarifications = clarifications;
         this.experiences = experiences;
         this.supplements = supplements;
+        this.questions = questions;
     }
 
     public record AnswerRequest(String answer) {
@@ -44,6 +46,11 @@ public class ClarificationService {
         Clarification clarification = clarifications.findOwned(clarificationId, userId)
                 .orElseThrow(() -> ApiException.notFound("CLARIFICATION_NOT_FOUND",
                         "되묻기 " + clarificationId + " 이(가) 없습니다"));
+        // 초안 다시 만들기(DraftService.start)와 같은 문항 행을 잠근다 — 그쪽이 먼저 이 되묻기를 지웠으면 404
+        questions.findForUpdate(clarification.getQuestion().getId(), userId);
+        if (!clarifications.existsById(clarificationId)) {
+            throw ApiException.notFound("CLARIFICATION_NOT_FOUND", "되묻기 " + clarificationId + " 이(가) 없습니다");
+        }
         Experience experience = experiences.findOwned(clarification.getExperienceId(), userId)
                 .orElseThrow(() -> ApiException.notFound("EXPERIENCE_NOT_FOUND",
                         "되묻기 " + clarificationId + " 이(가) 묻던 경험이 지워졌습니다"));

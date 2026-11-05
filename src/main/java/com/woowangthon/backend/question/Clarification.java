@@ -10,7 +10,10 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
-/** 되묻기 — 추천한 경험에서 문항에 필요한데 자료에 없는 사실을 묻는 질문. 답은 그 경험의 보완이 된다(BE#23). */
+/**
+ * 되묻기 — 추천한 경험에서 문항에 필요한데 자료에 없는 사실을 묻는 질문. 답은 그 경험의 보완이 된다(BE#23). 초안의 빠진 사실에서 만든 것은
+ * draftId 가 있다(BE#71) — 추천의 되묻기 목록엔 섞이지 않고, 초안을 다시 만들면 지운다.
+ */
 @Entity
 @Table(name = "clarification")
 public class Clarification {
@@ -33,6 +36,9 @@ public class Clarification {
     @Column(name = "question", nullable = false)
     private String text;
 
+    // 외래 키는 SQL 에만 — 초안 행을 다시 쓸 때 DraftService 가 지운다
+    private Long draftId;
+
     protected Clarification() {
     }
 
@@ -41,6 +47,13 @@ public class Clarification {
         this.position = position;
         this.experienceId = experienceId;
         this.text = text;
+    }
+
+    /** 초안의 빠진 사실에서 만든 되묻기. */
+    public static Clarification forDraft(Question question, Long draftId, int position, Long experienceId, String text) {
+        Clarification c = new Clarification(question, position, experienceId, text);
+        c.draftId = draftId;
+        return c;
     }
 
     public Long getId() {
