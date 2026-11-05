@@ -303,6 +303,48 @@ class McpApiTest {
                 "{\"year\":\"2025\",\"competencies\":[\"COLLABORATION\"]}")).get("total").asInt()).isEqualTo(1);
     }
 
+    // 앱 경험 찾기(GET /api/experiences, S-58)와 한 검색이다(BE#96 — ExperienceSearch). 검색 규칙의 시험은 이 파일이 맡고,
+    // 앱 쪽 시험(ExperienceSearchApiTest)은 앱에만 있는 조건 · 응답 모양만 본다 — 그래서 둘이 같은지는 여기서 본다
+    @Test
+    void 같은_입력이면_앱_검색과_같은_경험_같은_순서() throws Exception {
+        Experience websocket = activities.findById(appId).orElseThrow().getExperiences().getFirst();
+        supplements.save(new Supplement(websocket, null, null, "직접 고친 부분은 어디였나요?", "STOMP 엔드포인트를 만들었다"));
+
+        record Case(String mcpArguments, String query, String competencies, String year) {
+        }
+        List<Case> cases = List.of(
+                new Case("{}", null, null, null),
+                new Case("{\"query\":\"websocket 회고 배포\"}", "websocket 회고 배포", null, null),
+                new Case("{\"query\":\"STOMP 맡\"}", "STOMP 맡", null, null),
+                new Case("{\"competencies\":[\"IMPLEMENTATION\",\"COLLABORATION\"]}", null, "IMPLEMENTATION,COLLABORATION", null),
+                new Case("{\"year\":\"2024\"}", null, null, "2024"),
+                new Case("{\"query\":\"맡 문제\",\"competencies\":[\"IMPLEMENTATION\",\"OPERATION\"],\"year\":\"2025\"}",
+                        "맡 문제", "IMPLEMENTATION,OPERATION", "2025"));
+        for (Case c : cases) {
+            JsonNode mcp = toolResult(call(token, "search_experiences", c.mcpArguments()));
+            List<Long> mcpIds = new java.util.ArrayList<>();
+            mcp.get("experiences").forEach(e -> mcpIds.add(e.get("id").asLong()));
+
+            var request = get("/api/experiences");
+            if (c.query() != null) {
+                request.param("query", c.query());
+            }
+            if (c.competencies() != null) {
+                request.param("competencies", c.competencies());
+            }
+            if (c.year() != null) {
+                request.param("year", c.year());
+            }
+            JsonNode app = json.readTree(web.perform(request).andExpect(status().isOk()).andReturn().getResponse()
+                    .getContentAsString());
+            List<Long> appIds = new java.util.ArrayList<>();
+            app.get("experiences").forEach(e -> appIds.add(e.get("id").asLong()));
+
+            assertThat(appIds).as(c.mcpArguments()).isEqualTo(mcpIds);
+            assertThat(app.get("total").asInt()).as(c.mcpArguments()).isEqualTo(mcp.get("total").asInt());
+        }
+    }
+
     @Test
     void 맞는_게_없으면_오류가_아니라_빈_목록() throws Exception {
         call(token, "search_experiences", "{\"query\":\"쿠버네티스\"}")
