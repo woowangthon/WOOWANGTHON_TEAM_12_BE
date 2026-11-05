@@ -38,6 +38,9 @@ public class Activity {
     @Column(nullable = false)
     private boolean ongoing;
 
+    // 그때의 나(S-34) — 계기 · 그때 든 생각 한 줄. 사용자만 쓴다. 경험이 아니라 추천 · 초안 근거로 쓰지 않는다
+    private String note;
+
     // 같은 활동 제안(S-44) — 같아 보이는 기존 활동의 id. 분석 작업만 붙이고, 따로 두기 · 합치기 때 null
     private Long mergeSuggestionActivityId;
 
@@ -75,6 +78,10 @@ public class Activity {
         this.ongoing = period.ongoing();
     }
 
+    public void changeNote(String note) {
+        this.note = note;
+    }
+
     /** 분석 작업이 새 활동에 붙인다(S-44). 그 밖에서는 부르지 않는다. */
     public void suggestMergeWith(Long activityId) {
         this.mergeSuggestionActivityId = activityId;
@@ -102,6 +109,10 @@ public class Activity {
 
     public Period getPeriod() {
         return new Period(periodStart, periodEnd, ongoing);
+    }
+
+    public String getNote() {
+        return note;
     }
 
     public int getExperienceCount() {

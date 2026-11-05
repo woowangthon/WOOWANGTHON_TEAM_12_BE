@@ -17,10 +17,11 @@ public final class ActivityResponses {
         }
     }
 
-    public record Summary(Long id, String name, Period period, int experienceCount, MergeSuggestion mergeSuggestion) {
+    public record Summary(Long id, String name, Period period, int experienceCount, String note,
+            MergeSuggestion mergeSuggestion) {
 
         public static Summary from(Activity a, Activity suggested) {
-            return new Summary(a.getId(), a.getName(), a.getPeriod(), a.getExperienceCount(),
+            return new Summary(a.getId(), a.getName(), a.getPeriod(), a.getExperienceCount(), a.getNote(),
                     MergeSuggestion.of(suggested));
         }
     }
@@ -28,16 +29,16 @@ public final class ActivityResponses {
     public record Timeline(List<Summary> activities) {
     }
 
-    public record Detail(Long id, String name, Period period, MergeSuggestion mergeSuggestion,
+    public record Detail(Long id, String name, Period period, String note, MergeSuggestion mergeSuggestion,
             List<ExperienceResponse> experiences) {
 
         public static Detail from(Activity a, Activity suggested) {
-            return new Detail(a.getId(), a.getName(), a.getPeriod(), MergeSuggestion.of(suggested),
+            return new Detail(a.getId(), a.getName(), a.getPeriod(), a.getNote(), MergeSuggestion.of(suggested),
                     a.getExperiences().stream().map(ExperienceResponse::from).toList());
         }
     }
 
-    // MCP 응답 — mergeSuggestion(화면에서 사용자가 정할 AI 제안)을 싣지 않는다(mcp-api.md 「list_activities」)
+    // MCP 응답 — mergeSuggestion(화면에서 사용자가 정할 AI 제안) · note(S-34)를 싣지 않는다(mcp-api.md 「list_activities」)
 
     public record McpSummary(Long id, String name, Period period, int experienceCount) {
 

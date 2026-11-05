@@ -578,6 +578,68 @@ class ExperienceApiTest {
     }
 
     @Test
+    void 계기는_보낸_때만_바뀌고_null_빈_문자열이면_지워진다() throws Exception {
+        // 처음엔 없다
+        mvc.perform(get("/api/activities/{id}", appId)).andExpect(jsonPath("$.note").value(nullValue()));
+
+        // 앞뒤 공백 · 줄바꿈은 걷고 저장한다
+        patchJson("/api/activities/" + appId, "{\"note\": \"  문제만 풀다 보니 만들고 싶어졌다\\n\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value("문제만 풀다 보니 만들고 싶어졌다"));
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities[?(@.id == %d)].note".formatted(appId))
+                        .value("문제만 풀다 보니 만들고 싶어졌다"))
+                .andExpect(jsonPath("$.activities[?(@.id == %d)].note".formatted(studyId)).value(hasItem(nullValue())));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.note").value("문제만 풀다 보니 만들고 싶어졌다"));
+
+        // 빼면 그대로
+        patchJson("/api/activities/" + appId, "{\"name\": \"바꿔요\"}")
+                .andExpect(jsonPath("$.note").value("문제만 풀다 보니 만들고 싶어졌다"));
+
+        patchJson("/api/activities/" + appId, "{\"note\": null}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value(nullValue()));
+
+        patchJson("/api/activities/" + appId, "{\"note\": \"다시\"}").andExpect(jsonPath("$.note").value("다시"));
+        patchJson("/api/activities/" + appId, "{\"note\": \"   \"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value(nullValue()));
+    }
+
+    @Test
+    void 계기_오류() throws Exception {
+        String url = "/api/activities/" + appId;
+        String max = "가".repeat(200);
+
+        patchJson(url, "{\"note\": \"  " + max + "  \"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value(max));
+
+        for (String note : List.of("\"" + max + "가\"", "\"첫 줄\\n둘째 줄\"", "\"첫 줄\\r둘째 줄\"", "3", "true", "[]")) {
+            expectError(patchJson(url, "{\"note\": " + note + "}"), 400, "INVALID_REQUEST");
+        }
+        mvc.perform(get(url)).andExpect(jsonPath("$.note").value(max));
+    }
+
+    @Test
+    void 합치면_남길_활동의_계기를_두고_없을_때만_옮겨_온다() throws Exception {
+        patchJson("/api/activities/" + studyId, "{\"note\": \"스터디 계기\"}").andExpect(status().isOk());
+
+        // 남길 활동에 없으면 옮겨 온다
+        long keepId = activities.save(new Activity(userId, "남길 활동", new Period(null, null, false))).getId();
+        postJson("/api/activities/" + keepId + "/merge", "{\"fromActivityId\": " + studyId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value("스터디 계기"));
+
+        // 있으면 그대로 — 이어 붙이지 않는다
+        patchJson("/api/activities/" + appId, "{\"note\": \"앱 계기\"}").andExpect(status().isOk());
+        postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + keepId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.note").value("앱 계기"));
+    }
+
+    @Test
     void 따로_두면_제안만_사라지고_두_번_눌러도_204() throws Exception {
         long newId = newActivitySuggesting(appId);
 

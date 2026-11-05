@@ -289,6 +289,18 @@ class QuestionApiTest {
     }
 
     @Test
+    void 활동의_계기는_매칭_요청에_싣지_않는다() throws Exception {
+        Activity app = activities.findById(appId).orElseThrow();
+        app.changeNote("계기 비밀");
+        activities.save(app);
+
+        awaitDone(submit(QUESTION_A));
+
+        assertThat(RECEIVED).hasSize(1);
+        assertThat(RECEIVED.getFirst()).doesNotContain("계기 비밀").doesNotContain("note");
+    }
+
+    @Test
     void 경험이_없어도_받고_AI_에_빈_후보를_보낸다() throws Exception {
         jdbc.execute("truncate table supplement, citation, experience, activity");
         reply = new FakeReply(200, """
