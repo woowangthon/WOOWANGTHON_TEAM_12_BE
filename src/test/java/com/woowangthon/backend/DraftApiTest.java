@@ -3,7 +3,9 @@ package com.woowangthon.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.nullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -28,6 +30,7 @@ import com.woowangthon.backend.job.JobStatus;
 import com.woowangthon.backend.question.Application;
 import com.woowangthon.backend.question.ApplicationRepository;
 import com.woowangthon.backend.question.Draft;
+import com.woowangthon.backend.question.DraftFrame;
 import com.woowangthon.backend.question.DraftRepository;
 import com.woowangthon.backend.question.InterruptedQuestionCleaner;
 import com.woowangthon.backend.question.Question;
@@ -214,7 +217,8 @@ class DraftApiTest {
     @AfterEach
     void cleanUp() {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
-        jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, draft_sentence_evidence, draft_sentence, draft_omitted, draft_experience, draft, "
+        jdbc.execute("truncate table guideline");
+        jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, "
                 + "grounding_sentence_evidence, grounding_sentence, grounding_check, "
                 + "question_recommendation_evidence, question_recommendation, question_requirement, supplement, clarification, "
                 + "question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
@@ -600,7 +604,7 @@ class DraftApiTest {
     @Test
     void 서버가_다시_켜지면_만들던_초안은_실패가_된다() {
         Draft draft = new Draft(questionId);
-        draft.start(List.of(chat));
+        draft.start(List.of(chat), DraftFrame.NONE, List.of());
         drafts.save(draft);
 
         cleaner.run(null);
@@ -608,6 +612,177 @@ class DraftApiTest {
         Draft after = drafts.findByQuestionId(questionId).orElseThrow();
         assertThat(after.getStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(after.getErrorCode()).isEqualTo("INTERNAL_ERROR");
+    }
+
+    // --- 구성 틀 · 작성 지침 (S-49 · S-50) ---
+
+    @Test
+    void 틀과_켜_둔_지침을_싣고_반영_여부를_초안에_남긴다() throws Exception {
+        List<Long> ids = saveGuidelines("첫 문장에 결과를 쓴다", "결과는 꼭 수치로 쓴다", "꺼 둔 지침");
+        mvc.perform(patch("/api/guidelines/{id}", ids.get(2)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\": false}")).andExpect(status().isOk());
+        draftReply = new FakeReply(200, withGuidelines("""
+                [{ "id": %d, "applied": true, "note": null },
+                 { "id": %d, "applied": false, "note": "자료에 수치가 없어 넣지 않았어요" }]
+                """.formatted(ids.get(0), ids.get(1))), 0);
+
+        postJson("{\"experienceIds\": [" + chat + ", " + study + "], \"frame\": \"STAR\"}").andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.frame").value("STAR"))
+                .andExpect(jsonPath("$.guidelines.length()").value(0));
+
+        String done = awaitDraft();
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        String received = RECEIVED.getFirst();
+        assertThat((String) JsonPath.read(received, "$.question.frame")).isEqualTo("STAR");
+        assertThat((List<String>) JsonPath.read(received, "$.guidelines[*].text"))
+                .containsExactly("첫 문장에 결과를 쓴다", "결과는 꼭 수치로 쓴다");
+        assertThat(((Number) JsonPath.read(received, "$.guidelines[0].id")).longValue()).isEqualTo(ids.get(0));
+        assertThat(received).doesNotContain("멘토 피드백").doesNotContain("꺼 둔 지침");
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.frame").value("STAR"))
+                .andExpect(jsonPath("$.draft.guidelines.length()").value(2))
+                .andExpect(jsonPath("$.draft.guidelines[0].id").value(ids.get(0)))
+                .andExpect(jsonPath("$.draft.guidelines[0].text").value("첫 문장에 결과를 쓴다"))
+                .andExpect(jsonPath("$.draft.guidelines[0].source").value("멘토 피드백"))
+                .andExpect(jsonPath("$.draft.guidelines[0].applied").value(true))
+                .andExpect(jsonPath("$.draft.guidelines[0].note").value(nullValue()))
+                .andExpect(jsonPath("$.draft.guidelines[1].applied").value(false))
+                .andExpect(jsonPath("$.draft.guidelines[1].note").value("자료에 수치가 없어 넣지 않았어요"));
+    }
+
+    @Test
+    void 지침을_고치거나_지워도_초안의_지침은_그대로다() throws Exception {
+        List<Long> ids = saveGuidelines("고칠 지침", "지울 지침");
+        draftReply = new FakeReply(200, withGuidelines("""
+                [{ "id": %d, "applied": true, "note": null }, { "id": %d, "applied": true, "note": null }]
+                """.formatted(ids.get(0), ids.get(1))), 0);
+        start(chat, study).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+
+        mvc.perform(patch("/api/guidelines/{id}", ids.get(0)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\": \"고친 글\", \"source\": \"고친 출처\", \"enabled\": false}")).andExpect(status().isOk());
+        mvc.perform(delete("/api/guidelines/{id}", ids.get(1))).andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.guidelines[*].text", contains("고칠 지침", "지울 지침")))
+                .andExpect(jsonPath("$.draft.guidelines[*].source", contains("멘토 피드백", "멘토 피드백")))
+                .andExpect(jsonPath("$.draft.guidelines[1].id").value(ids.get(1)));
+    }
+
+    @Test
+    void 시작한_뒤에_지침을_바꿔도_시작할_때_켠_지침이_실린다() throws Exception {
+        List<Long> ids = saveGuidelines("시작할 때 글");
+        draftReply = new FakeReply(200, withGuidelines("[{ \"id\": %d, \"applied\": true, \"note\": null }]".formatted(ids.get(0))), 300);
+
+        start(chat, study).andExpect(status().isAccepted());
+        mvc.perform(delete("/api/guidelines/{id}", ids.get(0))).andExpect(status().isNoContent());
+        awaitDraft();
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.draft.guidelines[0].text").value("시작할 때 글"));
+    }
+
+    @Test
+    void 틀을_빼고_지침이_없으면_칸을_싣지_않고_NONE_이다() throws Exception {
+        start(chat, study).andExpect(status().isAccepted()).andExpect(jsonPath("$.frame").value("NONE"));
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+
+        assertThat(RECEIVED.getFirst()).doesNotContain("frame").doesNotContain("guidelines");
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.frame").value("NONE"))
+                .andExpect(jsonPath("$.draft.guidelines.length()").value(0));
+    }
+
+    @Test
+    void 틀_없이를_고르면_AI_에_싣지_않고_NONE_으로_남는다() throws Exception {
+        postJson("{\"experienceIds\": [" + chat + ", " + study + "], \"frame\": \"NONE\"}").andExpect(status().isAccepted());
+        awaitDraft();
+
+        assertThat(RECEIVED.getFirst()).doesNotContain("frame");
+        mvc.perform(get("/api/questions/{id}", questionId)).andExpect(jsonPath("$.draft.frame").value("NONE"));
+    }
+
+    @Test
+    void 실패한_초안은_틀이_남고_지침은_비어_있다() throws Exception {
+        saveGuidelines("지침");
+        draftReply = new FakeReply(502, "{ \"error\": { \"code\": \"LLM_ERROR\", \"message\": \"실패\" } }", 0);
+
+        postJson("{\"experienceIds\": [" + chat + ", " + study + "], \"frame\": \"CARL\"}").andExpect(status().isAccepted());
+        awaitDraft();
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.status").value("FAILED"))
+                .andExpect(jsonPath("$.draft.frame").value("CARL"))
+                .andExpect(jsonPath("$.draft.guidelines.length()").value(0));
+    }
+
+    @Test
+    void 지침_응답이_규칙을_벗어나면_실패로_남긴다() throws Exception {
+        long id = saveGuidelines("지침").getFirst();
+        for (String guidelines : List.of(
+                "[]",
+                "[{ \"id\": %d, \"applied\": true, \"note\": null }, { \"id\": %d, \"applied\": true, \"note\": null }]".formatted(id, id),
+                "[{ \"id\": %d, \"applied\": true, \"note\": null }]".formatted(id + 1000),
+                "[{ \"id\": %d, \"applied\": null, \"note\": null }]".formatted(id),
+                "[{ \"id\": %d, \"applied\": true, \"note\": \"있음\" }]".formatted(id),
+                "[{ \"id\": %d, \"applied\": false, \"note\": null }]".formatted(id),
+                "[{ \"id\": %d, \"applied\": false, \"note\": \"두\\n줄\" }]".formatted(id),
+                "[{ \"id\": %d, \"applied\": false, \"note\": \"%s\" }]".formatted(id, "가".repeat(81)))) {
+            draftReply = new FakeReply(200, withGuidelines(guidelines), 0);
+
+            start(chat, study).andExpect(status().isAccepted());
+            String done = awaitDraft();
+
+            assertThat((String) JsonPath.read(done, "$.draft.error.code")).as(guidelines).isEqualTo("AI_FAILED");
+            assertThat((String) JsonPath.read(done, "$.draft.error.message")).as(guidelines).contains("guidelines");
+        }
+    }
+
+    @Test
+    void 응답에_지침_칸이_없어도_실은_지침이_있으면_실패로_남긴다() throws Exception {
+        saveGuidelines("지침");
+
+        start(chat, study).andExpect(status().isAccepted());
+        String done = awaitDraft();
+
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("FAILED");
+        assertThat((String) JsonPath.read(done, "$.draft.error.message")).contains("guidelines");
+    }
+
+    @Test
+    void 틀이_생기기_전_초안은_NONE_과_빈_지침이다() throws Exception {
+        jdbc.update("insert into draft (question_id, status) values (?, 'COMPLETED')", questionId);
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.frame").value("NONE"))
+                .andExpect(jsonPath("$.draft.guidelines.length()").value(0));
+    }
+
+    @Test
+    void 틀이_값_목록_밖이면_400_이고_세지_않는다() throws Exception {
+        start(chat, study).andExpect(status().isAccepted());
+        awaitDraft();
+        int before = used();
+
+        expectError(postJson("{\"experienceIds\": [" + chat + ", " + study + "], \"frame\": \"SWOT\"}"), 400, "INVALID_REQUEST");
+
+        assertThat(used()).isEqualTo(before);
+    }
+
+    private String withGuidelines(String guidelines) {
+        return contractExample().replaceFirst("\\{", java.util.regex.Matcher.quoteReplacement("{ \"guidelines\": " + guidelines + ","));
+    }
+
+    private List<Long> saveGuidelines(String... texts) throws Exception {
+        String lines = java.util.Arrays.stream(texts).map(t -> "{\"text\": \"" + t + "\", \"source\": \"멘토 피드백\"}")
+                .collect(java.util.stream.Collectors.joining(", "));
+        String body = mvc.perform(post("/api/guidelines").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"guidelines\": [" + lines + "]}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        List<Number> ids = JsonPath.read(body, "$.guidelines[*].id");
+        return ids.stream().map(Number::longValue).toList();
     }
 
     // --- 요청 오류 ---
