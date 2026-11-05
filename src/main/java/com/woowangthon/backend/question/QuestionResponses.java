@@ -56,7 +56,7 @@ public final class QuestionResponses {
 
     public record ActivityRef(Long id, String name, Period period) {
 
-        static ActivityRef from(Activity a) {
+        public static ActivityRef from(Activity a) {
             return new ActivityRef(a.getId(), a.getName(), a.getPeriod());
         }
     }

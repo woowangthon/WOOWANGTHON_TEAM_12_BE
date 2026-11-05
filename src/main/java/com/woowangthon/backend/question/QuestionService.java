@@ -117,7 +117,15 @@ public class QuestionService {
     @Transactional(readOnly = true)
     public MatchRequest matchRequest(long questionId) {
         Question question = questions.findById(questionId).orElseThrow();
-        List<MatchRequest.ExperiencePart> candidates = experiences.findAllOfUser(question.getUserId()).stream()
+        // 지원처 종류 · 직무는 싣지 않는다 — 추천 · 되묻기가 그 칸으로 바뀌지 않는다(S-42)
+        return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText()),
+                experienceParts(question.getUserId()));
+    }
+
+    /** 사용자의 경험 전부를 ai-api.md 「POST /match」 experiences 모양으로 — 매칭과 꺼내기(/ask, S-29)가 같이 쓴다. */
+    @Transactional(readOnly = true)
+    public List<MatchRequest.ExperiencePart> experienceParts(long userId) {
+        return experiences.findAllOfUser(userId).stream()
                 .map(e -> new MatchRequest.ExperiencePart(e.getId(), e.getActivity().getName(),
                         e.getActivity().getPeriod(), e.getContent(), e.getCompetencies(), e.getActor(),
                         e.getSourceStatus(),
@@ -126,8 +134,6 @@ public class QuestionService {
                         e.getSupplements().stream()
                                 .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList()))
                 .toList();
-        // 지원처 종류 · 직무는 싣지 않는다 — 추천 · 되묻기가 그 칸으로 바뀌지 않는다(S-42)
-        return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText()), candidates);
     }
 
     /**
@@ -224,7 +230,7 @@ public class QuestionService {
     }
 
     // id 는 같은 경험의 근거 · 보완 중 하나여야 한다 — 지어낸 근거를 저장하지 않는다(S-20)
-    private static List<Evidence> evidence(List<MatchResponse.EvidenceResult> found, MatchRequest.ExperiencePart experience) {
+    public static List<Evidence> evidence(List<MatchResponse.EvidenceResult> found, MatchRequest.ExperiencePart experience) {
         Set<Long> citationIds = experience.citations().stream().map(MatchRequest.CitationPart::id).collect(Collectors.toSet());
         Set<Long> supplementIds = experience.supplements().stream().map(MatchRequest.SupplementPart::id)
                 .collect(Collectors.toSet());
