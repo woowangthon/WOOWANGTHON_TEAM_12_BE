@@ -19,9 +19,11 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(InterruptedQuestionCleaner.class);
 
     private final QuestionRepository questions;
+    private final GroundingCheckRepository checks;
 
-    public InterruptedQuestionCleaner(QuestionRepository questions) {
+    public InterruptedQuestionCleaner(QuestionRepository questions, GroundingCheckRepository checks) {
         this.questions = questions;
+        this.checks = checks;
     }
 
     @Override
@@ -31,6 +33,12 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
         interrupted.forEach(q -> q.fail("INTERNAL_ERROR", "서버가 다시 시작되어 추천이 끊겼습니다"));
         if (!interrupted.isEmpty()) {
             log.warn("추천 중에 끊긴 문항 {}개를 실패로 돌렸습니다", interrupted.size());
+        }
+        // 근거 점검도 같다(S-45) — 「다시 점검」은 같은 POST 라 실패로만 돌리면 된다
+        List<GroundingCheck> interruptedChecks = checks.findByStatus(JobStatus.ANALYZING);
+        interruptedChecks.forEach(c -> c.fail("INTERNAL_ERROR", "서버가 다시 시작되어 근거 점검이 끊겼습니다"));
+        if (!interruptedChecks.isEmpty()) {
+            log.warn("점검 중에 끊긴 근거 점검 {}개를 실패로 돌렸습니다", interruptedChecks.size());
         }
     }
 }

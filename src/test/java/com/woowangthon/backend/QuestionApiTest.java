@@ -178,7 +178,7 @@ class QuestionApiTest {
     @AfterEach
     void cleanUp() {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
-        jdbc.execute("truncate table question_recommendation_evidence, question_recommendation, question_requirement, "
+        jdbc.execute("truncate table grounding_sentence_evidence, grounding_sentence, grounding_check, question_recommendation_evidence, question_recommendation, question_requirement, "
                 + "supplement, clarification, question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source_section, source");
     }
 

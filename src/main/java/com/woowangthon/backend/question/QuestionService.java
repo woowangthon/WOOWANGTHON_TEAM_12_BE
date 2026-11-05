@@ -264,8 +264,9 @@ public class QuestionService {
                         "requirements[].status 는 SUPPORTED · PARTIAL · NOT_FOUND 중 하나여야 합니다: " + value));
     }
 
+    // 추천엔 EXPERIENCE 가 없다(README 「값 목록」 evidenceType)
     private static EvidenceType evidenceType(String value) {
-        return Stream.of(EvidenceType.values()).filter(t -> t.name().equals(value)).findFirst()
+        return Stream.of(EvidenceType.CITATION, EvidenceType.SUPPLEMENT).filter(t -> t.name().equals(value)).findFirst()
                 .orElseThrow(() -> AiCallException.invalidResponse(
                         "evidence[].type 은 CITATION · SUPPLEMENT 중 하나여야 합니다: " + value));
     }
