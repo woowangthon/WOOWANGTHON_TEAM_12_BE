@@ -20,10 +20,13 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
 
     private final QuestionRepository questions;
     private final GroundingCheckRepository checks;
+    private final DraftRepository drafts;
 
-    public InterruptedQuestionCleaner(QuestionRepository questions, GroundingCheckRepository checks) {
+    public InterruptedQuestionCleaner(QuestionRepository questions, GroundingCheckRepository checks,
+            DraftRepository drafts) {
         this.questions = questions;
         this.checks = checks;
+        this.drafts = drafts;
     }
 
     @Override
@@ -39,6 +42,12 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
         interruptedChecks.forEach(c -> c.fail("INTERNAL_ERROR", "서버가 다시 시작되어 근거 점검이 끊겼습니다"));
         if (!interruptedChecks.isEmpty()) {
             log.warn("점검 중에 끊긴 근거 점검 {}개를 실패로 돌렸습니다", interruptedChecks.size());
+        }
+        // 답변 초안도 같다(S-27)
+        List<Draft> interruptedDrafts = drafts.findByStatus(JobStatus.ANALYZING);
+        interruptedDrafts.forEach(d -> d.fail("INTERNAL_ERROR", "서버가 다시 시작되어 답변 초안이 끊겼습니다"));
+        if (!interruptedDrafts.isEmpty()) {
+            log.warn("만드는 중에 끊긴 답변 초안 {}개를 실패로 돌렸습니다", interruptedDrafts.size());
         }
     }
 }

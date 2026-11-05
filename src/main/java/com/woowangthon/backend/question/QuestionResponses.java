@@ -91,6 +91,7 @@ public final class QuestionResponses {
             List<RequirementResponse> requirements,
             List<RecommendationResponse> recommendations,
             List<ClarificationResponse> clarifications,
+            DraftService.DraftView draft,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt) {
 
@@ -99,7 +100,7 @@ public final class QuestionResponses {
          * 요구사항의 experienceIds · 추천 · 되묻기에서 뺀다. 추천의 evidence 에서 그새 지워진 보완도 뺀다(S-24) — 근거 줄은
          * 번호만 들고 있어 보완을 지워도 남는다(BE#37).
          */
-        static Detail from(Question q, Map<Long, Experience> existing) {
+        static Detail from(Question q, Map<Long, Experience> existing, DraftService.DraftView draft) {
             ErrorResponse.Error error = q.getErrorCode() == null
                     ? null
                     : new ErrorResponse.Error(q.getErrorCode(), q.getErrorMessage());
@@ -127,7 +128,7 @@ public final class QuestionResponses {
                                     .map(Supplement::getId).findFirst().orElse(null)))
                     .toList();
             return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getQuestionType(),
-                    q.getQuestionTypeBy(), q.getStatus(), error, requirements, recommendations, clarifications,
+                    q.getQuestionTypeBy(), q.getStatus(), error, requirements, recommendations, clarifications, draft,
                     Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));
         }
 

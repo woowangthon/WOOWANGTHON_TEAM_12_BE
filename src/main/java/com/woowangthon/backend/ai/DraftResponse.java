@@ -1,0 +1,13 @@
+package com.woowangthon.backend.ai;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import java.util.List;
+
+/** ai-api.md 「POST /draft」 응답 200. 값 목록(type)은 문자열로 받아 저장할 때 확인한다. */
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record DraftResponse(List<SentenceResult> sentences, List<String> omitted, String model) {
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SentenceResult(String text, List<MatchResponse.EvidenceResult> evidence) {
+    }
+}
