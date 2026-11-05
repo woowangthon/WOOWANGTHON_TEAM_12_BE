@@ -6,6 +6,7 @@ import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,7 @@ public class ApplicationService {
 
     static final int MAX_QUESTIONS_PER_SUBMIT = 10;
     static final int MAX_QUESTIONS_PER_APPLICATION = 20;
+    private static final Pattern MONTH = Pattern.compile("\\d{4}-(0[1-9]|1[0-2])");
 
     private final ApplicationRepository applications;
     private final QuestionRepository questions;
@@ -78,20 +80,33 @@ public class ApplicationService {
         return new QuestionResponses.Submitted(question.getId(), application.getId(), question.getStatus());
     }
 
-    /** 지원처 종류 · 직무를 바꾼다(S-42) — 보낸 필드만, null 이면 비운다. 추천은 다시 돌지 않는다. */
+    /**
+     * 지원처 종류 · 직무(S-42) · 상태(S-36) · 낸 달(S-37)을 바꾼다 — 보낸 필드만. 종류 · 직무는 null 이면 비우고,
+     * 상태 · 낸 달은 null 을 받지 않는다. 둘 다 보내면 보낸 달이 이긴다. 추천은 다시 돌지 않는다.
+     */
     @Transactional
     public QuestionResponses.ApplicationResponse update(long applicationId, PatchBody body) {
         var organizationType = body.string("organizationType")
                 .map(f -> new PatchBody.Field<>(QuestionService.value(OrganizationType.class, f.value(), "organizationType")));
         var jobRole = body.string("jobRole")
                 .map(f -> new PatchBody.Field<>(QuestionService.value(JobRole.class, f.value(), "jobRole")));
-        if (organizationType.isEmpty() && jobRole.isEmpty()) {
-            throw ApiException.invalidRequest("organizationType · jobRole 중 하나는 보내야 합니다");
+        var status = body.string("applicationStatus").map(f -> applicationStatus(f.value()));
+        var month = body.string("submittedMonth").map(f -> checkMonth(f.value()));
+        if (organizationType.isEmpty() && jobRole.isEmpty() && status.isEmpty() && month.isEmpty()) {
+            throw ApiException.invalidRequest(
+                    "organizationType · jobRole · applicationStatus · submittedMonth 중 하나는 보내야 합니다");
         }
         Application application = applications.findForUpdate(applicationId, CurrentUser.id())
                 .orElseThrow(() -> notFound(applicationId));
         organizationType.ifPresent(f -> application.changeOrganizationType(f.value()));
         jobRole.ifPresent(f -> application.changeJobRole(f.value()));
+        status.ifPresent(application::changeStatus);
+        if (month.isPresent()) {
+            if (application.getApplicationStatus() == ApplicationStatus.WRITING) {
+                throw ApiException.invalidRequest("작성 중인 지원에는 submittedMonth 를 보낼 수 없습니다");
+            }
+            application.changeSubmittedMonth(month.get());
+        }
         return QuestionResponses.ApplicationResponse.from(application);
     }
 
@@ -105,6 +120,21 @@ public class ApplicationService {
     public QuestionResponses.ApplicationResponse get(long applicationId) {
         return QuestionResponses.ApplicationResponse.from(applications.findByIdAndUserId(applicationId, CurrentUser.id())
                 .orElseThrow(() -> notFound(applicationId)));
+    }
+
+    private static ApplicationStatus applicationStatus(String value) {
+        ApplicationStatus status = QuestionService.value(ApplicationStatus.class, value, "applicationStatus");
+        if (status == null) {
+            throw ApiException.invalidRequest("applicationStatus 는 null 일 수 없습니다");
+        }
+        return status;
+    }
+
+    private static String checkMonth(String value) {
+        if (value == null || !MONTH.matcher(value).matches()) {
+            throw ApiException.invalidRequest("submittedMonth 는 YYYY-MM 이어야 합니다");
+        }
+        return value;
     }
 
     private static ApiException notFound(long applicationId) {

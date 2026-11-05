@@ -14,6 +14,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
+import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
 import com.woowangthon.backend.experience.CitationRepository;
@@ -35,6 +36,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -1092,6 +1094,98 @@ class QuestionApiTest {
     // AI 응답에 문항 유형을 붙인다(ai-api.md 「POST /match」 questionType)
     private static String withType(String matchResponse, String questionType) {
         return matchResponse.replaceFirst("\\{", "{\"questionType\": \"" + questionType + "\",");
+    }
+
+    // --- 지원 상태 · 낸 달 (S-36 · S-37) — BE#63 ---
+
+    @Test
+    void 새_지원은_작성_중이고_요청에_실은_상태_낸_달은_무시한다() throws Exception {
+        long applicationId = submitApplication("""
+                {"applicationStatus": "PASSED", "submittedMonth": "2025-02", "questions": [{"text": "문항"}]}""");
+        awaitApplication(applicationId);
+
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.applicationStatus").value("WRITING"))
+                .andExpect(jsonPath("$.submittedMonth").value(nullValue()));
+        mvc.perform(get("/api/applications"))
+                .andExpect(jsonPath("$.applications[0].applicationStatus").value("WRITING"))
+                .andExpect(jsonPath("$.applications[0].submittedMonth").value(nullValue()));
+    }
+
+    @Test
+    void 작성_중을_벗어나면_그_달이_붙고_되돌리면_지워진다() throws Exception {
+        long applicationId = submitApplication("{\"questions\": [{\"text\": \"문항\"}]}");
+        awaitApplication(applicationId);
+        String thisMonth = YearMonth.now(Times.SEOUL).toString();
+
+        patchApplication(applicationId, "{\"applicationStatus\": \"SUBMITTED\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationStatus").value("SUBMITTED"))
+                .andExpect(jsonPath("$.submittedMonth").value(thisMonth));
+        // 낸 달만 고치면 상태는 그대로, 다른 상태끼리 바꿀 땐 고친 달이 남는다
+        patchApplication(applicationId, "{\"submittedMonth\": \"2025-02\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationStatus").value("SUBMITTED"))
+                .andExpect(jsonPath("$.submittedMonth").value("2025-02"));
+        patchApplication(applicationId, "{\"applicationStatus\": \"PASSED\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationStatus").value("PASSED"))
+                .andExpect(jsonPath("$.submittedMonth").value("2025-02"));
+        // 같은 값을 다시 보내도 200
+        patchApplication(applicationId, "{\"applicationStatus\": \"PASSED\"}").andExpect(status().isOk());
+
+        patchApplication(applicationId, "{\"applicationStatus\": \"WRITING\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationStatus").value("WRITING"))
+                .andExpect(jsonPath("$.submittedMonth").value(nullValue()));
+
+        // 모름도 낸 것이라 달이 붙고, 둘 다 보내면 보낸 달이 이긴다
+        patchApplication(applicationId, "{\"applicationStatus\": \"UNKNOWN\"}")
+                .andExpect(jsonPath("$.submittedMonth").value(thisMonth));
+        patchApplication(applicationId, "{\"applicationStatus\": \"WRITING\"}").andExpect(status().isOk());
+        patchApplication(applicationId, "{\"applicationStatus\": \"NOT_PASSED\", \"submittedMonth\": \"2024-12\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationStatus").value("NOT_PASSED"))
+                .andExpect(jsonPath("$.submittedMonth").value("2024-12"));
+
+        // 추천은 다시 돌지 않고, 매칭 요청에 상태를 싣지 않는다
+        assertThat(RECEIVED).hasSize(1);
+        assertThat(RECEIVED.get(0)).doesNotContain("applicationStatus").doesNotContain("submittedMonth");
+    }
+
+    @Test
+    void 지원_상태_낸_달_오류() throws Exception {
+        long applicationId = submitApplication("{\"questions\": [{\"text\": \"문항\"}]}");
+        awaitApplication(applicationId);
+
+        for (String body : List.of("{\"applicationStatus\": \"FAILED\"}", "{\"applicationStatus\": \"submitted\"}",
+                "{\"applicationStatus\": null}", "{\"applicationStatus\": 1}",
+                "{\"applicationStatus\": \"SUBMITTED\", \"submittedMonth\": null}",
+                "{\"applicationStatus\": \"SUBMITTED\", \"submittedMonth\": \"2025-2\"}",
+                "{\"applicationStatus\": \"SUBMITTED\", \"submittedMonth\": \"2025\"}",
+                "{\"applicationStatus\": \"SUBMITTED\", \"submittedMonth\": \"2025-13\"}",
+                "{\"applicationStatus\": \"SUBMITTED\", \"submittedMonth\": \"2025-02-01\"}",
+                // 바꾼 뒤 상태가 작성 중이면 달을 받지 않는다
+                "{\"submittedMonth\": \"2025-02\"}",
+                "{\"applicationStatus\": \"WRITING\", \"submittedMonth\": \"2025-02\"}",
+                // 하나라도 틀리면 아무것도 바꾸지 않는다
+                "{\"jobRole\": \"BACKEND\", \"submittedMonth\": \"2025-02\"}")) {
+            expectError(patchApplication(applicationId, body), 400, "INVALID_REQUEST");
+        }
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.applicationStatus").value("WRITING"))
+                .andExpect(jsonPath("$.submittedMonth").value(nullValue()))
+                .andExpect(jsonPath("$.jobRole").value(nullValue()));
+
+        // 낸 지원을 작성 중으로 되돌리며 달을 보내면 400 이고 그대로 남는다
+        patchApplication(applicationId, "{\"applicationStatus\": \"SUBMITTED\", \"submittedMonth\": \"2025-02\"}")
+                .andExpect(status().isOk());
+        expectError(patchApplication(applicationId, "{\"applicationStatus\": \"WRITING\", \"submittedMonth\": \"2025-03\"}"),
+                400, "INVALID_REQUEST");
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.applicationStatus").value("SUBMITTED"))
+                .andExpect(jsonPath("$.submittedMonth").value("2025-02"));
+        expectError(patchApplication(999_999, "{\"applicationStatus\": \"SUBMITTED\"}"), 404, "APPLICATION_NOT_FOUND");
     }
 
     private ResultActions patchApplication(long applicationId, String json) throws Exception {

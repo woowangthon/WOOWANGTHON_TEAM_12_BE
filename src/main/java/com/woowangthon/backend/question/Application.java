@@ -1,5 +1,6 @@
 package com.woowangthon.backend.question;
 
+import com.woowangthon.backend.common.Times;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -11,11 +12,12 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 import org.hibernate.annotations.CreationTimestamp;
 
-/** 지원 — 지원처 이름 · 종류 · 직무(모두 선택)와 문항 여러 개(SPEC R-03 용어, question-api.md 「Application」). 문항은 넣은 순서대로. */
+/** 지원 — 지원처 이름 · 종류 · 직무(모두 선택) · 상태 · 낸 달과 문항 여러 개(SPEC R-03 용어, question-api.md 「Application」). 문항은 넣은 순서대로. */
 @Entity
 @Table(name = "application")
 public class Application {
@@ -34,6 +36,12 @@ public class Application {
 
     @Enumerated(EnumType.STRING)
     private JobRole jobRole;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ApplicationStatus applicationStatus = ApplicationStatus.WRITING;
+
+    private String submittedMonth;
 
     @OneToMany(mappedBy = "application")
     @OrderBy("id asc")
@@ -67,6 +75,21 @@ public class Application {
         this.jobRole = jobRole;
     }
 
+    /** 상태를 바꾼다(S-36) — 낸 달은 작성 중이면 없고, 작성 중을 벗어나면 그 달(서울)이 붙는다. 다른 상태끼리는 그대로. */
+    public void changeStatus(ApplicationStatus status) {
+        this.applicationStatus = status;
+        if (status == ApplicationStatus.WRITING) {
+            this.submittedMonth = null;
+        } else if (this.submittedMonth == null) {
+            this.submittedMonth = YearMonth.now(Times.SEOUL).toString();
+        }
+    }
+
+    /** 낸 달을 고친다(S-37) — 예전에 낸 지원을 나중에 넣었을 때 그해 자리에 놓이게. */
+    public void changeSubmittedMonth(String submittedMonth) {
+        this.submittedMonth = submittedMonth;
+    }
+
     public Long getId() {
         return id;
     }
@@ -85,6 +108,14 @@ public class Application {
 
     public JobRole getJobRole() {
         return jobRole;
+    }
+
+    public ApplicationStatus getApplicationStatus() {
+        return applicationStatus;
+    }
+
+    public String getSubmittedMonth() {
+        return submittedMonth;
     }
 
     public List<Question> getQuestions() {
