@@ -84,6 +84,11 @@ public class AiClient {
         return post(sync, "/ask", request, AskResponse.class);
     }
 
+    /** 문항 · 공고에서 지원 칸 나누기(S-30) — 동기(entrance-api). */
+    public ParseApplicationResponse parseApplication(ParseApplicationRequest request) {
+        return post(sync, "/parse-application", request, ParseApplicationResponse.class);
+    }
+
     private <T> T post(Caller caller, String uri, Object request, Class<T> type) {
         T body;
         try {
