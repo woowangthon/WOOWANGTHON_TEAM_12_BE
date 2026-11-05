@@ -3,7 +3,9 @@ package com.woowangthon.backend.activity;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
+import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceService;
+import com.woowangthon.backend.question.RecommendationRepository;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -19,10 +21,13 @@ public class ActivityService {
 
     private final ActivityRepository activities;
     private final ExperienceService experiences;
+    private final RecommendationRepository recommendations;
 
-    public ActivityService(ActivityRepository activities, ExperienceService experiences) {
+    public ActivityService(ActivityRepository activities, ExperienceService experiences,
+            RecommendationRepository recommendations) {
         this.activities = activities;
         this.experiences = experiences;
+        this.recommendations = recommendations;
     }
 
     @Transactional(readOnly = true)
@@ -140,7 +145,16 @@ public class ActivityService {
     }
 
     private ActivityResponses.Detail detail(Activity activity) {
-        return ActivityResponses.Detail.from(activity, suggestedFrom(activity, this::sameUser));
+        return ActivityResponses.Detail.from(activity, suggestedFrom(activity, this::sameUser), usedIn(activity));
+    }
+
+    // 쓰인 지원(S-38) — 경험 수와 상관없이 한 번에 읽는다
+    private Map<Long, List<ActivityResponses.UsedIn>> usedIn(Activity activity) {
+        List<Long> experienceIds = activity.getExperiences().stream().map(Experience::getId).toList();
+        if (experienceIds.isEmpty()) {
+            return Map.of();
+        }
+        return ActivityResponses.UsedIn.byExperience(recommendations.findUsedIn(activity.getUserId(), experienceIds));
     }
 
     private Activity sameUser(Long activityId) {

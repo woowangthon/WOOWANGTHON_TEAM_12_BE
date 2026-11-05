@@ -1,7 +1,14 @@
 package com.woowangthon.backend.activity;
 
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
+import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceResponse;
+import com.woowangthon.backend.question.ApplicationStatus;
+import com.woowangthon.backend.question.RecommendationRepository.UsedInRow;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /** 계약의 ActivitySummary · 활동 목록 · 활동 세부 모양. */
 public final class ActivityResponses {
@@ -29,12 +36,43 @@ public final class ActivityResponses {
     public record Timeline(List<Summary> activities) {
     }
 
-    public record Detail(Long id, String name, Period period, String note, MergeSuggestion mergeSuggestion,
-            List<ExperienceResponse> experiences) {
+    /** 쓰인 지원 하나와 그 지원에서 이 경험이 추천된 문항들(S-38, 계약 「쓰인 지원 usedIn」). */
+    public record UsedIn(Long applicationId, String organization, ApplicationStatus applicationStatus,
+            String submittedMonth, List<UsedInQuestion> questions) {
 
-        public static Detail from(Activity a, Activity suggested) {
+        /** 받은 줄의 순서를 지킨 채 경험 → 지원으로 묶는다. */
+        public static Map<Long, List<UsedIn>> byExperience(List<UsedInRow> rows) {
+            return rows.stream().collect(Collectors.groupingBy(UsedInRow::experienceId,
+                    Collectors.collectingAndThen(
+                            Collectors.groupingBy(UsedInRow::applicationId, LinkedHashMap::new, Collectors.toList()),
+                            byApplication -> byApplication.values().stream().map(UsedIn::from).toList())));
+        }
+
+        private static UsedIn from(List<UsedInRow> sameApplication) {
+            UsedInRow first = sameApplication.getFirst();
+            return new UsedIn(first.applicationId(), first.organization(), first.applicationStatus(),
+                    first.submittedMonth(),
+                    sameApplication.stream().map(r -> new UsedInQuestion(r.questionId(), r.questionText())).toList());
+        }
+    }
+
+    public record UsedInQuestion(Long id, String text) {
+    }
+
+    /** 활동 세부의 경험 — Experience 모양에 usedIn 만 더한다. 그 밖의 응답엔 싣지 않으려고 ExperienceResponse 와 나눈다. */
+    public record DetailExperience(@JsonUnwrapped ExperienceResponse experience, List<UsedIn> usedIn) {
+    }
+
+    public record Detail(Long id, String name, Period period, String note, MergeSuggestion mergeSuggestion,
+            List<DetailExperience> experiences) {
+
+        public static Detail from(Activity a, Activity suggested, Map<Long, List<UsedIn>> usedIn) {
             return new Detail(a.getId(), a.getName(), a.getPeriod(), a.getNote(), MergeSuggestion.of(suggested),
-                    a.getExperiences().stream().map(ExperienceResponse::from).toList());
+                    a.getExperiences().stream().map(e -> detailExperience(e, usedIn)).toList());
+        }
+
+        private static DetailExperience detailExperience(Experience e, Map<Long, List<UsedIn>> usedIn) {
+            return new DetailExperience(ExperienceResponse.from(e), usedIn.getOrDefault(e.getId(), List.of()));
         }
     }
 
