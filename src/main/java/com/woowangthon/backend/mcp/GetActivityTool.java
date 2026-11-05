@@ -43,7 +43,7 @@ public class GetActivityTool implements McpTool {
         long activityId = McpArgs.integer(arguments, "activityId")
                 .orElseThrow(() -> McpToolException.invalidArgument("activityId 가 없습니다"));
         try {
-            return activities.detail(userId, activityId);
+            return activities.mcpDetail(userId, activityId);
         } catch (ApiException e) {
             if ("ACTIVITY_NOT_FOUND".equals(e.code())) {
                 throw new McpToolException(e.code(), e.getMessage());

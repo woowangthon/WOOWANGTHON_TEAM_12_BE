@@ -25,6 +25,7 @@ import com.woowangthon.backend.source.SourceRepository;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -33,6 +34,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Limit;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class AnalysisService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisService.class);
+
+    // ai-api.md 「POST /extract」 existingActivities 최대 개수
+    static final int MAX_EXISTING_ACTIVITIES = 300;
 
     private static final DateTimeFormatter PASTED_NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -109,10 +114,19 @@ public class AnalysisService {
         return JobResponses.Job.from(job);
     }
 
+    /**
+     * 부를 때마다 그때의 기존 활동 목록을 새로 만든다(다시 시도 포함). 실패한 작업은 활동을 남기지 않으므로
+     * 이 작업이 만든 활동은 목록에 없다.
+     */
     @Transactional(readOnly = true)
     public ExtractRequest extractRequest(long jobId) {
-        Source source = jobs.findById(jobId).orElseThrow().getSource();
-        return new ExtractRequest(source.getName(), source.getText());
+        AnalysisJob job = jobs.findById(jobId).orElseThrow();
+        Source source = job.getSource();
+        List<ExtractRequest.ExistingActivity> existing = activities
+                .findRecent(job.getUserId(), Limit.of(MAX_EXISTING_ACTIVITIES)).stream()
+                .map(a -> new ExtractRequest.ExistingActivity(a.getId(), a.getName(), a.getPeriod()))
+                .toList();
+        return new ExtractRequest(source.getName(), source.getText(), existing);
     }
 
     /**
@@ -120,18 +134,21 @@ public class AnalysisService {
      * 계약을 벗어난 칸이 하나라도 있으면 아무것도 남기지 않고 AiCallException(AI_FAILED)을 던진다.
      */
     @Transactional
-    public List<Long> complete(long jobId, ExtractResponse result) {
+    public List<Long> complete(long jobId, ExtractRequest request, ExtractResponse result) {
         AnalysisJob job = jobs.findById(jobId).orElseThrow();
         Source source = job.getSource();
         if (result.activities() == null) {
             throw AiCallException.invalidResponse("activities 가 없습니다");
         }
+        Set<Long> sent = new HashSet<>();
+        request.existingActivities().forEach(e -> sent.add(e.id()));
 
         List<Long> activityIds = new ArrayList<>();
         for (ExtractResponse.ActivityResult a : result.activities()) {
             Activity activity = activities.save(
                     new Activity(job.getUserId(), required(a.name(), "activities[].name"), period(a.period())));
             activityIds.add(activity.getId());
+            activity.suggestMergeWith(sameAs(a.sameAsActivityId(), sent, job.getUserId()));
 
             List<ExtractResponse.ExperienceResult> extracted = a.experiences() == null ? List.of() : a.experiences();
             for (int position = 0; position < extracted.size(); position++) {
@@ -140,6 +157,18 @@ public class AnalysisService {
         }
         job.complete(activityIds);
         return activityIds;
+    }
+
+    // 같은 활동 제안(S-44). 칸이 없으면 null(AI 쪽 변경과 머지 순서 상관없게).
+    // 보낸 목록 밖 id 는 계약 위반 — 몰래 null 로 바꾸지 않고 실패. 보낸 뒤 합쳐져 사라졌으면 null(가리킬 활동이 없다)
+    private Long sameAs(Long id, Set<Long> sent, long userId) {
+        if (id == null) {
+            return null;
+        }
+        if (!sent.contains(id)) {
+            throw AiCallException.invalidResponse("sameAsActivityId 가 보낸 existingActivities 에 없습니다: " + id);
+        }
+        return activities.findByIdAndUserId(id, userId).isPresent() ? id : null;
     }
 
     @Transactional

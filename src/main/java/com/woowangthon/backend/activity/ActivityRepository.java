@@ -2,7 +2,9 @@ package com.woowangthon.backend.activity;
 
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface ActivityRepository extends JpaRepository<Activity, Long> {
@@ -14,4 +16,13 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     Optional<Activity> findByIdAndUserId(Long id, Long userId);
 
     boolean existsByUserId(Long userId);
+
+    // /extract 의 existingActivities: start 최근 순, start 가 null 이면 뒤(ai-api.md — 최대 300개)
+    @Query("select a from Activity a where a.userId = :userId order by a.periodStart desc nulls last, a.id desc")
+    List<Activity> findRecent(Long userId, Limit limit);
+
+    // 합치기로 사라지는 활동을 가리키던 제안을 null 로(S-44). 다른 활동으로 옮겨 가리키지 않는다
+    @Modifying(flushAutomatically = true)
+    @Query("update Activity a set a.mergeSuggestionActivityId = null where a.mergeSuggestionActivityId = :activityId")
+    void clearMergeSuggestionsTo(Long activityId);
 }
