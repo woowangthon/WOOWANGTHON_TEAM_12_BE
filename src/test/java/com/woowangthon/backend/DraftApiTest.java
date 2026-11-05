@@ -262,7 +262,7 @@ class DraftApiTest {
         assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
         assertThat((String) JsonPath.read(done, "$.draft.createdAt")).matches(".*\\+09:00");
 
-        // AI 에는 문항과 고른 경험만, 고른 순서대로 — 근거는 원본에서 찾은 것만, 보완은 전부, 추천의 해석은 싣지 않는다
+        // AI 에는 문항과 고른 경험만, 고른 순서대로 — 근거는 원본에서 찾은 것만, 보완은 전부
         assertThat(RECEIVED).hasSize(1);
         String sent = RECEIVED.getFirst();
         assertThat((String) JsonPath.read(sent, "$.question.organization")).isEqualTo("OO 백엔드 부트캠프");
@@ -271,7 +271,16 @@ class DraftApiTest {
         assertThat((List<Integer>) JsonPath.read(sent, "$.experiences[1].citations[*].id")).containsExactly((int) chatCitation);
         assertThat((List<Integer>) JsonPath.read(sent, "$.experiences[1].supplements[*].id")).containsExactly((int) chatSupplement);
         assertThat((String) JsonPath.read(sent, "$.experiences[0].sourceStatus")).isEqualTo("USER_ENTERED");
-        assertThat(sent).doesNotContain("비밀");
+        // 저장된 매칭 결과를 그대로 싣는다 — 고른 경험의 것만, 요구사항은 experienceIds 없이(ETC#141). 직무가 없는 지원이라 칸이 없다
+        assertThat((List<String>) JsonPath.read(sent, "$.question.requirements[*].text")).containsExactly("기술 문제 해결");
+        assertThat((List<String>) JsonPath.read(sent, "$.question.requirements[*].status")).containsExactly("SUPPORTED");
+        assertThat(sent).doesNotContain("experienceIds").doesNotContain("jobRole");
+        assertThat((String) JsonPath.read(sent, "$.experiences[1].reason")).isEqualTo("추천 이유 비밀");
+        assertThat((String) JsonPath.read(sent, "$.experiences[1].emphasis")).isEqualTo("강조점 비밀");
+        assertThat((List<String>) JsonPath.read(sent, "$.experiences[1].gaps")).containsExactly("부족한 점 비밀");
+        assertThat((String) JsonPath.read(sent, "$.experiences[0].reason")).isEqualTo("이유");
+        assertThat((List<String>) JsonPath.read(sent, "$.experiences[0].gaps")).isEmpty();
+        assertThat((List<?>) JsonPath.read(sent, "$.experiences[0].citations")).isEmpty();
 
         mvc.perform(get("/api/questions/{id}", questionId))
                 .andExpect(status().isOk())
@@ -310,6 +319,19 @@ class DraftApiTest {
         mvc.perform(get("/api/questions/{id}", questionId))
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.recommendations.length()").value(3));
+    }
+
+    @Test
+    void 지원에_직무가_있으면_초안_요청에_싣는다() throws Exception {
+        jdbc.update("update application set job_role = 'BACKEND'");
+
+        start(study).andExpect(status().isAccepted());
+        awaitDraft();
+
+        String sent = RECEIVED.getFirst();
+        assertThat((String) JsonPath.read(sent, "$.question.jobRole")).isEqualTo("BACKEND");
+        // 고르지 않은 경험의 추천 해석은 싣지 않는다
+        assertThat(sent).doesNotContain("비밀");
     }
 
     @Test

@@ -112,16 +112,30 @@ public class DraftService {
                 .map(d -> view(d, question.getUserId())).orElse(null);
     }
 
-    /** AI 에 보낼 것 — 문항과 고른 경험만, 고른 순서대로, 지금 상태로. 추천의 reason · emphasis · gaps 는 싣지 않는다. */
+    /**
+     * AI 에 보낼 것 — 문항과 고른 경험만, 고른 순서대로, 지금 상태로. 저장된 매칭 결과(요구사항 · 고른 경험의 이유 · 강조점 · 부족한 점)와
+     * 지원의 직무를 그대로 싣는다(ETC#141) — LLM 을 더 부르지 않는다. 직무가 없으면 칸을 싣지 않는다.
+     */
     @Transactional(readOnly = true)
     public DraftRequest request(long questionId) {
         Question question = questions.findById(questionId).orElseThrow();
         Draft draft = drafts.findByQuestionId(questionId).orElseThrow();
         Map<Long, Experience> found = experiences.findAllOwned(draft.getExperienceIds(), question.getUserId()).stream()
                 .collect(Collectors.toMap(Experience::getId, Function.identity()));
-        List<MatchRequest.ExperiencePart> parts = draft.getExperienceIds().stream()
-                .map(found::get).filter(Objects::nonNull).map(SentenceEvidence::matchedPart).toList();
-        return new DraftRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText()), parts);
+        Map<Long, Recommendation> recommended = question.getRecommendations().stream()
+                .collect(Collectors.toMap(Recommendation::getExperienceId, Function.identity(), (a, b) -> a));
+        List<DraftRequest.ExperiencePart> parts = draft.getExperienceIds().stream()
+                .map(found::get).filter(Objects::nonNull)
+                .map(e -> experiencePart(SentenceEvidence.matchedPart(e), recommended.get(e.getId()))).toList();
+        List<DraftRequest.RequirementPart> requirements = question.getRequirements().stream()
+                .map(r -> new DraftRequest.RequirementPart(r.getText(), r.getStatus())).toList();
+        return new DraftRequest(new DraftRequest.QuestionPart(question.getOrganization(), question.getText(),
+                question.getApplication().getJobRole(), requirements.isEmpty() ? null : requirements), parts);
+    }
+
+    private static DraftRequest.ExperiencePart experiencePart(MatchRequest.ExperiencePart base, Recommendation r) {
+        return r == null ? new DraftRequest.ExperiencePart(base, null, null, null)
+                : new DraftRequest.ExperiencePart(base, r.getReason(), r.getEmphasis(), List.copyOf(r.getGaps()));
     }
 
     /**
@@ -134,7 +148,7 @@ public class DraftService {
         if (draft.getStatus() != JobStatus.ANALYZING) {
             return; // 그새 재시작 정리로 실패가 됐다 — 덮지 않는다
         }
-        SentenceEvidence.Sent ids = new SentenceEvidence.Sent(sent.experiences());
+        SentenceEvidence.Sent ids = new SentenceEvidence.Sent(sent.baseExperiences());
 
         List<DraftResponse.SentenceResult> found = orEmpty(result.sentences());
         if (found.size() > MAX_SENTENCES) {
@@ -184,7 +198,7 @@ public class DraftService {
         if (found.size() > MAX_OMITTED) {
             throw AiCallException.invalidResponse("omitted 는 " + MAX_OMITTED + "개까지입니다");
         }
-        Set<Long> sentIds = sent.experiences().stream().map(MatchRequest.ExperiencePart::id).collect(Collectors.toSet());
+        Set<Long> sentIds = sent.experiences().stream().map(DraftRequest.ExperiencePart::id).collect(Collectors.toSet());
         for (int i = 0; i < found.size(); i++) {
             DraftResponse.OmittedResult o = found.get(i);
             if (o == null || o.text() == null || o.text().isBlank()) {
