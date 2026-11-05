@@ -5,6 +5,7 @@ import com.woowangthon.backend.experience.ExperienceResponse;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +22,12 @@ public class AnswerController {
     public AnswerController(AnswerService service, NewFactsRunner runner) {
         this.service = service;
         this.runner = runner;
+    }
+
+    /** 비슷한 확정 답변(S-43) — 참고 목록. AI 를 부르지 않고 분석 횟수를 쓰지 않는다. */
+    @GetMapping("/api/questions/{questionId}/similar-answers")
+    public AnswerService.SimilarAnswers similarAnswers(@PathVariable long questionId) {
+        return service.similar(questionId);
     }
 
     @PutMapping("/api/questions/{questionId}/answer")
