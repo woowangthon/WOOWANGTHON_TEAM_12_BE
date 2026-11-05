@@ -1,6 +1,7 @@
 package com.woowangthon.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -223,9 +224,9 @@ class DraftApiTest {
         return """
                 {
                   "sentences": [
-                    { "text": "%s", "evidence": [{ "type": "CITATION", "id": %d }] },
-                    { "text": "%s", "evidence": [{ "type": "SUPPLEMENT", "id": %d }] },
-                    { "text": "%s", "evidence": [{ "type": "EXPERIENCE", "id": %d }] }
+                    { "kind": "FACT", "text": "%s", "evidence": [{ "type": "CITATION", "id": %d }] },
+                    { "kind": "FACT", "text": "%s", "evidence": [{ "type": "SUPPLEMENT", "id": %d }] },
+                    { "kind": "FACT", "text": "%s", "evidence": [{ "type": "EXPERIENCE", "id": %d }] }
                   ],
                   "omitted": [
                     { "text": "바꾼 뒤 메시지가 제때 오는지 확인한 방법", "question": "%s", "experienceId": %d },
@@ -277,6 +278,7 @@ class DraftApiTest {
                 .andExpect(jsonPath("$.draft.experienceIds.length()").value(2))
                 .andExpect(jsonPath("$.draft.sentences.length()").value(3))
                 .andExpect(jsonPath("$.draft.sentences[0].text").value(S1))
+                .andExpect(jsonPath("$.draft.sentences[*].kind", contains("FACT", "FACT", "FACT")))
                 .andExpect(jsonPath("$.draft.sentences[0].evidence[0].type").value("CITATION"))
                 .andExpect(jsonPath("$.draft.sentences[0].evidence[0].id").value(chatCitation))
                 .andExpect(jsonPath("$.draft.sentences[0].evidence[0].experienceId").value(chat))
@@ -354,13 +356,14 @@ class DraftApiTest {
                 .andExpect(jsonPath("$.draft.sentences[0].evidence.length()").value(1))
                 .andExpect(jsonPath("$.draft.sentences[1].text").value(S2))
                 .andExpect(jsonPath("$.draft.sentences[1].evidence.length()").value(0))
+                .andExpect(jsonPath("$.draft.sentences[1].kind").value("FACT")) // 근거가 지워져도 OPINION 으로 바꾸지 않는다
                 .andExpect(jsonPath("$.draft.sentences[2].evidence.length()").value(0));
 
         // 그새 지워진 경험은 고를 수 없다
         expectError(start(study), 400, "INVALID_REQUEST");
 
         draftReply = new FakeReply(200, """
-                {"sentences": [{"text": "새 문장", "evidence": [{"type": "CITATION", "id": %d}]}], "omitted": []}"""
+                {"sentences": [{"kind": "FACT", "text": "새 문장", "evidence": [{"type": "CITATION", "id": %d}]}], "omitted": []}"""
                 .formatted(chatCitation), 0);
         start(chat).andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.sentences.length()").value(0));
@@ -504,28 +507,52 @@ class DraftApiTest {
     }
 
     @Test
+    void 생각_문장은_근거_없이_저장하고_종류를_그대로_돌려준다() throws Exception {
+        draftReply = new FakeReply(200, """
+                {"sentences": [
+                  {"kind": "FACT", "text": "사실", "evidence": [{"type": "CITATION", "id": %d}]},
+                  {"kind": "OPINION", "text": "앞으로도 원인을 살피는 개발자가 되고 싶습니다.", "evidence": []},
+                  {"kind": "OPINION", "text": "이 경험을 지원 직무에 잇고 싶습니다."}
+                ], "omitted": []}""".formatted(chatCitation), 0);
+        start(chat).andExpect(status().isAccepted());
+        String done = awaitDraft();
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat((List<String>) JsonPath.read(done, "$.draft.sentences[*].kind")).containsExactly("FACT", "OPINION", "OPINION");
+        assertThat((List<?>) JsonPath.read(done, "$.draft.sentences[1].evidence")).isEmpty();
+        assertThat((List<?>) JsonPath.read(done, "$.draft.sentences[2].evidence")).isEmpty();
+        assertThat(jdbc.queryForList("select kind from draft_sentence order by position", String.class))
+                .containsExactly("FACT", "OPINION", "OPINION");
+    }
+
+    @Test
     void 계약을_어긴_응답이면_아무것도_저장하지_않고_실패() throws Exception {
-        String okSentence = "{\"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}".formatted(chatCitation);
+        String okSentence = "{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}".formatted(chatCitation);
         String gap = "{\"text\": \"빈칸\", \"question\": null, \"experienceId\": null}";
+        String opinion = "{\"kind\": \"OPINION\", \"text\": \"포부\", \"evidence\": []}";
         List<String> bodies = List.of(
+                // kind 빠짐 · 값 목록 밖 · 근거 붙은 OPINION · OPINION 3개 넘음
+                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
+                "{\"sentences\": [{\"kind\": \"GUESS\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
+                "{\"sentences\": [{\"kind\": \"OPINION\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
+                "{\"sentences\": [" + okSentence + "," + String.join(",", java.util.Collections.nCopies(4, opinion)) + "]}",
                 // 받칠 것이 있는데 문장 0개
                 "{\"sentences\": [], \"omitted\": []}",
                 "{\"omitted\": []}",
                 // 15개 넘음
                 "{\"sentences\": [" + String.join(",", java.util.Collections.nCopies(16, okSentence)) + "]}",
                 // 빈 문장 · 줄바꿈
-                "{\"sentences\": [{\"text\": \" \", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
-                "{\"sentences\": [{\"text\": \"한 줄\\n두 줄\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \" \", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"한 줄\\n두 줄\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation),
                 // 근거 0개 · 지어낸 ID · 원본에서 못 찾아 보내지 않은 근거 · 값 목록 밖 · 같은 근거 두 번
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": []}]}",
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": 999999}]}]}",
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(unmatchedCitation),
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"GUESS\", \"id\": 1}]}]}",
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}, {\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation, chatCitation),
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": []}]}",
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": 999999}]}]}",
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(unmatchedCitation),
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"GUESS\", \"id\": 1}]}]}",
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}, {\"type\": \"CITATION\", \"id\": %d}]}]}".formatted(chatCitation, chatCitation),
                 // USER_ENTERED 가 아닌 경험 본문을 근거로
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(chat),
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(chat),
                 // 보내지 않은 경험의 본문을 근거로
-                "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(stranger),
+                "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(stranger),
                 // omitted 5개 넘음 · 빈 text · 예전 문자열 배열 · 질문과 경험의 null 짝 · 빈 질문 · 보내지 않은 경험
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [" + String.join(",", java.util.Collections.nCopies(6, gap)) + "]}",
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \" \", \"question\": null, \"experienceId\": null}]}",
@@ -535,6 +562,7 @@ class DraftApiTest {
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": \" \", \"experienceId\": %d}]}".formatted(chat),
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": \"질문?\", \"experienceId\": %d}]}".formatted(stranger));
         for (String body : bodies) {
+            jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID); // 경우가 많아 하루 한도에 닿지 않게
             draftReply = new FakeReply(200, body, 0);
             start(chat, study).andExpect(status().isAccepted());
             String failed = awaitDraft();

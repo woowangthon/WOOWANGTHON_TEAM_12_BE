@@ -11,7 +11,7 @@ import java.util.List;
 public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> omitted, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record SentenceResult(String text, List<MatchResponse.EvidenceResult> evidence) {
+    public record SentenceResult(String kind, String text, List<MatchResponse.EvidenceResult> evidence) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
