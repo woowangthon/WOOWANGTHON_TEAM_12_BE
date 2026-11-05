@@ -17,7 +17,9 @@ import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.SourceStatus;
+import com.woowangthon.backend.source.SectionKind;
 import com.woowangthon.backend.source.Source;
+import com.woowangthon.backend.source.SourceSection;
 import com.woowangthon.backend.source.SourceKind;
 import com.woowangthon.backend.source.SourceRepository;
 import java.time.ZonedDateTime;
@@ -66,7 +68,10 @@ public class AnalysisService {
         this.maxTextLength = maxTextLength;
     }
 
-    public record SourceRequest(String kind, String name, String text) {
+    public record SourceRequest(String kind, String name, String text, List<SectionRequest> sections) {
+    }
+
+    public record SectionRequest(String kind, Integer number, Integer startLine, Integer endLine) {
     }
 
     /** 원본을 저장하고 분석 작업을 만든다. 분석은 이 트랜잭션이 끝난 뒤 따로 시작한다. */
@@ -75,9 +80,11 @@ public class AnalysisService {
         SourceKind kind = parseKind(request.kind());
         String name = kind == SourceKind.FILE ? fileName(request.name()) : pastedName();
         String text = checkText(request.text());
+        List<SourceSection> sections = checkSections(kind == SourceKind.FILE ? sectionKind(name) : null,
+                request.sections(), text);
         limiter.consume(CurrentUser.id());
 
-        Source source = sources.save(new Source(CurrentUser.id(), kind, name, text));
+        Source source = sources.save(new Source(CurrentUser.id(), kind, name, text, sections));
         AnalysisJob job = jobs.save(new AnalysisJob(CurrentUser.id(), source));
         return new JobResponses.Submitted(source.getId(), job.getId(), job.getStatus());
     }
@@ -231,10 +238,69 @@ public class AnalysisService {
             throw ApiException.invalidRequest("FILE 은 name(파일 이름)이 필요합니다");
         }
         String lower = name.toLowerCase(Locale.ROOT);
-        if (!lower.endsWith(".md") && !lower.endsWith(".txt")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_FILE_TYPE", ".md · .txt 파일만 넣을 수 있습니다");
+        if (!lower.endsWith(".md") && !lower.endsWith(".txt") && sectionKind(name) == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_FILE_TYPE",
+                    ".md · .txt · .pdf · .pptx 파일만 넣을 수 있습니다");
         }
         return name;
+    }
+
+    // .pdf 면 쪽, .pptx 면 슬라이드 — 그 밖(.md · .txt)은 구간이 없다
+    private static SectionKind sectionKind(String fileName) {
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".pdf")) {
+            return SectionKind.PAGE;
+        }
+        if (lower.endsWith(".pptx")) {
+            return SectionKind.SLIDE;
+        }
+        return null;
+    }
+
+    /**
+     * 계약 「자료 넣기」 sections — .pdf · .pptx 면 1개 이상 필수, 그 밖엔 null · 빈 배열만.
+     * 줄은 text 를 \n 으로 나눠 1부터 센다. number · 줄 둘 다 오름차순이고 구간끼리 겹치지 않는다.
+     */
+    private static List<SourceSection> checkSections(SectionKind expected, List<SectionRequest> sections, String text) {
+        if (expected == null) {
+            if (sections != null && !sections.isEmpty()) {
+                throw invalidSections(".md · .txt · 붙여넣은 텍스트에는 sections 를 보내지 않습니다");
+            }
+            return List.of();
+        }
+        if (sections == null || sections.isEmpty()) {
+            throw invalidSections(".pdf · .pptx 는 sections 가 1개 이상 필요합니다");
+        }
+        int lineCount = text.split("\n", -1).length;
+        List<SourceSection> checked = new ArrayList<>();
+        SourceSection previous = null;
+        for (int i = 0; i < sections.size(); i++) {
+            SectionRequest s = sections.get(i);
+            String at = "sections[" + i + "]";
+            if (s == null || s.number() == null || s.startLine() == null || s.endLine() == null) {
+                throw invalidSections(at + " 에 kind · number · startLine · endLine 이 모두 있어야 합니다");
+            }
+            if (!expected.name().equals(s.kind())) {
+                throw invalidSections(at + ".kind 는 이 파일에서 " + expected + " 여야 합니다: " + s.kind());
+            }
+            if (s.number() < 1) {
+                throw invalidSections(at + ".number 는 1 이상이어야 합니다");
+            }
+            if (s.startLine() < 1 || s.startLine() > s.endLine() || s.endLine() > lineCount) {
+                throw invalidSections(at + " 의 줄 번호가 text(" + lineCount + "줄)를 벗어나거나 startLine > endLine 입니다");
+            }
+            if (previous != null
+                    && (s.number() <= previous.getNumber() || s.startLine() <= previous.getEndLine())) {
+                throw invalidSections(at + " 이(가) 앞 구간과 겹치거나 순서가 틀렸습니다");
+            }
+            previous = new SourceSection(expected, s.number(), s.startLine(), s.endLine());
+            checked.add(previous);
+        }
+        return checked;
+    }
+
+    private static ApiException invalidSections(String message) {
+        return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_SECTIONS", message);
     }
 
     // 계약: TEXT 면 BE 가 「붙여넣은 텍스트 2026-11-03 14:05」처럼 이름을 붙인다

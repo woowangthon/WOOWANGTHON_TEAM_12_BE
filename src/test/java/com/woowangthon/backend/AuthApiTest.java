@@ -61,7 +61,7 @@ class AuthApiTest {
     @AfterEach
     void cleanUp() {
         jdbc.execute("truncate table analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity, "
-                + "source");
+                + "source_section, source");
         jdbc.update("delete from app_user where login_id is not null and login_id <> 'test'");
     }
 
@@ -197,8 +197,10 @@ class AuthApiTest {
     void 요청이_틀려_시작하지_못한_분석은_세지_않는다() throws Exception {
         MockHttpSession session = signup("mina", "password-1");
         expectError(postJson(session, "/api/sources", "{\"kind\":\"TEXT\",\"text\":\"  \"}"), 400, "EMPTY_TEXT");
-        expectError(postJson(session, "/api/sources", "{\"kind\":\"FILE\",\"name\":\"a.pdf\",\"text\":\"x\"}"),
+        expectError(postJson(session, "/api/sources", "{\"kind\":\"FILE\",\"name\":\"a.hwp\",\"text\":\"x\"}"),
                 400, "UNSUPPORTED_FILE_TYPE");
+        expectError(postJson(session, "/api/sources", "{\"kind\":\"FILE\",\"name\":\"a.pdf\",\"text\":\"x\"}"),
+                400, "INVALID_SECTIONS");
         assertThat(JsonPath.<Integer>read(me(session), "$.dailyAnalysis.used")).isZero();
     }
 
