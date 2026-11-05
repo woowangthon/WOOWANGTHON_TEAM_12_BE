@@ -20,6 +20,7 @@ import com.woowangthon.backend.experience.ExperienceService;
 import com.woowangthon.backend.job.JobStatus;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -292,5 +293,61 @@ public class AnswerService {
 
     private static ApiException candidateNotFound(long candidateId) {
         return ApiException.notFound("NEW_FACT_NOT_FOUND", "후보 " + candidateId + " 이(가) 없습니다");
+    }
+
+    // ── 비슷한 확정 답변(S-43, question-api.md 「비슷한 확정 답변」) ─────────────────────────────────────
+    // 참고로만 보이는 목록이다 — 근거가 아니라 어떤 AI 요청에도 싣지 않고, AI 를 부르지 않고, 분석 횟수를 쓰지 않는다.
+    // 「비슷하다」는 글이 아니라 꼬리표 셋 — 문항 유형(question) · 직무 · 지원처 종류(application) — 을 지금 값으로 비교한다.
+
+    static final int MAX_SIMILAR = 5;
+
+    public record SimilarAnswer(Long questionId, String questionText, QuestionType questionType, Long applicationId,
+            String organization, OrganizationType organizationType, JobRole jobRole, String text,
+            OffsetDateTime confirmedAt) {
+    }
+
+    public record SimilarAnswers(List<SimilarAnswer> answers) {
+    }
+
+    /**
+     * 유형 → 직무 → 종류 순으로 앞에서부터 같은 것을 비교해 가까운 것부터(계약 표 1 ~ 7 차례와 같다), 같으면 확정이 최근인 것부터.
+     * 셋 다 같지 않으면 뺀다. 추천 상태와 상관없다 — 유형이 아직 없으면 직무 · 종류로만 고른다.
+     */
+    @Transactional(readOnly = true)
+    public SimilarAnswers similar(long questionId) {
+        long userId = CurrentUser.id();
+        Question base = questions.findByIdAndUserId(questionId, userId)
+                .orElseThrow(() -> ApiException.notFound("QUESTION_NOT_FOUND", "문항 " + questionId + " 이(가) 없습니다"));
+        Application baseApplication = base.getApplication();
+
+        record Scored(SimilarAnswer answer, boolean type, boolean role, boolean kind) {
+        }
+        List<Scored> scored = new ArrayList<>();
+        for (Object[] row : answers.findConfirmedOfUserExcept(userId, questionId)) {
+            Answer a = (Answer) row[0];
+            Question q = (Question) row[1];
+            Application ap = (Application) row[2];
+            boolean type = same(base.getQuestionType(), q.getQuestionType());
+            boolean role = same(baseApplication.getJobRole(), ap.getJobRole());
+            boolean kind = same(baseApplication.getOrganizationType(), ap.getOrganizationType());
+            if (!type && !role && !kind) {
+                continue;
+            }
+            scored.add(new Scored(new SimilarAnswer(q.getId(), q.getText(), q.getQuestionType(), ap.getId(),
+                    ap.getOrganization(), ap.getOrganizationType(), ap.getJobRole(), a.getText(),
+                    Times.seoul(a.getConfirmedAt())), type, role, kind));
+        }
+        // true 가 앞 — (유형, 직무, 종류) 를 앞에서부터 비교하면 계약 표의 차례가 된다
+        Comparator<Scored> closest = Comparator.comparing(Scored::type).reversed()
+                .thenComparing(Comparator.comparing(Scored::role).reversed())
+                .thenComparing(Comparator.comparing(Scored::kind).reversed())
+                .thenComparing(s -> s.answer().confirmedAt(), Comparator.reverseOrder())
+                .thenComparing(s -> s.answer().questionId(), Comparator.reverseOrder());
+        return new SimilarAnswers(scored.stream().sorted(closest).limit(MAX_SIMILAR).map(Scored::answer).toList());
+    }
+
+    // 둘 다 값이 있고 같을 때만 같다. null(값 없음) · OTHER(맞는 값 없음)는 어느 것과도 같지 않다
+    private static <E extends Enum<E>> boolean same(E base, E other) {
+        return base != null && base == other && !"OTHER".equals(base.name());
     }
 }

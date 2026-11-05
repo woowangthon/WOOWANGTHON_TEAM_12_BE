@@ -75,6 +75,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /api/questions/{id}/retry` | 실패한 문항 다시 시도 |
 | `PATCH /api/questions/{id}` | 문항 유형 고르기 — `USER` 로, 그 뒤 매칭 · 다시 시도가 덮지 않는다 |
 | `POST /api/clarifications/{id}/answer` | 되묻기에 답하기 — 답을 그 경험의 보완으로 저장(201). 경험 본문 · 근거 · 출처 상태는 그대로, 다음 문항부터 AI 후보에 실림 |
+| `GET /api/questions/{id}/similar-answers` | 비슷한 확정 답변(S-43) — 문항 유형 → 직무 → 지원처 종류가 같은 순서로 예전에 확정한 답 최대 5개. 참고용(근거 아님) · AI 안 부름 · 분석 횟수 안 씀 |
 | `PATCH /api/supplements/{id}` | 보완 고치기 — 답만 바꿈. 질문 · 경험 본문 · 근거 · 출처 상태는 그대로 |
 | `DELETE /api/supplements/{id}` | 보완 지우기(204) — 경험 · 다음 문항의 AI 후보 · 끝난 추천의 `evidence` 에서 빠지고, 그 되묻기에 다시 답할 수 있다 |
 
