@@ -174,7 +174,7 @@ class AnalysisJobApiTest {
 
     @AfterEach
     void cleanUp() {
-        jdbc.execute("truncate table analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity_link, activity, source_section, source");
+        jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity_link, activity, source_section, source");
     }
 
     // --- 자료 넣기 → 완료 ---

@@ -21,12 +21,14 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
     private final QuestionRepository questions;
     private final GroundingCheckRepository checks;
     private final DraftRepository drafts;
+    private final AnswerRepository answers;
 
     public InterruptedQuestionCleaner(QuestionRepository questions, GroundingCheckRepository checks,
-            DraftRepository drafts) {
+            DraftRepository drafts, AnswerRepository answers) {
         this.questions = questions;
         this.checks = checks;
         this.drafts = drafts;
+        this.answers = answers;
     }
 
     @Override
@@ -48,6 +50,12 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
         interruptedDrafts.forEach(d -> d.fail("INTERNAL_ERROR", "서버가 다시 시작되어 답변 초안이 끊겼습니다"));
         if (!interruptedDrafts.isEmpty()) {
             log.warn("만드는 중에 끊긴 답변 초안 {}개를 실패로 돌렸습니다", interruptedDrafts.size());
+        }
+        // 새 경험 후보 찾기도 같다(S-48) — 「다시 찾기」는 같은 POST
+        List<Answer> interruptedAnswers = answers.findByNewFactsStatus(JobStatus.ANALYZING);
+        interruptedAnswers.forEach(a -> a.fail("INTERNAL_ERROR", "서버가 다시 시작되어 새 경험 후보 찾기가 끊겼습니다"));
+        if (!interruptedAnswers.isEmpty()) {
+            log.warn("찾는 중에 끊긴 새 경험 후보 찾기 {}개를 실패로 돌렸습니다", interruptedAnswers.size());
         }
     }
 }

@@ -5,6 +5,7 @@ import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
+import com.woowangthon.backend.question.Question;
 import java.util.List;
 import org.hibernate.Hibernate;
 import org.springframework.stereotype.Service;
@@ -55,6 +56,14 @@ public class ExperienceService {
      */
     @Transactional
     public ExperienceResponse add(long activityId, PatchBody body) {
+        return ExperienceResponse.from(create(activityId, body, null));
+    }
+
+    /**
+     * 「경험 직접 추가」와 같은 경험을 만든다 — 확정 답의 후보 저장(S-48)도 쓴다. origin 이 있으면 그 문항에서 왔다고 표시한다.
+     * 호출하는 쪽 트랜잭션 안에서 부른다.
+     */
+    public Experience create(long activityId, PatchBody body, Question origin) {
         Activity activity = activities.findByIdAndUserId(activityId, CurrentUser.id())
                 .orElseThrow(() -> ApiException.notFound("ACTIVITY_NOT_FOUND", "활동 " + activityId + " 이(가) 없습니다"));
 
@@ -67,14 +76,17 @@ public class ExperienceService {
         Actor actor = parseActor(body.string("actor").map(PatchBody.Field::value).orElse(null));
 
         int position = experiences.findLastPosition(activityId) + 1;
-        Experience experience = experiences.saveAndFlush(
-                new Experience(activity, content, competencies, CompetenciesBy.USER, actor,
-                        SourceStatus.USER_ENTERED, position));
+        Experience created = new Experience(activity, content, competencies, CompetenciesBy.USER, actor,
+                SourceStatus.USER_ENTERED, position);
+        if (origin != null) {
+            created.markFromAnswer(origin);
+        }
+        Experience experience = experiences.saveAndFlush(created);
         // 같은 요청 · 같은 영속성 컨텍스트에서 활동 세부를 다시 읽어도 보이게
         if (Hibernate.isInitialized(activity.getExperiences())) {
             activity.getExperiences().add(experience);
         }
-        return ExperienceResponse.from(experience);
+        return experience;
     }
 
     /** 경험과 그 근거 · 보완을 지운다. 원본과 활동은 남는다(계약 「경험 지우기」 · S-11). */

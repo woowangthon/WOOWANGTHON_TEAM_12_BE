@@ -1,6 +1,7 @@
 package com.woowangthon.backend.experience;
 
 import com.woowangthon.backend.common.Times;
+import com.woowangthon.backend.question.Question;
 import java.time.OffsetDateTime;
 import com.woowangthon.backend.source.SectionKind;
 import com.woowangthon.backend.source.Source;
@@ -18,7 +19,21 @@ public record ExperienceResponse(
         Actor actor,
         SourceStatus sourceStatus,
         List<CitationResponse> citations,
-        List<SupplementResponse> supplements) {
+        List<SupplementResponse> supplements,
+        Origin origin) {
+
+    /**
+     * 경험이 온 곳(S-48) — 확정 답의 후보를 저장한 경험만, 그 밖은 null. 지원처 이름 · 문항 글은 응답 때 지금 값으로.
+     */
+    public record Origin(ExperienceOrigin type, Long questionId, Long applicationId, String organization,
+            String questionText) {
+
+        static Origin of(Question q) {
+            return q == null ? null
+                    : new Origin(ExperienceOrigin.ANSWER, q.getId(), q.getApplication().getId(), q.getOrganization(),
+                            q.getText());
+        }
+    }
 
     public record CitationResponse(
             Long id,
@@ -77,6 +92,6 @@ public record ExperienceResponse(
     public static ExperienceResponse from(Experience e) {
         return new ExperienceResponse(e.getId(), e.getActivity().getId(), e.getContent(), e.getCompetencies(),
                 e.getCompetenciesBy(), e.getActor(), e.getSourceStatus(), e.getCitations().stream().map(CitationResponse::from).toList(),
-                e.getSupplements().stream().map(SupplementResponse::from).toList());
+                e.getSupplements().stream().map(SupplementResponse::from).toList(), Origin.of(e.getOriginQuestion()));
     }
 }
