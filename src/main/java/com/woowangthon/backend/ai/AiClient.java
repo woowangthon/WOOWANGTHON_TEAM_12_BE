@@ -4,9 +4,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -20,6 +23,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AI 서버(ETC docs/contracts/ai-api.md)를 부른다. 실패는 전부 AiCallException 으로 바꿔 던진다 —
@@ -37,17 +41,25 @@ public class AiClient {
 
     private final Caller job;
     private final Caller sync;
+    private final HttpClient http;
+    private final URI agentUri;
+    private final long agentTimeoutSeconds;
+    private final JsonMapper json;
 
     public AiClient(@Value("${app.ai.base-url}") String baseUrl,
             @Value("${app.ai.timeout-seconds}") long timeoutSeconds,
-            @Value("${app.ai.sync-timeout-seconds}") long syncTimeoutSeconds) {
+            @Value("${app.ai.sync-timeout-seconds}") long syncTimeoutSeconds,
+            @Value("${app.chagok.timeout-seconds}") long agentTimeoutSeconds, JsonMapper json) {
         // JDK 기본은 HTTP/2 라 평문 http 에 Upgrade: h2c 를 보내는데, uvicorn(AI 서버)은 이를 400 으로 거절한다
-        HttpClient http = HttpClient.newBuilder()
+        this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
         this.job = caller(http, baseUrl, timeoutSeconds);
         this.sync = caller(http, baseUrl, syncTimeoutSeconds);
+        this.agentUri = URI.create(baseUrl.replaceAll("/+$", "") + "/agent");
+        this.agentTimeoutSeconds = agentTimeoutSeconds;
+        this.json = json;
     }
 
     private static Caller caller(HttpClient http, String baseUrl, long timeoutSeconds) {
@@ -89,6 +101,31 @@ public class AiClient {
         return post(sync, "/parse-application", request, ParseApplicationResponse.class);
     }
 
+    /**
+     * 차곡이 도구 루프를 시작하고 NDJSON 스트림을 연다(ai-api.md 「POST /agent」). 받는 쪽이 닫는다.
+     * RestClient 는 응답을 다 읽는 것을 전제로 하므로, 읽는 도중 끊을 수 있게 HttpClient 를 바로 쓴다.
+     */
+    public AgentStream agent(AgentRequest request) {
+        HttpRequest post = HttpRequest.newBuilder(agentUri)
+                .timeout(Duration.ofSeconds(agentTimeoutSeconds))
+                .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(request)))
+                .build();
+        try {
+            HttpResponse<InputStream> response = http.send(post, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() != 200) {
+                response.body().close();
+                throw new AiCallException("AI_UNAVAILABLE", "AI 서버가 HTTP " + response.statusCode() + " 로 답했습니다");
+            }
+            return new AgentStream(response.body());
+        } catch (IOException e) {
+            throw classify(e, agentTimeoutSeconds);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw unavailable();
+        }
+    }
+
     private <T> T post(Caller caller, String uri, Object request, Class<T> type) {
         T body;
         try {
@@ -113,7 +150,7 @@ public class AiClient {
         return body;
     }
 
-    private static AiCallException classify(ResourceAccessException e, long timeoutSeconds) {
+    private static AiCallException classify(Exception e, long timeoutSeconds) {
         for (Throwable cause = e; cause != null; cause = cause.getCause()) {
             // HttpConnectTimeoutException 은 HttpTimeoutException 의 하위라 먼저 본다
             if (cause instanceof HttpConnectTimeoutException || cause instanceof ConnectException

@@ -41,6 +41,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.web.context.WebApplicationContext;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * ETC docs/contracts/experience-api.md 「자료 넣기」 · 「작업 상태」 · 「다시 시도」.
@@ -414,7 +415,7 @@ class AnalysisJobApiTest {
         try (ServerSocket socket = new ServerSocket(0)) {
             closedPort = socket.getLocalPort();
         }
-        AiClient client = new AiClient("http://127.0.0.1:" + closedPort, 1, 1);
+        AiClient client = new AiClient("http://127.0.0.1:" + closedPort, 1, 1, 1, JsonMapper.builder().build());
         assertThatThrownBy(() -> client.extract(new ExtractRequest("a.md", "text")))
                 .isInstanceOfSatisfying(AiCallException.class, e -> assertThat(e.code()).isEqualTo("AI_UNAVAILABLE"));
     }

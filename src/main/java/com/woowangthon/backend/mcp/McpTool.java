@@ -24,4 +24,9 @@ public interface McpTool {
     static Map<String, Object> readOnly() {
         return Map.of("readOnlyHint", true, "destructiveHint", false, "idempotentHint", true, "openWorldHint", false);
     }
+
+    /** 쓰기 도구의 annotations. */
+    static Map<String, Object> write() {
+        return Map.of("readOnlyHint", false, "destructiveHint", false, "idempotentHint", false, "openWorldHint", false);
+    }
 }

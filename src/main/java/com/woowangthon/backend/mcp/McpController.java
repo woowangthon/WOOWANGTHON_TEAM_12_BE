@@ -58,8 +58,8 @@ public class McpController {
 
     @PostMapping("/mcp/{token}")
     public ResponseEntity<Object> handle(@PathVariable String token, @RequestBody(required = false) String body) {
-        Optional<Long> userId = connections.authenticate(token);
-        if (userId.isEmpty()) {
+        Optional<McpConnectionService.Authenticated> owner = connections.authenticate(token);
+        if (owner.isEmpty()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
@@ -89,8 +89,9 @@ public class McpController {
             case "initialize" -> reply(HttpStatus.OK, result(id, initialize(params)));
             case "ping" -> reply(HttpStatus.OK, result(id, Map.of()));
             case "tools/list" -> reply(HttpStatus.OK,
-                    result(id, Map.of("tools", tools.values().stream().map(McpTool::definition).toList())));
-            case "tools/call" -> reply(HttpStatus.OK, callTool(id, userId.get(), params));
+                    result(id, Map.of("tools", tools.values().stream()
+                            .filter(t -> visible(t, owner.get().scope())).map(McpTool::definition).toList())));
+            case "tools/call" -> reply(HttpStatus.OK, callTool(id, owner.get(), params));
             default -> reply(HttpStatus.OK, error(id, -32601, "지원하지 않는 메서드: " + method.asString()));
         };
     }
@@ -105,10 +106,15 @@ public class McpController {
                 "instructions", INSTRUCTIONS);
     }
 
-    private Map<String, Object> callTool(JsonNode id, long userId, JsonNode params) {
+    // 쓰기 도구는 CHAGOK 토큰에만 보인다(계약 「토큰 범위」)
+    private static boolean visible(McpTool tool, String scope) {
+        return !(tool instanceof McpWriteTool) || AccessToken.SCOPE_CHAGOK.equals(scope);
+    }
+
+    private Map<String, Object> callTool(JsonNode id, McpConnectionService.Authenticated owner, JsonNode params) {
         JsonNode name = params.path("name");
         McpTool tool = name.isString() ? tools.get(name.asString()) : null;
-        if (tool == null) {
+        if (tool == null || !visible(tool, owner.scope())) {
             return error(id, -32602, "없는 도구: " + (name.isString() ? name.asString() : name.toString()));
         }
         JsonNode arguments = params.path("arguments");
@@ -119,7 +125,7 @@ public class McpController {
             if (!arguments.isObject()) {
                 throw McpToolException.invalidArgument("arguments 는 객체여야 합니다");
             }
-            Object value = tool.call(userId, arguments);
+            Object value = tool.call(owner.userId(), arguments);
             return result(id, Map.of(
                     "content", List.of(Map.of("type", "text", "text", json.writeValueAsString(value))),
                     "structuredContent", value,
