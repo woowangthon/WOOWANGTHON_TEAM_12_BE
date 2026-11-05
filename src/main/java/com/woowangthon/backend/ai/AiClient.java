@@ -74,6 +74,11 @@ public class AiClient {
         return post(sync, "/route", request, RouteResponse.class);
     }
 
+    /** 한 줄 질문에 맞는 경험(꺼내기 S-29) — 동기(entrance-api). */
+    public AskResponse ask(AskRequest request) {
+        return post(sync, "/ask", request, AskResponse.class);
+    }
+
     private <T> T post(Caller caller, String uri, Object request, Class<T> type) {
         T body;
         try {
