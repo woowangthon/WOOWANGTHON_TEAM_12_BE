@@ -8,7 +8,8 @@ import java.util.List;
  * 가 된다 — 객체로 추측해 고치지 않는다(ETC#139).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> omitted, String model) {
+public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> omitted,
+        List<GuidelineResult> guidelines, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record SentenceResult(String kind, String text, List<MatchResponse.EvidenceResult> evidence) {
@@ -16,5 +17,9 @@ public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> 
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record OmittedResult(String text, String question, Long experienceId) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record GuidelineResult(Long id, Boolean applied, String note) {
     }
 }

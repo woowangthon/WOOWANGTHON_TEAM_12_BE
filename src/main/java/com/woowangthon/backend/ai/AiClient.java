@@ -114,6 +114,11 @@ public class AiClient {
         return post(sync, "/link-suggestions", request, LinkSuggestionResponse.class);
     }
 
+    /** 붙여 넣은 작성법을 지침 한 줄씩으로(S-49) — 동기(guideline-api). */
+    public GuidelinesResponse guidelines(GuidelinesRequest request) {
+        return post(sync, "/guidelines", request, GuidelinesResponse.class);
+    }
+
     /**
      * 차곡이 도구 루프를 시작하고 NDJSON 스트림을 연다(ai-api.md 「POST /agent」). 받는 쪽이 닫는다.
      * RestClient 는 응답을 다 읽는 것을 전제로 하므로, 읽는 도중 끊을 수 있게 HttpClient 를 바로 쓴다.

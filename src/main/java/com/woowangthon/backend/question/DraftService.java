@@ -13,6 +13,7 @@ import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
+import com.woowangthon.backend.guideline.GuidelineRepository;
 import com.woowangthon.backend.job.JobStatus;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -40,6 +41,7 @@ public class DraftService {
     private static final int MAX_SENTENCES = 15;
     private static final int MAX_OMITTED = 5;
     private static final int MAX_OPINIONS = 3;
+    private static final int MAX_GUIDELINE_NOTE = 80;
 
     private final QuestionRepository questions;
     private final DraftRepository drafts;
@@ -48,10 +50,11 @@ public class DraftService {
     private final UsageLimiter limiter;
     private final ClarificationRepository clarifications;
     private final SupplementRepository supplements;
+    private final GuidelineRepository guidelines;
 
     public DraftService(QuestionRepository questions, DraftRepository drafts, ExperienceRepository experiences,
             SentenceEvidence evidence, UsageLimiter limiter, ClarificationRepository clarifications,
-            SupplementRepository supplements) {
+            SupplementRepository supplements, GuidelineRepository guidelines) {
         this.questions = questions;
         this.drafts = drafts;
         this.experiences = experiences;
@@ -59,9 +62,11 @@ public class DraftService {
         this.limiter = limiter;
         this.clarifications = clarifications;
         this.supplements = supplements;
+        this.guidelines = guidelines;
     }
 
-    public record StartRequest(List<Long> experienceIds) {
+    /** frame 을 빼면 NONE. 값 목록 밖이면 본문을 읽지 못해 400 이다. */
+    public record StartRequest(List<Long> experienceIds, DraftFrame frame) {
     }
 
     public record Sentence(DraftSentenceKind kind, String text, List<SentenceEvidence.Ref> evidence) {
@@ -71,8 +76,13 @@ public class DraftService {
     public record Omitted(String text, String question, Long experienceId, Long clarificationId, Long supplementId) {
     }
 
+    /** 글 · 출처는 초안을 만들 때의 것이다. id 가 지금 없는 지침일 수 있다. */
+    public record AppliedGuideline(Long id, String text, String source, Boolean applied, String note) {
+    }
+
     public record DraftView(Long questionId, JobStatus status, ErrorResponse.Error error, List<Long> experienceIds,
-            List<Sentence> sentences, List<Omitted> omitted, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+            List<Sentence> sentences, List<Omitted> omitted, DraftFrame frame, List<AppliedGuideline> guidelines,
+            OffsetDateTime createdAt, OffsetDateTime updatedAt) {
     }
 
     /**
@@ -101,7 +111,10 @@ public class DraftService {
         } else {
             clarifications.deleteByDraftId(draft.getId());
         }
-        draft.start(chosen);
+        DraftFrame frame = request.frame() == null ? DraftFrame.NONE : request.frame();
+        // 시작하는 이 순간 켜 둔 지침을 옮겨 둔다 — AI 를 기다리는 새 지침을 바꿔도 이 초안에 실리는 건 그대로다
+        draft.start(chosen, frame, guidelines.findByUserIdAndEnabledTrueOrderByIdAsc(question.getUserId()).stream()
+                .map(g -> new DraftGuideline(g.getId(), g.getText(), g.getSource())).toList());
         drafts.saveAndFlush(draft);
         return view(draft, question.getUserId());
     }
@@ -115,6 +128,7 @@ public class DraftService {
     /**
      * AI 에 보낼 것 — 문항과 고른 경험만, 고른 순서대로, 지금 상태로. 저장된 매칭 결과(요구사항 · 고른 경험의 이유 · 강조점 · 부족한 점)와
      * 지원의 직무를 그대로 싣는다(ETC#141) — LLM 을 더 부르지 않는다. 직무가 없으면 칸을 싣지 않는다.
+     * 틀 · 지침은 시작할 때 초안에 옮겨 둔 것이고, NONE · 0개면 칸을 싣지 않는다(S-49 · S-50).
      */
     @Transactional(readOnly = true)
     public DraftRequest request(long questionId) {
@@ -129,8 +143,13 @@ public class DraftService {
                 .map(e -> experiencePart(SentenceEvidence.matchedPart(e), recommended.get(e.getId()))).toList();
         List<DraftRequest.RequirementPart> requirements = question.getRequirements().stream()
                 .map(r -> new DraftRequest.RequirementPart(r.getText(), r.getStatus())).toList();
-        return new DraftRequest(new DraftRequest.QuestionPart(question.getOrganization(), question.getText(),
-                question.getApplication().getJobRole(), requirements.isEmpty() ? null : requirements), parts);
+        List<DraftRequest.GuidelinePart> loaded = draft.getGuidelines().stream()
+                .map(g -> new DraftRequest.GuidelinePart(g.getGuidelineId(), g.getText())).toList();
+        return new DraftRequest(
+                new DraftRequest.QuestionPart(question.getOrganization(), question.getText(),
+                        question.getApplication().getJobRole(), draft.getFrame() == DraftFrame.NONE ? null : draft.getFrame(),
+                        requirements.isEmpty() ? null : requirements),
+                parts, loaded.isEmpty() ? null : loaded);
     }
 
     private static DraftRequest.ExperiencePart experiencePart(MatchRequest.ExperiencePart base, Recommendation r) {
@@ -179,8 +198,39 @@ public class DraftService {
             sentences.add(new DraftSentence(draft, position, kind, s.text(), backing));
         }
 
+        List<DraftGuideline> judged = judged(draft, orEmpty(result.guidelines()));
         List<DraftOmitted> omitted = omitted(questionId, draft, sent, orEmpty(result.omitted()));
-        draft.complete(sentences, omitted);
+        draft.complete(sentences, omitted, judged);
+    }
+
+    // ai-api.md 응답 규칙 guidelines — 실은 지침마다 하나씩, 같은 순서로. 빠진 지침을 「반영함」으로 채우지 않는다
+    private static List<DraftGuideline> judged(Draft draft, List<DraftResponse.GuidelineResult> found) {
+        List<DraftGuideline> loaded = draft.getGuidelines();
+        if (found.size() != loaded.size()) {
+            throw AiCallException.invalidResponse("guidelines 는 보낸 지침 " + loaded.size() + "개마다 하나씩이어야 합니다");
+        }
+        List<DraftGuideline> judged = new ArrayList<>();
+        for (int i = 0; i < found.size(); i++) {
+            DraftResponse.GuidelineResult r = found.get(i);
+            DraftGuideline g = loaded.get(i);
+            if (r == null || !g.getGuidelineId().equals(r.id())) {
+                throw AiCallException.invalidResponse("guidelines[" + i + "].id 가 보낸 순서의 지침이 아닙니다");
+            }
+            if (r.applied() == null) {
+                throw AiCallException.invalidResponse("guidelines[" + i + "].applied 가 없습니다");
+            }
+            if (r.applied() ? r.note() != null : !isNote(r.note())) {
+                throw AiCallException.invalidResponse("guidelines[" + i + "].note 는 applied: true 면 null, false 면 줄바꿈 없는 1 ~ "
+                        + MAX_GUIDELINE_NOTE + "자여야 합니다");
+            }
+            judged.add(g.judged(r.applied(), r.note()));
+        }
+        return judged;
+    }
+
+    private static boolean isNote(String note) {
+        return note != null && !note.isBlank() && note.length() <= MAX_GUIDELINE_NOTE && !note.contains("\n")
+                && !note.contains("\r");
     }
 
     // 새 응답에는 kind 가 필수다 — 빠졌다고 FACT 로 채우지 않는다(채우는 건 옛 저장 초안뿐, V21)
@@ -240,8 +290,11 @@ public class DraftService {
                 .map(s -> new Sentence(s.getKind(), s.getText(), SentenceEvidence.resolve(s.getEvidence(), current))).toList();
         ErrorResponse.Error error = d.getErrorCode() == null ? null
                 : new ErrorResponse.Error(d.getErrorCode(), d.getErrorMessage());
-        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current),
-                Times.seoul(d.getCreatedAt()), d.getUpdatedAt() == null ? null : Times.seoul(d.getUpdatedAt()));
+        List<AppliedGuideline> applied = d.getStatus() != JobStatus.COMPLETED ? List.of()
+                : d.getGuidelines().stream().map(g -> new AppliedGuideline(g.getGuidelineId(), g.getText(), g.getSource(),
+                        g.getApplied(), g.getNote())).toList();
+        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current), d.getFrame(),
+                applied, Times.seoul(d.getCreatedAt()), d.getUpdatedAt() == null ? null : Times.seoul(d.getUpdatedAt()));
     }
 
     // 경험이 그새 지워진 항목은 뺀다. 답한 보완은 지금 연결로 찾는다 — 보완을 지우면 null 로 돌아간다
