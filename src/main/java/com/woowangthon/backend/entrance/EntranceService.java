@@ -119,7 +119,7 @@ public class EntranceService {
     }
 
     // entrance-api.md: 시간 초과는 504 AI_TIMEOUT, 그 밖(AI 오류 · 연결 실패 · 응답 규칙 위반)은 502 AI_FAILED
-    static ApiException toApi(AiCallException e) {
+    public static ApiException toApi(AiCallException e) {
         if ("AI_TIMEOUT".equals(e.code())) {
             return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "AI_TIMEOUT", e.getMessage());
         }

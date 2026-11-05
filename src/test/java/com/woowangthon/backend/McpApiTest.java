@@ -342,7 +342,7 @@ class McpApiTest {
 
         JsonNode result = toolResult(call(token, "get_activity", "{\"activityId\":" + appId + "}"));
         ObjectNode expected = (ObjectNode) json.readTree(rest);
-        expected.remove(List.of("mergeSuggestion", "note"));
+        expected.remove(List.of("mergeSuggestion", "note", "links"));
         // 쓰인 지원(S-38)은 활동 세부 화면의 것 — MCP 경험엔 없다
         expected.get("experiences").forEach(e -> ((ObjectNode) e).remove("usedIn"));
 
@@ -350,6 +350,7 @@ class McpApiTest {
         assertThat(result.get("experiences").get(0).has("usedIn")).isFalse();
         assertThat(result.has("mergeSuggestion")).isFalse();
         assertThat(result.has("note")).isFalse();
+        assertThat(result.has("links")).isFalse();
         assertThat(result.get("experiences").get(0).get("supplements").get(0).get("answer").asString()).isEqualTo("답");
     }
 

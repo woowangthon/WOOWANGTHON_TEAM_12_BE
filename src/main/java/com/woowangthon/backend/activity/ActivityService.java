@@ -22,12 +22,14 @@ public class ActivityService {
     private final ActivityRepository activities;
     private final ExperienceService experiences;
     private final RecommendationRepository recommendations;
+    private final ActivityLinkService links;
 
     public ActivityService(ActivityRepository activities, ExperienceService experiences,
-            RecommendationRepository recommendations) {
+            RecommendationRepository recommendations, ActivityLinkService links) {
         this.activities = activities;
         this.experiences = experiences;
         this.recommendations = recommendations;
+        this.links = links;
     }
 
     @Transactional(readOnly = true)
@@ -117,6 +119,7 @@ public class ActivityService {
             keep.dismissMergeSuggestion();
         }
         activities.clearMergeSuggestionsTo(fromActivityId);
+        links.moveOnMerge(from, keep);
         // Hibernate 는 경험 UPDATE 를 활동 DELETE 보다 먼저 내보낸다 — 외래 키가 걸리지 않는다
         activities.delete(from);
         activities.flush();
@@ -145,7 +148,8 @@ public class ActivityService {
     }
 
     private ActivityResponses.Detail detail(Activity activity) {
-        return ActivityResponses.Detail.from(activity, suggestedFrom(activity, this::sameUser), usedIn(activity));
+        return ActivityResponses.Detail.from(activity, suggestedFrom(activity, this::sameUser), usedIn(activity),
+                links.visibleOn(activity));
     }
 
     // 쓰인 지원(S-38) — 경험 수와 상관없이 한 번에 읽는다

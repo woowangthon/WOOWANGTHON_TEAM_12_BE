@@ -192,7 +192,7 @@ class GroundingCheckApiTest {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table draft_sentence_evidence, draft_sentence, draft_omitted, draft_experience, draft, grounding_sentence_evidence, grounding_sentence, grounding_check, "
                 + "question_recommendation_evidence, question_recommendation, question_requirement, supplement, clarification, "
-                + "question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source_section, source");
+                + "question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
     }
 
     private String contractExample() {
@@ -276,7 +276,7 @@ class GroundingCheckApiTest {
 
     @Test
     void 경험이_없어도_AI_를_부른다() throws Exception {
-        jdbc.execute("truncate table supplement, citation, experience, activity");
+        jdbc.execute("truncate table supplement, citation, experience, activity_link, activity");
         reply = new FakeReply(200, """
                 {"sentences": [{"text": "%s", "status": "UNSUPPORTED", "evidence": [], "note": "자료에 없어요"}]}"""
                 .formatted(S3), 0);
