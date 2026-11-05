@@ -179,7 +179,7 @@ class QuestionApiTest {
     void cleanUp() {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table question_recommendation_evidence, question_recommendation, question_requirement, "
-                + "supplement, clarification, question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source");
+                + "supplement, clarification, question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source_section, source");
     }
 
     // ai-api.md 응답 예시(문항 A 모양) — ID 는 이 테스트가 만든 경험 · 근거

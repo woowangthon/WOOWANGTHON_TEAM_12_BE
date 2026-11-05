@@ -173,7 +173,7 @@ class AnalysisJobApiTest {
 
     @AfterEach
     void cleanUp() {
-        jdbc.execute("truncate table analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity, source");
+        jdbc.execute("truncate table analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity, source_section, source");
     }
 
     // --- 자료 넣기 → 완료 ---
@@ -217,6 +217,8 @@ class AnalysisJobApiTest {
                 .andExpect(jsonPath("$.experiences[0].citations[0].sourceName").value("바꿔요-회고.md"))
                 .andExpect(jsonPath("$.experiences[0].citations[0].matched").value(true))
                 .andExpect(jsonPath("$.experiences[0].citations[0].location.startLine").value(5))
+                // .md 원본은 쪽이 없다
+                .andExpect(jsonPath("$.experiences[0].citations[0].location.section").value(nullValue()))
                 .andExpect(jsonPath("$.experiences[1].actor").value("TEAM"))
                 .andExpect(jsonPath("$.experiences[2].sourceStatus").value("NEEDS_REVIEW"))
                 .andExpect(jsonPath("$.experiences[2].citations[0].matched").value(false))
@@ -374,7 +376,7 @@ class AnalysisJobApiTest {
         expectError(postSource("""
                 {"kind": "TEXT", "name": null, "text": "   \\n "}"""), 400, "EMPTY_TEXT");
         expectError(postSource("""
-                {"kind": "FILE", "name": "slides.pdf", "text": "내용"}"""), 400, "UNSUPPORTED_FILE_TYPE");
+                {"kind": "FILE", "name": "slides.hwp", "text": "내용"}"""), 400, "UNSUPPORTED_FILE_TYPE");
         expectError(postSource("""
                 {"kind": "FILE", "name": null, "text": "내용"}"""), 400, "INVALID_REQUEST");
         expectError(postSource("""
@@ -389,6 +391,102 @@ class AnalysisJobApiTest {
         postSource("{\"kind\": \"FILE\", \"name\": \"NOTE.TXT\", \"text\": \"" + "가".repeat(50_000) + "\"}")
                 .andExpect(status().isAccepted());
         assertThat(sources.count()).isEqualTo(1);
+        awaitAllDone();
+    }
+
+    // --- PDF · PPTX (S-39) ---
+
+    // 1 ~ 2줄 = 2쪽, 3줄 = 쪽 사이 빈 줄, 4 ~ 5줄 = 3쪽(1쪽은 글자가 없어 빠졌다)
+    static final String PDF_TEXT = "김차곡 — 백엔드 개발자\n2025 캡스톤 「바꿔요」 백엔드\n\n2024-09 ~ 알고리즘 스터디\n문제 선정을 맡는다";
+
+    static final String PDF_REPLY = """
+            {
+              "activities": [{
+                "name": "알고리즘 스터디", "period": null,
+                "experiences": [
+                  { "content": "3쪽 한 줄", "competencies": [], "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
+                    "citations": [{ "quote": "문제 선정을 맡는다", "matched": true, "location": { "startLine": 5, "endLine": 5 } }] },
+                  { "content": "두 쪽에 걸침", "competencies": [], "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
+                    "citations": [{ "quote": "백엔드 … 스터디", "matched": true, "location": { "startLine": 2, "endLine": 4 } }] },
+                  { "content": "빈 줄", "competencies": [], "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
+                    "citations": [{ "quote": "빈 줄", "matched": false, "location": { "startLine": 3, "endLine": 3 } }] },
+                  { "content": "위치 없음", "competencies": [], "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
+                    "citations": [{ "quote": "어딘가", "matched": false, "location": null }] }
+                ]
+              }],
+              "model": "test-model"
+            }
+            """;
+
+    @Test
+    void PDF_는_쪽_구간을_남기고_근거에_쪽을_싣는다() throws Exception {
+        reply = new FakeReply(200, PDF_REPLY, 0);
+        String body = JsonPath.parse(java.util.Map.of("kind", "FILE", "name", "이력서-2026.PDF", "text", PDF_TEXT,
+                "sections", List.of(
+                        java.util.Map.of("kind", "PAGE", "number", 2, "startLine", 1, "endLine", 2),
+                        java.util.Map.of("kind", "PAGE", "number", 3, "startLine", 4, "endLine", 5)))).jsonString();
+        long jobId = submit(body);
+        String done = awaitDone(jobId);
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+
+        // AI 서버에는 지금처럼 text 만 — sections 는 보내지 않는다(ai-api.md)
+        assertThat((String) JsonPath.read(RECEIVED.getFirst(), "$.text")).isEqualTo(PDF_TEXT);
+        assertThat(RECEIVED.getFirst()).doesNotContain("sections");
+        assertThat(jdbc.queryForObject("select count(*) from source_section", Integer.class)).isEqualTo(2);
+
+        List<Integer> activityIds = JsonPath.read(done, "$.activityIds");
+        mvc.perform(get("/api/activities/{id}", activityIds.get(0)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experiences[0].citations[0].location.section.kind").value("PAGE"))
+                .andExpect(jsonPath("$.experiences[0].citations[0].location.section.from").value(3))
+                .andExpect(jsonPath("$.experiences[0].citations[0].location.section.to").value(3))
+                .andExpect(jsonPath("$.experiences[1].citations[0].location.section.from").value(2))
+                .andExpect(jsonPath("$.experiences[1].citations[0].location.section.to").value(3))
+                .andExpect(jsonPath("$.experiences[2].citations[0].location.startLine").value(3))
+                .andExpect(jsonPath("$.experiences[2].citations[0].location.section").value(nullValue()))
+                .andExpect(jsonPath("$.experiences[3].citations[0].location").value(nullValue()));
+    }
+
+    @Test
+    void 쪽_구간_오류는_원본을_만들지_않고_한도도_세지_않는다() throws Exception {
+        String pdf = "{\"kind\": \"FILE\", \"name\": \"a.pdf\", \"text\": \"a\\nb\\nc\"";
+        expectError(postSource(pdf + "}"), 400, "INVALID_SECTIONS");
+        expectError(postSource(pdf + ", \"sections\": []}"), 400, "INVALID_SECTIONS");
+        String[] bad = {
+                // 확장자와 kind 가 안 맞음
+                "[{\"kind\": \"SLIDE\", \"number\": 1, \"startLine\": 1, \"endLine\": 1}]",
+                // text(3줄)를 벗어남
+                "[{\"kind\": \"PAGE\", \"number\": 1, \"startLine\": 1, \"endLine\": 4}]",
+                "[{\"kind\": \"PAGE\", \"number\": 1, \"startLine\": 0, \"endLine\": 1}]",
+                // startLine > endLine
+                "[{\"kind\": \"PAGE\", \"number\": 1, \"startLine\": 2, \"endLine\": 1}]",
+                // 겹침
+                "[{\"kind\": \"PAGE\", \"number\": 1, \"startLine\": 1, \"endLine\": 2},"
+                        + " {\"kind\": \"PAGE\", \"number\": 2, \"startLine\": 2, \"endLine\": 3}]",
+                // 쪽 번호 순서가 틀림
+                "[{\"kind\": \"PAGE\", \"number\": 2, \"startLine\": 1, \"endLine\": 1},"
+                        + " {\"kind\": \"PAGE\", \"number\": 1, \"startLine\": 2, \"endLine\": 3}]",
+                // 칸이 빠짐 · 번호 0
+                "[{\"kind\": \"PAGE\", \"startLine\": 1, \"endLine\": 1}]",
+                "[{\"kind\": \"PAGE\", \"number\": 0, \"startLine\": 1, \"endLine\": 1}]",
+        };
+        for (String sections : bad) {
+            expectError(postSource(pdf + ", \"sections\": " + sections + "}"), 400, "INVALID_SECTIONS");
+        }
+        String page = ", \"sections\": [{\"kind\": \"PAGE\", \"number\": 1, \"startLine\": 1, \"endLine\": 1}]}";
+        expectError(postSource("{\"kind\": \"FILE\", \"name\": \"a.md\", \"text\": \"a\"" + page), 400, "INVALID_SECTIONS");
+        expectError(postSource("{\"kind\": \"TEXT\", \"name\": null, \"text\": \"a\"" + page), 400, "INVALID_SECTIONS");
+        assertThat(sources.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from analysis_usage", Integer.class)).isZero();
+
+        // 맞는 모양은 받는다 — .pptx 슬라이드(번호 건너뜀) · .md 에 sections: []
+        postSource("{\"kind\": \"FILE\", \"name\": \"발표.pptx\", \"text\": \"a\\nb\\nc\", \"sections\": "
+                + "[{\"kind\": \"SLIDE\", \"number\": 1, \"startLine\": 1, \"endLine\": 1},"
+                + " {\"kind\": \"SLIDE\", \"number\": 4, \"startLine\": 2, \"endLine\": 3}]}")
+                .andExpect(status().isAccepted());
+        postSource("{\"kind\": \"FILE\", \"name\": \"a.md\", \"text\": \"a\", \"sections\": []}")
+                .andExpect(status().isAccepted());
+        assertThat(sources.count()).isEqualTo(2);
         awaitAllDone();
     }
 
