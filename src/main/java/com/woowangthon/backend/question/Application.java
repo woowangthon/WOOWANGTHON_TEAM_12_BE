@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.hibernate.annotations.CreationTimestamp;
 
-/** 지원 — 지원처 이름 · 종류 · 직무(모두 선택) · 상태 · 낸 달과 문항 여러 개(SPEC R-03 용어, question-api.md 「Application」). 문항은 넣은 순서대로. */
+/** 지원 — 지원처 이름 · 종류 · 직무 · 공고 원문 링크(모두 선택) · 상태 · 낸 달과 문항 여러 개(SPEC R-03 용어, question-api.md 「Application」). 문항은 넣은 순서대로. */
 @Entity
 @Table(name = "application")
 public class Application {
@@ -43,6 +43,8 @@ public class Application {
 
     private String submittedMonth;
 
+    private String postingUrl;
+
     @OneToMany(mappedBy = "application")
     @OrderBy("id asc")
     private List<Question> questions = new ArrayList<>();
@@ -59,10 +61,17 @@ public class Application {
     }
 
     public Application(Long userId, String organization, OrganizationType organizationType, JobRole jobRole) {
+        this(userId, organization, organizationType, jobRole, null);
+    }
+
+    /** postingUrl — 공고 원문 링크(S-46). 넣을 때만 정하고 고치지 않는다. */
+    public Application(Long userId, String organization, OrganizationType organizationType, JobRole jobRole,
+            String postingUrl) {
         this.userId = userId;
         this.organization = organization;
         this.organizationType = organizationType;
         this.jobRole = jobRole;
+        this.postingUrl = postingUrl;
     }
 
     /** 지원처 종류를 바꾼다 — null 이면 비운다(S-42). */
@@ -116,6 +125,10 @@ public class Application {
 
     public String getSubmittedMonth() {
         return submittedMonth;
+    }
+
+    public String getPostingUrl() {
+        return postingUrl;
     }
 
     public List<Question> getQuestions() {

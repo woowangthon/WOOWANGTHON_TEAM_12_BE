@@ -237,7 +237,6 @@ class EntranceApiTest {
     @Test
     void 지원_나누기_빈_글과_2만자_넘는_글은_AI_를_부르지_않는다() throws Exception {
         expectError(parse(textBody("  \\n ")), 400, "EMPTY_TEXT");
-        expectError(parse("{}"), 400, "EMPTY_TEXT");
         expectError(parse(textBody("가".repeat(20_001))), 413, "TEXT_TOO_LONG");
         assertThat(RECEIVED).isEmpty();
 
@@ -295,5 +294,75 @@ class EntranceApiTest {
         expectError(anonymous.perform(post("/api/entrance/parse-application").contentType(MediaType.APPLICATION_JSON)
                 .content(textBody(POSTING))), 401, "UNAUTHENTICATED");
         assertThat(RECEIVED).isEmpty();
+    }
+
+    // --- 공고 링크 (S-46) — BE#61 ---
+
+    static final String POSTING_URL = "https://example.com/recruit/1234";
+
+    private static String urlBody(String url) {
+        return "{\"url\": \"" + url + "\"}";
+    }
+
+    @Test
+    void 링크로_부르면_AI_에_url_만_넘기고_같은_모양으로_돌려준다() throws Exception {
+        reply = new FakeReply(200, """
+                {"organization": "OO 부트캠프", "organizationType": "BOOTCAMP", "jobRole": null,
+                 "questions": ["해결한 문제를 적어 주세요."]}""", 0);
+
+        parse(urlBody(POSTING_URL))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.organization").value("OO 부트캠프"))
+                .andExpect(jsonPath("$.questions[0]").value("해결한 문제를 적어 주세요."))
+                .andExpect(jsonPath("$.summary").doesNotExist());
+
+        assertThat(RECEIVED).hasSize(1);
+        assertThat((String) JsonPath.read(RECEIVED.getFirst(), "$.url")).isEqualTo(POSTING_URL);
+        assertThat(RECEIVED.getFirst()).doesNotContain("\"text\"");
+        // 붙여 넣은 글로 부르면 url 을 싣지 않는다
+        parse(textBody(POSTING)).andExpect(status().isOk());
+        assertThat(RECEIVED.get(1)).doesNotContain("\"url\"");
+    }
+
+    @Test
+    void 링크를_못_읽으면_AI_의_422_code_message_를_그대로_넘긴다() throws Exception {
+        for (String code : List.of("URL_BLOCKED", "URL_UNREADABLE")) {
+            String message = code.equals("URL_BLOCKED") ? "이 사이트는 자동으로 읽는 것을 막아 두었어요"
+                    : "글이 거의 없는 페이지예요 — 화면을 그림이나 \\\"스크립트\\\"로 그리는 사이트일 수 있어요";
+            reply = new FakeReply(422, "{\"error\": {\"code\": \"" + code + "\", \"message\": \"" + message + "\"}}", 0);
+
+            String body = parse(urlBody(POSTING_URL)).andExpect(status().is(422)).andReturn().getResponse()
+                    .getContentAsString(StandardCharsets.UTF_8);
+
+            assertThat((String) JsonPath.read(body, "$.error.code")).isEqualTo(code);
+            assertThat((String) JsonPath.read(body, "$.error.message")).isEqualTo(message.replace("\\\"", "\""));
+        }
+    }
+
+    @Test
+    void 그_밖의_422_나_message_없는_422_는_502_AI_FAILED() throws Exception {
+        for (String body : List.of("{\"error\": {\"code\": \"INVALID_REQUEST\", \"message\": \"x\"}}",
+                "{\"error\": {\"code\": \"URL_BLOCKED\"}}", "not json")) {
+            reply = new FakeReply(422, body, 0);
+            expectError(parse(urlBody(POSTING_URL)), 502, "AI_FAILED");
+        }
+        // 다른 HTTP 로 온 URL_BLOCKED 도 넘기지 않는다
+        reply = new FakeReply(500, "{\"error\": {\"code\": \"URL_BLOCKED\", \"message\": \"x\"}}", 0);
+        expectError(parse(urlBody(POSTING_URL)), 502, "AI_FAILED");
+    }
+
+    @Test
+    void text_url_가_둘_다_있거나_없거나_url_이_틀리면_AI_를_부르지_않는다() throws Exception {
+        expectError(parse("{}"), 400, "INVALID_REQUEST");
+        expectError(parse("{\"text\": null, \"url\": null}"), 400, "INVALID_REQUEST");
+        expectError(parse("{\"text\": \"" + POSTING + "\", \"url\": \"" + POSTING_URL + "\"}"), 400, "INVALID_REQUEST");
+        for (String url : List.of("", "example.com/recruit", "ftp://example.com/a", "javascript:alert(1)",
+                "https://", "https://example.com/" + "a".repeat(1_981))) {
+            expectError(parse(urlBody(url)), 400, "INVALID_URL");
+        }
+        assertThat(RECEIVED).isEmpty();
+
+        reply = new FakeReply(200, "{\"questions\": []}", 0);
+        parse(urlBody("HTTP://example.com/" + "a".repeat(1_981))).andExpect(status().isOk());
     }
 }

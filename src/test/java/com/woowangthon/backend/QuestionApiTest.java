@@ -1016,6 +1016,49 @@ class QuestionApiTest {
         awaitApplication(applicationId);
     }
 
+    // --- 공고 원문 링크 (S-46) — BE#61 ---
+
+    @Test
+    void 공고_원문_링크를_넣으면_지원에_실리고_빼면_null() throws Exception {
+        long withUrl = submitApplication("""
+                {"organization": "OO", "postingUrl": "https://example.com/recruit/1234?ref=a",
+                 "questions": [{"text": "지원 동기를 적어 주세요."}]}""");
+        long withoutUrl = submitApplication("{\"questions\": [{\"text\": \"해결한 문제를 적어 주세요.\"}]}");
+        long nullUrl = submitApplication("{\"postingUrl\": null, \"questions\": [{\"text\": \"역할을 적어 주세요.\"}]}");
+        awaitApplication(withUrl);
+        awaitApplication(withoutUrl);
+        awaitApplication(nullUrl);
+
+        mvc.perform(get("/api/applications/{id}", withUrl))
+                .andExpect(jsonPath("$.postingUrl").value("https://example.com/recruit/1234?ref=a"));
+        mvc.perform(get("/api/applications/{id}", withoutUrl))
+                .andExpect(jsonPath("$.postingUrl").value(nullValue()));
+        mvc.perform(get("/api/applications"))
+                .andExpect(jsonPath("$.applications[0].postingUrl").value(nullValue()))
+                .andExpect(jsonPath("$.applications[2].postingUrl").value("https://example.com/recruit/1234?ref=a"));
+        // 서버는 링크를 매칭에 싣지 않는다 — 다시 읽지 않는다
+        assertThat(RECEIVED).allSatisfy(sent -> assertThat(sent).doesNotContain("example.com"));
+        // 넣은 뒤 고치지 않는다
+        expectError(patchApplication(withUrl, "{\"postingUrl\": \"https://other.example\"}"), 400, "INVALID_REQUEST");
+    }
+
+    @Test
+    void 공고_원문_링크_오류() throws Exception {
+        for (String url : List.of("\"\"", "\"example.com/recruit\"", "\"ftp://example.com/a\"",
+                "\"javascript:alert(1)\"", "\"https://\"", "\"https://example.com/" + "a".repeat(1_981) + "\"",
+                "1")) {
+            expectError(postApplication("{\"postingUrl\": " + url + ", \"questions\": [{\"text\": \"문항\"}]}"),
+                    400, "INVALID_REQUEST");
+        }
+        assertThat(applications.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from analysis_usage", Integer.class)).isZero();
+
+        // 딱 2000자는 된다
+        long applicationId = submitApplication("{\"postingUrl\": \"https://example.com/" + "a".repeat(1_980)
+                + "\", \"questions\": [{\"text\": \"문항\"}]}");
+        awaitApplication(applicationId);
+    }
+
     @Test
     void 매칭이_문항_유형을_AI_로_붙이고_없으면_null() throws Exception {
         reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 0);

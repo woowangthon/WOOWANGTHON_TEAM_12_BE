@@ -4,6 +4,7 @@ import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
+import com.woowangthon.backend.common.PostingUrls;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -34,8 +35,8 @@ public class ApplicationService {
     public record QuestionText(String text) {
     }
 
-    // organizationType · jobRole — 선택. 문자열로 받아 목록 밖이면 400(S-42)
-    public record ApplicationRequest(String organization, String organizationType, String jobRole,
+    // organizationType · jobRole — 선택. 문자열로 받아 목록 밖이면 400(S-42). postingUrl — 선택, 빼면 null(S-46)
+    public record ApplicationRequest(String organization, String organizationType, String jobRole, String postingUrl,
             List<QuestionText> questions) {
     }
 
@@ -54,10 +55,15 @@ public class ApplicationService {
         OrganizationType organizationType = QuestionService.value(OrganizationType.class, request.organizationType(),
                 "organizationType");
         JobRole jobRole = QuestionService.value(JobRole.class, request.jobRole(), "jobRole");
+        String postingUrl = request.postingUrl();
+        if (postingUrl != null && !PostingUrls.isValid(postingUrl)) {
+            throw ApiException.invalidRequest(
+                    "postingUrl 은 " + PostingUrls.MAX_LENGTH + "자 이하의 http(s):// 주소여야 합니다");
+        }
         limiter.consume(CurrentUser.id(), texts.size());
 
         Application application = applications.save(
-                new Application(CurrentUser.id(), organization, organizationType, jobRole));
+                new Application(CurrentUser.id(), organization, organizationType, jobRole, postingUrl));
         // 하나씩 저장해 ID 가 넣은 순서대로 커지게 한다 — 지원 안의 문항 순서는 ID 순서다
         List<Long> questionIds = new ArrayList<>();
         for (String text : texts) {
