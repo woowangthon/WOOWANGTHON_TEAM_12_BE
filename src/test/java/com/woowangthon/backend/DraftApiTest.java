@@ -115,6 +115,7 @@ class DraftApiTest {
     static final String S3 = "스터디원 6명의 풀이를 매주 리뷰했습니다.";
     static final String QUOTE = "채팅 메시지가 늦게 도착하는 문제가 있었다. 내가 폴링을 WebSocket 으로 바꿔 해결했다.";
     static final String ANSWER = "서버에 STOMP 엔드포인트를 만들고, 앱의 3초 폴링 코드를 구독 방식으로 바꿨다";
+    static final String ASK = "WebSocket 으로 바꾼 뒤 메시지가 제때 오는지 어떻게 확인했나요?";
 
     @Autowired
     WebApplicationContext context;
@@ -226,10 +227,13 @@ class DraftApiTest {
                     { "text": "%s", "evidence": [{ "type": "SUPPLEMENT", "id": %d }] },
                     { "text": "%s", "evidence": [{ "type": "EXPERIENCE", "id": %d }] }
                   ],
-                  "omitted": ["바꾼 뒤 메시지가 제때 오는지 확인한 방법", "이 경험에서 배운 점 · 느낀 점"],
+                  "omitted": [
+                    { "text": "바꾼 뒤 메시지가 제때 오는지 확인한 방법", "question": "%s", "experienceId": %d },
+                    { "text": "Java · Spring 을 쓴 경험", "question": null, "experienceId": null }
+                  ],
                   "model": "test-model"
                 }
-                """.formatted(S1, chatCitation, S2, chatSupplement, S3, study);
+                """.formatted(S1, chatCitation, S2, chatSupplement, S3, study, ASK, chat);
     }
 
     private int used() {
@@ -284,7 +288,20 @@ class DraftApiTest {
                 .andExpect(jsonPath("$.draft.sentences[2].evidence[0].id").value(study))
                 .andExpect(jsonPath("$.draft.sentences[2].evidence[0].text").value("스터디원 6명의 풀이를 매주 리뷰했다"))
                 .andExpect(jsonPath("$.draft.omitted.length()").value(2))
-                .andExpect(jsonPath("$.draft.omitted[0]").value("바꾼 뒤 메시지가 제때 오는지 확인한 방법"));
+                .andExpect(jsonPath("$.draft.omitted[0].text").value("바꾼 뒤 메시지가 제때 오는지 확인한 방법"))
+                .andExpect(jsonPath("$.draft.omitted[0].question").value(ASK))
+                .andExpect(jsonPath("$.draft.omitted[0].experienceId").value(chat))
+                .andExpect(jsonPath("$.draft.omitted[0].clarificationId").isNumber())
+                .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(nullValue()))
+                // 경험에 붙지 않는 빈칸 — text 만, 나머지 네 칸은 null 로 싣는다
+                .andExpect(jsonPath("$.draft.omitted[1].text").value("Java · Spring 을 쓴 경험"))
+                .andExpect(jsonPath("$.draft.omitted[1].question").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].experienceId").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].clarificationId").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].supplementId").value(nullValue()))
+                // 초안의 되묻기는 추천의 되묻기에 섞이지 않는다
+                .andExpect(jsonPath("$.clarifications.length()").value(0));
+        assertThat(jdbc.queryForObject("select count(*) from clarification", Integer.class)).isEqualTo(1);
 
         // 분석 1회로 센다 · 문항의 추천은 그대로
         assertThat(used()).isEqualTo(before + 1);
@@ -308,13 +325,14 @@ class DraftApiTest {
 
     @Test
     void 받칠_것이_없으면_문장_없이_완료된다() throws Exception {
-        draftReply = new FakeReply(200, "{\"sentences\": [], \"omitted\": [\"경험 전부\"]}", 0);
+        draftReply = new FakeReply(200,
+                "{\"sentences\": [], \"omitted\": [{\"text\": \"경험 전부\", \"question\": null, \"experienceId\": null}]}", 0);
         start(bare).andExpect(status().isAccepted());
 
         String done = awaitDraft();
         assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
         assertThat((List<?>) JsonPath.read(done, "$.draft.sentences")).isEmpty();
-        assertThat((List<String>) JsonPath.read(done, "$.draft.omitted")).containsExactly("경험 전부");
+        assertThat((List<String>) JsonPath.read(done, "$.draft.omitted[*].text")).containsExactly("경험 전부");
         assertThat((List<?>) JsonPath.read(RECEIVED.getFirst(), "$.experiences[0].citations")).isEmpty();
     }
 
@@ -380,6 +398,82 @@ class DraftApiTest {
                 .andExpect(jsonPath("$.draft.sentences.length()").value(3));
     }
 
+    // --- 빠진 사실에 답하고 다시 만들기(ETC#139) ---
+
+    @Test
+    void 빠진_사실에_답하면_보완이_되고_다시_만들면_새_보완을_싣는다() throws Exception {
+        start(chat, study).andExpect(status().isAccepted());
+        String done = awaitDraft();
+        long asked = ((Number) JsonPath.read(done, "$.draft.omitted[0].clarificationId")).longValue();
+        int before = used();
+
+        // 답은 그 경험의 보완 — 질문은 저장한 빠진 사실의 질문, questionId 는 지원 문항. AI 를 부르지 않고 분석을 세지 않는다
+        String saved = mvc.perform(post("/api/clarifications/{id}/answer", asked).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"answer\": \"두 기기로 메시지를 보내고 양쪽 화면에 도착하는지 확인했다\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.experienceId").value(chat))
+                .andExpect(jsonPath("$.supplement.question").value(ASK))
+                .andExpect(jsonPath("$.supplement.questionId").value(questionId))
+                .andReturn().getResponse().getContentAsString();
+        long answered = ((Number) JsonPath.read(saved, "$.supplement.id")).longValue();
+        assertThat(used()).isEqualTo(before);
+        assertThat(RECEIVED).hasSize(1);
+
+        // 새로고침해도 답한 상태 · 초안 문장은 그대로 · 활동 세부의 그 경험에 「내가 입력」 보완으로
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.omitted[0].clarificationId").value(asked))
+                .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(answered))
+                .andExpect(jsonPath("$.draft.sentences.length()").value(3));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences[?(@.id == %d)].supplements[*].id".formatted(chat)).value(
+                        org.hamcrest.Matchers.hasItem((int) answered)));
+        expectError(mvc.perform(post("/api/clarifications/{id}/answer", asked).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"answer\": \"또\"}")), 409, "CLARIFICATION_ALREADY_ANSWERED");
+
+        // 보완을 지우면 다시 답할 수 있게 null 로 돌아간다
+        jdbc.update("delete from supplement where id = ?", answered);
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(nullValue()));
+        answered = ((Number) JsonPath.read(mvc.perform(post("/api/clarifications/{id}/answer", asked)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"answer\": \"두 기기로 확인했다\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), "$.supplement.id"))
+                .longValue();
+
+        // 다시 만들기 — 저장한 보완을 싣고, 예전 초안의 되묻기는 무효, 보완은 남는다
+        start(chat, study).andExpect(status().isAccepted());
+        String again = awaitDraft();
+        assertThat(RECEIVED).hasSize(2);
+        assertThat((List<Integer>) JsonPath.read(RECEIVED.get(1), "$.experiences[0].supplements[*].id"))
+                .containsExactly((int) chatSupplement, (int) answered);
+        long newAsked = ((Number) JsonPath.read(again, "$.draft.omitted[0].clarificationId")).longValue();
+        assertThat(newAsked).isNotEqualTo(asked);
+        assertThat((Object) JsonPath.read(again, "$.draft.omitted[0].supplementId")).isNull();
+        expectError(mvc.perform(post("/api/clarifications/{id}/answer", asked).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"answer\": \"늦은 답\"}")), 404, "CLARIFICATION_NOT_FOUND");
+        assertThat(supplements.findById(answered)).isPresent();
+        assertThat(jdbc.queryForObject("select count(*) from clarification", Integer.class)).isEqualTo(1);
+
+        // 경험이 지워지면 그 빈칸은 응답에서 빠진다 — 붙지 않은 빈칸은 남는다
+        jdbc.update("delete from experience where id = ?", chat);
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.omitted.length()").value(1))
+                .andExpect(jsonPath("$.draft.omitted[0].experienceId").value(nullValue()));
+    }
+
+    @Test
+    void 옛_문자열_형식_초안은_없는_것으로_보이고_다시_만들면_풀린다() throws Exception {
+        start(chat, study).andExpect(status().isAccepted());
+        awaitDraft();
+        jdbc.update("update draft set legacy_omitted = true");
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft").value(nullValue()))
+                .andExpect(jsonPath("$.recommendations.length()").value(3));
+
+        start(chat, study).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+    }
+
     // --- 실패 ---
 
     @Test
@@ -412,6 +506,7 @@ class DraftApiTest {
     @Test
     void 계약을_어긴_응답이면_아무것도_저장하지_않고_실패() throws Exception {
         String okSentence = "{\"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}".formatted(chatCitation);
+        String gap = "{\"text\": \"빈칸\", \"question\": null, \"experienceId\": null}";
         List<String> bodies = List.of(
                 // 받칠 것이 있는데 문장 0개
                 "{\"sentences\": [], \"omitted\": []}",
@@ -431,9 +526,14 @@ class DraftApiTest {
                 "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(chat),
                 // 보내지 않은 경험의 본문을 근거로
                 "{\"sentences\": [{\"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(stranger),
-                // omitted 5개 넘음 · 빈 문자열
-                "{\"sentences\": [" + okSentence + "], \"omitted\": [\"1\", \"2\", \"3\", \"4\", \"5\", \"6\"]}",
-                "{\"sentences\": [" + okSentence + "], \"omitted\": [\" \"]}");
+                // omitted 5개 넘음 · 빈 text · 예전 문자열 배열 · 질문과 경험의 null 짝 · 빈 질문 · 보내지 않은 경험
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [" + String.join(",", java.util.Collections.nCopies(6, gap)) + "]}",
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \" \", \"question\": null, \"experienceId\": null}]}",
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [\"예전 문자열\"]}",
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": \"질문?\", \"experienceId\": null}]}",
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": null, \"experienceId\": %d}]}".formatted(chat),
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": \" \", \"experienceId\": %d}]}".formatted(chat),
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": \"질문?\", \"experienceId\": %d}]}".formatted(stranger));
         for (String body : bodies) {
             draftReply = new FakeReply(200, body, 0);
             start(chat, study).andExpect(status().isAccepted());
@@ -443,6 +543,8 @@ class DraftApiTest {
             assertThat((String) JsonPath.read(failed, "$.draft.error.message")).as(body).startsWith("INVALID_RESPONSE");
         }
         assertThat(jdbc.queryForObject("select count(*) from draft_sentence", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from draft_omitted", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from clarification", Integer.class)).isZero();
     }
 
     @Test

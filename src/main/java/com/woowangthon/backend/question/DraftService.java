@@ -11,6 +11,8 @@ import com.woowangthon.backend.common.ErrorResponse;
 import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
+import com.woowangthon.backend.experience.Supplement;
+import com.woowangthon.backend.experience.SupplementRepository;
 import com.woowangthon.backend.job.JobStatus;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -43,14 +45,19 @@ public class DraftService {
     private final ExperienceRepository experiences;
     private final SentenceEvidence evidence;
     private final UsageLimiter limiter;
+    private final ClarificationRepository clarifications;
+    private final SupplementRepository supplements;
 
     public DraftService(QuestionRepository questions, DraftRepository drafts, ExperienceRepository experiences,
-            SentenceEvidence evidence, UsageLimiter limiter) {
+            SentenceEvidence evidence, UsageLimiter limiter, ClarificationRepository clarifications,
+            SupplementRepository supplements) {
         this.questions = questions;
         this.drafts = drafts;
         this.experiences = experiences;
         this.evidence = evidence;
         this.limiter = limiter;
+        this.clarifications = clarifications;
+        this.supplements = supplements;
     }
 
     public record StartRequest(List<Long> experienceIds) {
@@ -59,13 +66,18 @@ public class DraftService {
     public record Sentence(String text, List<SentenceEvidence.Ref> evidence) {
     }
 
+    /** 경험에 붙지 않은 빈칸은 text 만 있고 나머지는 null. supplementId 는 지금 그 되묻기에 달린 보완. */
+    public record Omitted(String text, String question, Long experienceId, Long clarificationId, Long supplementId) {
+    }
+
     public record DraftView(Long questionId, JobStatus status, ErrorResponse.Error error, List<Long> experienceIds,
-            List<Sentence> sentences, List<String> omitted, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+            List<Sentence> sentences, List<Omitted> omitted, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
     }
 
     /**
      * 초안을 시작한다 — 그 문항의 예전 초안을 이것으로 바꾼다. 진행 중(409) · 한도(429)면 예전 것을 그대로 둔다. 문항 행을 잠가 두 번 눌러도
-     * 하나만 시작한다.
+     * 하나만 시작한다. 예전 초안의 되묻기는 지운다 — 그 ID 로는 더 답할 수 없고, 이미 쌓인 보완은 남는다. 답 저장도 같은 문항 행을 잠그므로
+     * 교체와 겹쳐 지운 되묻기로 보완이 생기지 않는다(ClarificationService).
      */
     @Transactional
     public DraftView start(long questionId, StartRequest request) {
@@ -85,15 +97,18 @@ public class DraftService {
         limiter.consume(question.getUserId());
         if (draft == null) {
             draft = new Draft(questionId);
+        } else {
+            clarifications.deleteByDraftId(draft.getId());
         }
         draft.start(chosen);
         drafts.saveAndFlush(draft);
         return view(draft, question.getUserId());
     }
 
-    /** 문항 응답에 싣는 초안 — 아직 만들지 않았으면 null. 문항을 읽는 트랜잭션 안에서 부른다. */
+    /** 문항 응답에 싣는 초안 — 아직 만들지 않았거나 옛 문자열 형식이면 null. 문항을 읽는 트랜잭션 안에서 부른다. */
     public DraftView find(Question question) {
-        return drafts.findByQuestionId(question.getId()).map(d -> view(d, question.getUserId())).orElse(null);
+        return drafts.findByQuestionId(question.getId()).filter(d -> !d.isLegacyOmitted())
+                .map(d -> view(d, question.getUserId())).orElse(null);
     }
 
     /** AI 에 보낼 것 — 문항과 고른 경험만, 고른 순서대로, 지금 상태로. 추천의 reason · emphasis · gaps 는 싣지 않는다. */
@@ -140,14 +155,42 @@ public class DraftService {
             sentences.add(new DraftSentence(draft, position, s.text(), backing));
         }
 
-        List<String> omitted = orEmpty(result.omitted());
-        if (omitted.size() > MAX_OMITTED) {
+        List<DraftOmitted> omitted = omitted(questionId, draft, sent, orEmpty(result.omitted()));
+        draft.complete(sentences, omitted);
+    }
+
+    // 모양을 다 확인한 뒤, 경험에 붙은 빈칸마다 되묻기를 만든다 — 추천 되묻기와 같은 답 저장 경로를 쓴다(ai-api.md 「응답 규칙」 omitted)
+    private List<DraftOmitted> omitted(long questionId, Draft draft, DraftRequest sent,
+            List<DraftResponse.OmittedResult> found) {
+        if (found.size() > MAX_OMITTED) {
             throw AiCallException.invalidResponse("omitted 는 " + MAX_OMITTED + "개까지입니다");
         }
-        if (omitted.stream().anyMatch(o -> o == null || o.isBlank())) {
-            throw AiCallException.invalidResponse("omitted 에 빈 문자열이 있습니다");
+        Set<Long> sentIds = sent.experiences().stream().map(MatchRequest.ExperiencePart::id).collect(Collectors.toSet());
+        for (int i = 0; i < found.size(); i++) {
+            DraftResponse.OmittedResult o = found.get(i);
+            if (o == null || o.text() == null || o.text().isBlank()) {
+                throw AiCallException.invalidResponse("omitted[" + i + "].text 가 비었습니다");
+            }
+            if ((o.experienceId() == null) != (o.question() == null)) {
+                throw AiCallException.invalidResponse("omitted[" + i + "] 의 question 과 experienceId 는 함께 null 이어야 합니다");
+            }
+            if (o.question() != null && o.question().isBlank()) {
+                throw AiCallException.invalidResponse("omitted[" + i + "].question 이 비었습니다");
+            }
+            if (o.experienceId() != null && !sentIds.contains(o.experienceId())) {
+                throw AiCallException.invalidResponse("omitted[" + i + "].experienceId 가 보낸 경험이 아닙니다: " + o.experienceId());
+            }
         }
-        draft.complete(sentences, omitted);
+        Question question = questions.getReferenceById(questionId);
+        List<DraftOmitted> omitted = new ArrayList<>();
+        for (int i = 0; i < found.size(); i++) {
+            DraftResponse.OmittedResult o = found.get(i);
+            Long clarificationId = o.experienceId() == null ? null
+                    : clarifications.save(Clarification.forDraft(question, draft.getId(), i, o.experienceId(), o.question()))
+                            .getId();
+            omitted.add(new DraftOmitted(o.text(), o.question(), o.experienceId(), clarificationId));
+        }
+        return omitted;
     }
 
     @Transactional
@@ -164,8 +207,22 @@ public class DraftService {
                 .map(s -> new Sentence(s.getText(), SentenceEvidence.resolve(s.getEvidence(), current))).toList();
         ErrorResponse.Error error = d.getErrorCode() == null ? null
                 : new ErrorResponse.Error(d.getErrorCode(), d.getErrorMessage());
-        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, List.copyOf(d.getOmitted()),
+        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current),
                 Times.seoul(d.getCreatedAt()), d.getUpdatedAt() == null ? null : Times.seoul(d.getUpdatedAt()));
+    }
+
+    // 경험이 그새 지워진 항목은 뺀다. 답한 보완은 지금 연결로 찾는다 — 보완을 지우면 null 로 돌아간다
+    private List<Omitted> omitted(Draft d, Map<String, SentenceEvidence.Ref> current) {
+        List<Long> asked = d.getOmitted().stream().map(DraftOmitted::getClarificationId).filter(Objects::nonNull).toList();
+        Map<Long, Long> answered = asked.isEmpty() ? Map.of()
+                : supplements.findByClarificationIdIn(asked).stream()
+                        .collect(Collectors.toMap(Supplement::getClarificationId, Supplement::getId, (a, b) -> a));
+        return d.getOmitted().stream()
+                .filter(o -> o.getExperienceId() == null
+                        || current.containsKey(SentenceEvidence.key(EvidenceType.EXPERIENCE, o.getExperienceId())))
+                .map(o -> new Omitted(o.getText(), o.getQuestion(), o.getExperienceId(), o.getClarificationId(),
+                        o.getClarificationId() == null ? null : answered.get(o.getClarificationId())))
+                .toList();
     }
 
     private static List<Long> checkShape(List<Long> ids) {

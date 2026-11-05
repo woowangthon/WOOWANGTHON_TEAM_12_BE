@@ -22,6 +22,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.annotations.UpdateTimestamp;
 
 /**
@@ -70,8 +71,10 @@ public class Question {
     @OrderBy("position asc")
     private List<Recommendation> recommendations = new ArrayList<>();
 
+    // 추천의 되묻기만 — 초안에서 만든 것(draft_id)은 초안 쪽이 다룬다
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("position asc")
+    @SQLRestriction("draft_id is null")
     private List<Clarification> clarifications = new ArrayList<>();
 
     @CreationTimestamp

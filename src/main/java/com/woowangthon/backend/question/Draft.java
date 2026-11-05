@@ -56,8 +56,11 @@ public class Draft {
     @ElementCollection
     @CollectionTable(name = "draft_omitted", joinColumns = @JoinColumn(name = "draft_id"))
     @OrderColumn(name = "position")
-    @Column(name = "text", nullable = false)
-    private List<String> omitted = new ArrayList<>();
+    private List<DraftOmitted> omitted = new ArrayList<>();
+
+    // 옛 문자열 형식 omitted 로 만든 초안(ETC#139) — 응답에선 없는 것으로 보고 다시 만들면 풀린다
+    @Column(nullable = false)
+    private boolean legacyOmitted;
 
     @Column(nullable = false)
     private OffsetDateTime createdAt;
@@ -79,6 +82,7 @@ public class Draft {
         omitted.clear();
         experienceIds.clear();
         experienceIds.addAll(chosen);
+        legacyOmitted = false;
         status = JobStatus.ANALYZING;
         errorCode = null;
         errorMessage = null;
@@ -86,7 +90,7 @@ public class Draft {
     }
 
     /** 문장들은 이 초안을 가리키게 만든 것이어야 한다. */
-    public void complete(List<DraftSentence> newSentences, List<String> newOmitted) {
+    public void complete(List<DraftSentence> newSentences, List<DraftOmitted> newOmitted) {
         sentences.clear();
         sentences.addAll(newSentences);
         omitted.clear();
@@ -102,6 +106,10 @@ public class Draft {
         status = JobStatus.FAILED;
         errorCode = code;
         errorMessage = message;
+    }
+
+    public Long getId() {
+        return id;
     }
 
     public Long getQuestionId() {
@@ -128,8 +136,12 @@ public class Draft {
         return sentences;
     }
 
-    public List<String> getOmitted() {
+    public List<DraftOmitted> getOmitted() {
         return omitted;
+    }
+
+    public boolean isLegacyOmitted() {
+        return legacyOmitted;
     }
 
     public OffsetDateTime getCreatedAt() {
