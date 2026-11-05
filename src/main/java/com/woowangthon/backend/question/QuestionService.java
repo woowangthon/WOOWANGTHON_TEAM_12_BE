@@ -42,13 +42,15 @@ public class QuestionService {
     private final ApplicationRepository applications;
     private final ExperienceRepository experiences;
     private final UsageLimiter limiter;
+    private final DraftService drafts;
 
     public QuestionService(QuestionRepository questions, ApplicationRepository applications,
-            ExperienceRepository experiences, UsageLimiter limiter) {
+            ExperienceRepository experiences, UsageLimiter limiter, DraftService drafts) {
         this.questions = questions;
         this.applications = applications;
         this.experiences = experiences;
         this.limiter = limiter;
+        this.drafts = drafts;
     }
 
     // organizationType · jobRole — 새로 만드는 지원의 것(선택). 문자열로 받아 목록 밖이면 400
@@ -203,7 +205,7 @@ public class QuestionService {
                 ? Map.of()
                 : experiences.findAllOwned(ids, question.getUserId()).stream()
                         .collect(Collectors.toMap(Experience::getId, Function.identity()));
-        return QuestionResponses.Detail.from(question, existing);
+        return QuestionResponses.Detail.from(question, existing, drafts.find(question));
     }
 
     private static List<Requirement> requirements(List<MatchResponse.RequirementResult> found,

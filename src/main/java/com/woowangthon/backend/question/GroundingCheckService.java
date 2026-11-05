@@ -5,25 +5,16 @@ import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.GroundCheckRequest;
 import com.woowangthon.backend.ai.GroundCheckResponse;
 import com.woowangthon.backend.ai.MatchRequest;
-import com.woowangthon.backend.ai.MatchResponse;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.ErrorResponse;
 import com.woowangthon.backend.common.Times;
-import com.woowangthon.backend.experience.Citation;
-import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
-import com.woowangthon.backend.experience.SourceStatus;
-import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.job.JobStatus;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Stream;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -39,23 +30,22 @@ public class GroundingCheckService {
     private final QuestionRepository questions;
     private final GroundingCheckRepository checks;
     private final ExperienceRepository experiences;
+    private final SentenceEvidence evidence;
     private final UsageLimiter limiter;
 
     public GroundingCheckService(QuestionRepository questions, GroundingCheckRepository checks,
-            ExperienceRepository experiences, UsageLimiter limiter) {
+            ExperienceRepository experiences, SentenceEvidence evidence, UsageLimiter limiter) {
         this.questions = questions;
         this.checks = checks;
         this.experiences = experiences;
+        this.evidence = evidence;
         this.limiter = limiter;
     }
 
     public record StartRequest(String text) {
     }
 
-    public record EvidenceRef(EvidenceType type, Long id, Long experienceId, Long activityId, String text) {
-    }
-
-    public record Sentence(String text, GroundingStatus status, List<EvidenceRef> evidence, String note) {
+    public record Sentence(String text, GroundingStatus status, List<SentenceEvidence.Ref> evidence, String note) {
     }
 
     public record Check(Long questionId, JobStatus status, ErrorResponse.Error error, String text,
@@ -102,14 +92,7 @@ public class GroundingCheckService {
         Question question = questions.findById(questionId).orElseThrow();
         GroundingCheck check = checks.findByQuestionId(questionId).orElseThrow();
         List<MatchRequest.ExperiencePart> parts = experiences.findAllOfUser(question.getUserId()).stream()
-                .map(e -> new MatchRequest.ExperiencePart(e.getId(), e.getActivity().getName(),
-                        e.getActivity().getPeriod(), e.getContent(), e.getCompetencies(), e.getActor(),
-                        e.getSourceStatus(),
-                        e.getCitations().stream().filter(c -> Boolean.TRUE.equals(c.getMatched()))
-                                .map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
-                        e.getSupplements().stream()
-                                .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList()))
-                .toList();
+                .map(SentenceEvidence::matchedPart).toList();
         return new GroundCheckRequest(check.getText(), parts);
     }
 
@@ -123,16 +106,7 @@ public class GroundingCheckService {
         if (check.getStatus() != JobStatus.ANALYZING) {
             return; // 그새 재시작 정리로 실패가 됐다 — 덮지 않는다
         }
-        Set<Long> citationIds = new HashSet<>();
-        Set<Long> supplementIds = new HashSet<>();
-        Set<Long> userEnteredIds = new HashSet<>();
-        for (MatchRequest.ExperiencePart e : sent.experiences()) {
-            e.citations().forEach(c -> citationIds.add(c.id()));
-            e.supplements().forEach(s -> supplementIds.add(s.id()));
-            if (e.sourceStatus() == SourceStatus.USER_ENTERED) {
-                userEnteredIds.add(e.id());
-            }
-        }
+        SentenceEvidence.Sent ids = new SentenceEvidence.Sent(sent.experiences());
 
         List<GroundCheckResponse.SentenceResult> found = result.sentences();
         if (found == null || found.isEmpty()) {
@@ -153,30 +127,14 @@ public class GroundingCheckService {
             cursor = at + s.text().length();
 
             GroundingStatus status = groundingStatus(s.status());
-            List<Evidence> evidence = new ArrayList<>();
-            Set<String> seen = new HashSet<>();
-            for (MatchResponse.EvidenceResult e : orEmpty(s.evidence())) {
-                EvidenceType type = evidenceType(e.type());
-                Set<Long> allowed = switch (type) {
-                    case CITATION -> citationIds;
-                    case SUPPLEMENT -> supplementIds;
-                    case EXPERIENCE -> userEnteredIds;
-                };
-                if (e.id() == null || !allowed.contains(e.id())) {
-                    throw AiCallException.invalidResponse("evidence 의 " + type + " " + e.id() + " 은(는) 보낸 것이 아닙니다");
-                }
-                if (!seen.add(type + ":" + e.id())) {
-                    throw AiCallException.invalidResponse("evidence 에 같은 것이 두 번 있습니다: " + type + " " + e.id());
-                }
-                evidence.add(new Evidence(type, e.id()));
-            }
-            checkEvidence(position, status, evidence);
+            List<Evidence> backing = ids.checked(s.evidence());
+            checkEvidence(position, status, backing);
             String note = s.note();
             if (status == GroundingStatus.UNSUPPORTED ? note == null || note.isBlank() : note != null) {
                 throw AiCallException.invalidResponse(
                         "sentences[" + position + "].note 는 UNSUPPORTED 면 한 줄, 아니면 null 이어야 합니다(" + status + ")");
             }
-            sentences.add(new GroundingSentence(check, position, s.text(), status, evidence, note));
+            sentences.add(new GroundingSentence(check, position, s.text(), status, backing, note));
         }
         check.complete(sentences);
     }
@@ -192,11 +150,9 @@ public class GroundingCheckService {
     private Check response(GroundingCheck c, long userId) {
         List<Sentence> sentences = List.of();
         if (!c.getSentences().isEmpty()) {
-            Map<String, EvidenceRef> current = currentEvidence(userId);
+            Map<String, SentenceEvidence.Ref> current = evidence.current(userId);
             sentences = c.getSentences().stream()
-                    .map(s -> new Sentence(s.getText(), s.getStatus(),
-                            s.getEvidence().stream().map(v -> current.get(v.getType() + ":" + v.getRefId()))
-                                    .filter(Objects::nonNull).toList(),
+                    .map(s -> new Sentence(s.getText(), s.getStatus(), SentenceEvidence.resolve(s.getEvidence(), current),
                             s.getNote()))
                     .toList();
         }
@@ -204,24 +160,6 @@ public class GroundingCheckService {
                 : new ErrorResponse.Error(c.getErrorCode(), c.getErrorMessage());
         return new Check(c.getQuestionId(), c.getStatus(), error, c.getText(), sentences,
                 Times.seoul(c.getCreatedAt()), c.getUpdatedAt() == null ? null : Times.seoul(c.getUpdatedAt()));
-    }
-
-    private Map<String, EvidenceRef> currentEvidence(long userId) {
-        Map<String, EvidenceRef> current = new HashMap<>();
-        for (Experience e : experiences.findAllOfUser(userId)) {
-            Long activityId = e.getActivity().getId();
-            current.put(EvidenceType.EXPERIENCE + ":" + e.getId(),
-                    new EvidenceRef(EvidenceType.EXPERIENCE, e.getId(), e.getId(), activityId, e.getContent()));
-            for (Citation c : e.getCitations()) {
-                current.put(EvidenceType.CITATION + ":" + c.getId(),
-                        new EvidenceRef(EvidenceType.CITATION, c.getId(), e.getId(), activityId, c.getQuote()));
-            }
-            for (Supplement s : e.getSupplements()) {
-                current.put(EvidenceType.SUPPLEMENT + ":" + s.getId(),
-                        new EvidenceRef(EvidenceType.SUPPLEMENT, s.getId(), e.getId(), activityId, s.getAnswer()));
-            }
-        }
-        return current;
     }
 
     // SOURCE → CITATION 1개 이상, USER_INPUT → SUPPLEMENT · EXPERIENCE 만 1개 이상, UNSUPPORTED · OPINION → []
@@ -242,16 +180,6 @@ public class GroundingCheckService {
         return Stream.of(GroundingStatus.values()).filter(s -> s.name().equals(value)).findFirst()
                 .orElseThrow(() -> AiCallException.invalidResponse(
                         "sentences[].status 는 SOURCE · USER_INPUT · UNSUPPORTED · OPINION 중 하나여야 합니다: " + value));
-    }
-
-    private static EvidenceType evidenceType(String value) {
-        return Stream.of(EvidenceType.values()).filter(t -> t.name().equals(value)).findFirst()
-                .orElseThrow(() -> AiCallException.invalidResponse(
-                        "evidence[].type 은 CITATION · SUPPLEMENT · EXPERIENCE 중 하나여야 합니다: " + value));
-    }
-
-    private static <T> List<T> orEmpty(List<T> values) {
-        return values == null ? List.of() : values;
     }
 
     // 한도는 문항 넣기와 같은 셈(String.length())

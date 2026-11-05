@@ -69,6 +69,11 @@ public class AiClient {
         return post(job, "/ground-check", request, GroundCheckResponse.class);
     }
 
+    /** 고른 경험으로 답변 초안 — 작업(question-api 「답변 초안」). */
+    public DraftResponse draft(DraftRequest request) {
+        return post(job, "/draft", request, DraftResponse.class);
+    }
+
     /** 홈 입력 가르기 — 동기(entrance-api). */
     public RouteResponse route(RouteRequest request) {
         return post(sync, "/route", request, RouteResponse.class);
