@@ -8,16 +8,20 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 
 /**
  * 접근 토큰 — 로그인 세션 밖에서 사용자 데이터를 읽는 열쇠(V9). 원문 대신 SHA-256 해시만 둔다.
- * READ 는 사용자의 MCP 연결 주소 하나, CHAGOK 은 차곡이 일마다 만드는 토큰(만료 있음 · mcp-api.md 「토큰 범위」).
+ * READ · READ_WRITE 는 사용자의 MCP 연결 주소 하나의 두 상태, CHAGOK 은 차곡이 일마다 만드는 토큰(만료 있음 · mcp-api.md 「토큰 범위」).
+ * 바뀐 칸만 UPDATE 한다 — 요청마다 찍는 lastUsedAt 이 그새 끈 쓰기(scope)를 예전 값으로 덮지 않게.
  */
 @Entity
+@DynamicUpdate
 @Table(name = "access_token")
 public class AccessToken {
 
     public static final String SCOPE_READ = "READ";
+    public static final String SCOPE_READ_WRITE = "READ_WRITE";
     public static final String SCOPE_CHAGOK = "CHAGOK";
 
     @Id
@@ -59,6 +63,19 @@ public class AccessToken {
 
     void markUsed() {
         this.lastUsedAt = OffsetDateTime.now();
+    }
+
+    void changeScope(String scope) {
+        this.scope = scope;
+    }
+
+    void rename(String name) {
+        this.name = name;
+    }
+
+    /** 표시용 클라이언트 이름 — 없으면 null. 권한 · 식별에 쓰지 않는다. */
+    public String getName() {
+        return name;
     }
 
     public Long getId() {

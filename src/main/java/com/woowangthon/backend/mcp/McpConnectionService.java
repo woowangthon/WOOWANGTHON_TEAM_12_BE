@@ -1,5 +1,6 @@
 package com.woowangthon.backend.mcp;
 
+import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.Times;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -9,6 +10,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * MCP 연결 주소(ETC docs/contracts/mcp-api.md 「연결 주소」). 사용자당 하나 — 다시 만들면 예전 토큰은 지운다(바로 401).
+ * READ · READ_WRITE 는 연결 하나의 두 상태다 — 쓰기를 켜고 꺼도 주소는 그대로이고 범위만 바뀐다(S-52).
  * 차곡이 일의 CHAGOK 토큰도 여기서 만들지만 연결 주소와는 따로 산다 — 연결 화면에 안 보이고 위 규칙에 안 세인다(「토큰 범위」).
  * 토큰은 32바이트 무작위 값을 URL 에 그대로 쓰는 base64url 로 내보내고, DB 에는 SHA-256 해시만 둔다.
  */
@@ -24,6 +27,9 @@ public class McpConnectionService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Duration CHAGOK_TOKEN_LIFETIME = Duration.ofMinutes(10);
+    private static final List<String> CONNECTION_SCOPES = List.of(AccessToken.SCOPE_READ, AccessToken.SCOPE_READ_WRITE);
+    private static final String UNKNOWN_CLIENT = "외부 AI";
+    private static final int MAX_CLIENT_LENGTH = 40;
 
     private final AccessTokenRepository tokens;
     private final String baseUrl;
@@ -41,15 +47,20 @@ public class McpConnectionService {
         return url.endsWith("/") ? url : url + "/";
     }
 
-    /** 토큰의 주인과 범위. */
-    public record Authenticated(long userId, String scope) {
+    /** 토큰의 주인 · 범위와 표시용 클라이언트 이름(권한 · 식별에 쓰지 않는다). */
+    public record Authenticated(long tokenId, long userId, String scope, String client) {
     }
 
     /** 일 하나의 토큰 — url 은 AI 서버가 부르는 내부망 주소이고 토큰 원문이 들어 있다(로그에 남기지 않는다). */
     public record ChagokToken(long id, String url) {
     }
 
-    public record Status(boolean connected, OffsetDateTime createdAt, OffsetDateTime lastUsedAt) {
+    public record Status(boolean connected, boolean writeEnabled, OffsetDateTime createdAt, OffsetDateTime lastUsedAt) {
+
+        private static Status of(AccessToken t) {
+            return new Status(true, AccessToken.SCOPE_READ_WRITE.equals(t.getScope()), Times.seoul(t.getCreatedAt()),
+                    t.getLastUsedAt() == null ? null : Times.seoul(t.getLastUsedAt()));
+        }
     }
 
     public record Created(String url, OffsetDateTime createdAt) {
@@ -57,15 +68,26 @@ public class McpConnectionService {
 
     @Transactional(readOnly = true)
     public Status status(long userId) {
-        return tokens.findFirstByUserIdAndScopeOrderByIdDesc(userId, AccessToken.SCOPE_READ)
-                .map(t -> new Status(true, Times.seoul(t.getCreatedAt()),
-                        t.getLastUsedAt() == null ? null : Times.seoul(t.getLastUsedAt())))
-                .orElse(new Status(false, null, null));
+        return connection(userId).map(Status::of).orElse(new Status(false, false, null, null));
     }
 
+    /** 쓰기 켜기 · 끄기 — 주소는 그대로, 다음 MCP 요청부터 적용된다. */
+    @Transactional
+    public Status setWriteEnabled(long userId, boolean enabled) {
+        AccessToken token = connection(userId).orElseThrow(
+                () -> ApiException.notFound("MCP_CONNECTION_NOT_FOUND", "연결이 없습니다"));
+        token.changeScope(enabled ? AccessToken.SCOPE_READ_WRITE : AccessToken.SCOPE_READ);
+        return Status.of(token);
+    }
+
+    private Optional<AccessToken> connection(long userId) {
+        return tokens.findFirstByUserIdAndScopeInOrderByIdDesc(userId, CONNECTION_SCOPES);
+    }
+
+    /** 새 연결은 쓰기가 꺼진 채(READ)로 시작한다. */
     @Transactional
     public Created create(long userId) {
-        tokens.deleteOfUser(userId, AccessToken.SCOPE_READ);
+        tokens.deleteOfUser(userId, CONNECTION_SCOPES);
         String token = newToken();
         AccessToken saved = tokens.saveAndFlush(new AccessToken(userId, hash(token), AccessToken.SCOPE_READ, null));
         return new Created(baseUrl + token, Times.seoul(saved.getCreatedAt()));
@@ -73,7 +95,7 @@ public class McpConnectionService {
 
     @Transactional
     public void delete(long userId) {
-        tokens.deleteOfUser(userId, AccessToken.SCOPE_READ);
+        tokens.deleteOfUser(userId, CONNECTION_SCOPES);
     }
 
     /** 차곡이 일 하나에만 쓰는 토큰을 만든다. CHAGOK_TOKEN_LIFETIME 또는 revoke 까지 — 먼저 오는 쪽. */
@@ -102,8 +124,29 @@ public class McpConnectionService {
     public Optional<Authenticated> authenticate(String token) {
         return tokens.findByTokenHash(hash(token)).filter(t -> !t.isExpired()).map(t -> {
             t.markUsed();
-            return new Authenticated(t.getUserId(), t.getScope());
+            return new Authenticated(t.getId(), t.getUserId(), t.getScope(),
+                    t.getName() == null ? UNKNOWN_CLIENT : t.getName());
         });
+    }
+
+    /** initialize 가 보낸 clientInfo.name 을 토큰에 둔다 — 요청마다 상태가 없어서. 다음 요청의 client 가 된다. */
+    @Transactional
+    public void rememberClient(long tokenId, String clientName) {
+        tokens.findById(tokenId).ifPresent(t -> t.rename(cleanClient(clientName)));
+    }
+
+    // 제어 문자를 빼고 앞 40자 — 원본 이름 · 변경 기록에 그대로 보이는 값이라. 남는 게 없으면 null(「외部 AI」)
+    private static String cleanClient(String clientName) {
+        if (clientName == null) {
+            return null;
+        }
+        String cleaned = clientName.replaceAll("[\\p{Cc}\\p{Cf}]", "").strip();
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        int length = cleaned.codePointCount(0, cleaned.length());
+        return length <= MAX_CLIENT_LENGTH ? cleaned
+                : cleaned.substring(0, cleaned.offsetByCodePoints(0, MAX_CLIENT_LENGTH)).strip();
     }
 
     private static String newToken() {

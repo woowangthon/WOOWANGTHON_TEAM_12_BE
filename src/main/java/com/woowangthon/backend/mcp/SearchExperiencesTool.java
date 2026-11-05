@@ -47,7 +47,8 @@ public class SearchExperiencesTool implements McpTool {
             Actor actor,
             SourceStatus sourceStatus,
             List<CitationResponse> citations,
-            List<SupplementResponse> supplements) {
+            List<SupplementResponse> supplements,
+            ExperienceResponse.McpChangeRef mcpChange) {
     }
 
     public record ActivityRef(Long id, String name, Period period) {
@@ -91,7 +92,7 @@ public class SearchExperiencesTool implements McpTool {
 
     @Override
     @Transactional(readOnly = true)
-    public Result call(long userId, JsonNode arguments) {
+    public Result call(McpConnectionService.Authenticated caller, JsonNode arguments) {
         List<String> terms = McpArgs.string(arguments, "query").map(ExperienceSearch::terms).orElse(List.of());
         Set<Competency> competencies = McpArgs.strings(arguments, "competencies").map(SearchExperiencesTool::parseCompetencies)
                 .orElse(null);
@@ -101,7 +102,7 @@ public class SearchExperiencesTool implements McpTool {
             throw McpToolException.invalidArgument("limit 은 1 ~ " + MAX_LIMIT + " 이어야 합니다");
         }
 
-        ExperienceSearch.Result found = search.search(userId, ExperienceSearch.Filter.of(terms, competencies, year), limit);
+        ExperienceSearch.Result found = search.search(caller.userId(), ExperienceSearch.Filter.of(terms, competencies, year), limit);
         return new Result(found.total(), found.experiences().stream().map(SearchExperiencesTool::toHit).toList());
     }
 
@@ -125,6 +126,6 @@ public class SearchExperiencesTool implements McpTool {
         ExperienceResponse r = ExperienceResponse.from(e);
         Activity a = e.getActivity();
         return new Hit(r.id(), new ActivityRef(a.getId(), a.getName(), a.getPeriod()), r.content(), r.competencies(),
-                r.competenciesBy(), r.actor(), r.sourceStatus(), r.citations(), r.supplements());
+                r.competenciesBy(), r.actor(), r.sourceStatus(), r.citations(), r.supplements(), r.mcpChange());
     }
 }

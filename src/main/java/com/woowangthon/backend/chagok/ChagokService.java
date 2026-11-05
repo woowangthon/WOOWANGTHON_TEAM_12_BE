@@ -7,6 +7,7 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.ErrorResponse;
 import com.woowangthon.backend.common.Times;
+import com.woowangthon.backend.mcp.AccessToken;
 import com.woowangthon.backend.mcp.McpConnectionService;
 import com.woowangthon.backend.mcp.McpTool;
 import com.woowangthon.backend.mcp.McpWriteTool;
@@ -69,7 +70,8 @@ public class ChagokService {
         this.connections = connections;
         this.limiter = limiter;
         this.json = json;
-        this.readTools = tools.stream().filter(t -> !(t instanceof McpWriteTool)).map(McpTool::name)
+        this.readTools = tools.stream().filter(t -> t.visibleTo(AccessToken.SCOPE_CHAGOK) && !(t instanceof McpWriteTool))
+                .map(McpTool::name)
                 .collect(Collectors.toSet());
         this.writeTools = writeTools.stream().collect(Collectors.toMap(McpTool::name, Function.identity()));
         this.maxTextLength = maxTextLength;
