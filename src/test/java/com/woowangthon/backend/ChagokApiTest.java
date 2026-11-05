@@ -235,6 +235,10 @@ class ChagokApiTest {
         assertThat((String) JsonPath.read(waiting, "$.steps[1].arguments.organization")).isEqualTo("OO 부트캠프");
         // 확인 전엔 아무것도 저장하지 않는다
         assertThat(jdbc.queryForObject("select count(*) from application", Long.class)).isZero();
+        // 확인 카드는 GET /api/work 로 다시 찾는다(S-47)
+        mvc.perform(get("/api/work"))
+                .andExpect(jsonPath("$.inProgress[0].runId").value(runId))
+                .andExpect(jsonPath("$.inProgress[0].status").value("WAITING_CONFIRM"));
 
         String done = mvc.perform(post("/api/chagok/runs/" + runId + "/confirm"))
                 .andExpect(status().isOk())
@@ -251,6 +255,9 @@ class ChagokApiTest {
         assertThat(jdbc.queryForObject("select count(*) from application", Long.class)).isEqualTo(1);
         // 일 1회 + 문항 1개
         assertThat(usage()).isEqualTo(2);
+        mvc.perform(get("/api/work"))
+                .andExpect(jsonPath("$.recent[?(@.runId == " + runId + ")].status").value("DONE"))
+                .andExpect(jsonPath("$.recent[?(@.runId == " + runId + ")].finishedAt").isNotEmpty());
     }
 
     @Test

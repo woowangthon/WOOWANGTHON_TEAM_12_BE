@@ -85,6 +85,9 @@ public class Question {
     @Column(nullable = false)
     private OffsetDateTime updatedAt;
 
+    // 추천이 끝난 시각 — updatedAt 은 사용자가 유형을 고쳐도 바뀐다(work-api.md)
+    private OffsetDateTime finishedAt;
+
     protected Question() {
     }
 
@@ -112,6 +115,7 @@ public class Question {
         status = JobStatus.COMPLETED;
         errorCode = null;
         errorMessage = null;
+        finishedAt = OffsetDateTime.now();
     }
 
     public void fail(String code, String message) {
@@ -119,6 +123,7 @@ public class Question {
         status = JobStatus.FAILED;
         errorCode = code;
         errorMessage = message;
+        finishedAt = OffsetDateTime.now();
     }
 
     /** 실패한 문항을 같은 문항으로 다시 돌린다. */
@@ -127,6 +132,7 @@ public class Question {
         status = JobStatus.ANALYZING;
         errorCode = null;
         errorMessage = null;
+        finishedAt = null;
     }
 
     /** 사용자가 문항 유형을 고른다 — 분석 중 · 실패여도 된다. 그 뒤 매칭 결과가 덮어쓰지 않는다(S-41). */
@@ -205,5 +211,9 @@ public class Question {
 
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public OffsetDateTime getFinishedAt() {
+        return finishedAt;
     }
 }
