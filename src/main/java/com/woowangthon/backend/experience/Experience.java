@@ -76,6 +76,11 @@ public class Experience {
     @JoinColumn(name = "origin_question_id", updatable = false)
     private Question originQuestion;
 
+    // 외부 AI 가 고쳐 사용자가 아직 정하지 않았을 때만 찬다(S-53 · 계약 mcpChange). 응답마다 변경 기록을 읽지 않으려고 여기 둔다
+    private Long mcpChangeId;
+
+    private String mcpClient;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -120,12 +125,33 @@ public class Experience {
         }
         if (changed) {
             sourceStatus = SourceStatus.USER_ENTERED;
+            mcpChangeId = null;
+            mcpClient = null;
         }
+    }
+
+    /**
+     * 외부 AI 가 본문을 고친다 — 본문만 바뀌고 「확인 필요」로 낮춘다. 사용자가 정하기 전엔 초안 · 근거 점검의 근거가 되지 않는다(S-53 · ADR-010).
+     * 역량 · 역량 출처 · 수행 주체 · 근거 · 보완은 그대로다.
+     */
+    public void rewriteByExternalAi(String newContent, long changeId, String client) {
+        content = newContent;
+        sourceStatus = SourceStatus.NEEDS_REVIEW;
+        mcpChangeId = changeId;
+        mcpClient = client;
     }
 
     /** 확정 답에서 왔다고 표시한다 — 만들 때 한 번만. */
     public void markFromAnswer(Question question) {
         this.originQuestion = question;
+    }
+
+    public Long getMcpChangeId() {
+        return mcpChangeId;
+    }
+
+    public String getMcpClient() {
+        return mcpClient;
     }
 
     public Question getOriginQuestion() {

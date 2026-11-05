@@ -1,11 +1,13 @@
 package com.woowangthon.backend.mcp;
 
+import com.woowangthon.backend.mcp.McpConnectionService.Authenticated;
 import java.util.Map;
 import tools.jackson.databind.JsonNode;
 
 /**
- * 쓰기 도구 — CHAGOK 토큰의 tools/list 에만 보이고 MCP 로는 실행되지 않는다(계약 「쓰기 도구」).
+ * 차곡이가 쓰는 쓰기 도구 — CHAGOK 토큰에 보이지만 MCP 로는 실행되지 않는다(계약 「쓰기 도구」).
  * 사용자가 확인하면 BE 가 {@link #execute}로 실행한다. 저장 · 변경은 확인 뒤에만(S-31).
+ * 외부 연결(READ_WRITE)에서 바로 실행되는 도구는 visibleTo · call 을 범위에 따라 바꾼다(AddSourceTool).
  */
 public interface McpWriteTool extends McpTool {
 
@@ -14,7 +16,12 @@ public interface McpWriteTool extends McpTool {
     }
 
     @Override
-    default Object call(long userId, JsonNode arguments) {
+    default boolean visibleTo(String scope) {
+        return AccessToken.SCOPE_CHAGOK.equals(scope);
+    }
+
+    @Override
+    default Object call(Authenticated caller, JsonNode arguments) {
         throw new McpToolException("CONFIRM_REQUIRED", "쓰기는 사용자 확인 뒤 BE 가 실행한다 — 직접 부르지 말고 confirm 으로 요청하라");
     }
 

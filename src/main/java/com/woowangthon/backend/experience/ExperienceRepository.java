@@ -1,15 +1,21 @@
 package com.woowangthon.backend.experience;
 
+import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 public interface ExperienceRepository extends JpaRepository<Experience, Long> {
 
     @Query("select e from Experience e join fetch e.activity a where e.id = :id and a.userId = :userId")
     Optional<Experience> findOwned(Long id, Long userId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select e from Experience e where e.id = :id and e.activity.userId = :userId")
+    Optional<Experience> findOwnedForUpdate(Long id, Long userId);
 
     @Query("select e from Experience e join fetch e.activity a where e.id in :ids and a.userId = :userId")
     List<Experience> findAllOwned(Collection<Long> ids, Long userId);

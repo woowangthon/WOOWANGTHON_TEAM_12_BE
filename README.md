@@ -103,10 +103,11 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 
 | API | 하는 일 |
 | --- | --- |
-| `GET /api/mcp/connection` | 연결 상태 — 만든 시각 · 마지막으로 MCP 요청이 온 시각 |
-| `POST /api/mcp/connection` | 연결 주소 만들기 · 다시 만들기(201) — 주소(`url`)는 이 응답에만. 예전 주소는 바로 401 |
+| `GET /api/mcp/connection` | 연결 상태 — 쓰기를 켰나(`writeEnabled`) · 만든 시각 · 마지막으로 MCP 요청이 온 시각 |
+| `POST /api/mcp/connection` | 연결 주소 만들기 · 다시 만들기(201) — 주소(`url`)는 이 응답에만. 예전 주소는 바로 401, 새 연결은 쓰기가 꺼진 채 시작 |
+| `PATCH /api/mcp/connection` | 쓰기 켜기 · 끄기(S-52) — 주소는 그대로, 다음 MCP 요청부터 적용 |
 | `DELETE /api/mcp/connection` | 연결 끊기(204) |
-| `POST /mcp/{token}` | MCP 엔드포인트(JSON-RPC, 로그인 세션 무관) — 읽기 도구 `search_experiences` · `list_activities` · `get_activity` |
+| `POST /mcp/{token}` | MCP 엔드포인트(JSON-RPC, 로그인 세션 무관) — 읽기 도구 `search_experiences` · `list_activities` · `get_activity`. 쓰기를 켠 연결은 `add_source` · `update_experience` 를 바로 실행 — 고친 경험은 `NEEDS_REVIEW`, 변경 기록(`mcp_change`)이 남는다 |
 
 - 주소 앞부분은 `MCP_BASE_URL`(기본 `http://localhost:8080/mcp/`). 서버에선 공개 API 주소로 넣는다 — 요청 호스트로 짐작하지 않는다.
 - 토큰은 해시만 저장한다 — 잃어버리면 다시 만든다. 주소가 곧 비밀번호라 로그에 남기지 않는다(접근 로그를 켜지 않았다).
@@ -129,7 +130,7 @@ V1 마이그레이션의 사용자 1(`SAMPLE(fixed-user)`)은 아이디 · 비�
 
 ## 환경변수
 
-변수와 기본값은 [`.env.example`](.env.example) 에 있다: `SEED_SAMPLE` · `CORS_ALLOWED_ORIGINS` · `DAILY_ANALYSIS_LIMIT` · `TEST_ACCOUNT_LOGIN_ID` · `TEST_ACCOUNT_PASSWORD` · `TEST_ACCOUNT_DAILY_LIMIT` · `SESSION_COOKIE_SECURE` · `SESSION_COOKIE_SAME_SITE` · `DB_URL` · `DB_USERNAME` · `DB_PASSWORD` · `AI_BASE_URL` · `AI_TIMEOUT_SECONDS` · `AI_SYNC_TIMEOUT_SECONDS` · `MCP_BASE_URL` · `MCP_INTERNAL_BASE_URL` · `CHAGOK_TIMEOUT_SECONDS` · `CHAGOK_MAX_TOOL_CALLS` · (서버) `TUNNEL_TOKEN` · `AI_DIR`. `.env` 는 커밋하지 않는다.
+변수와 기본값은 [`.env.example`](.env.example) 에 있다: `SEED_SAMPLE` · `CORS_ALLOWED_ORIGINS` · `DAILY_ANALYSIS_LIMIT` · `TEST_ACCOUNT_LOGIN_ID` · `TEST_ACCOUNT_PASSWORD` · `TEST_ACCOUNT_DAILY_LIMIT` · `SESSION_COOKIE_SECURE` · `SESSION_COOKIE_SAME_SITE` · `DB_URL` · `DB_USERNAME` · `DB_PASSWORD` · `AI_BASE_URL` · `AI_TIMEOUT_SECONDS` · `AI_SYNC_TIMEOUT_SECONDS` · `MCP_BASE_URL` · `MCP_INTERNAL_BASE_URL` · `MCP_DAILY_WRITE_LIMIT` · `CHAGOK_TIMEOUT_SECONDS` · `CHAGOK_MAX_TOOL_CALLS` · (서버) `TUNNEL_TOKEN` · `AI_DIR`. `.env` 는 커밋하지 않는다.
 
 ## 서버에 띄우기
 

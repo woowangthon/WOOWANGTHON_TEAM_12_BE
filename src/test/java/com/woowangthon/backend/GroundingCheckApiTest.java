@@ -23,6 +23,7 @@ import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
 import com.woowangthon.backend.job.JobStatus;
+import com.woowangthon.backend.mcp.McpWriteService;
 import com.woowangthon.backend.question.Application;
 import com.woowangthon.backend.question.ApplicationRepository;
 import com.woowangthon.backend.question.GroundingCheck;
@@ -145,6 +146,9 @@ class GroundingCheckApiTest {
     @Autowired
     InterruptedQuestionCleaner cleaner;
 
+    @Autowired
+    McpWriteService mcpWrites;
+
     MockMvc mvc;
 
     long appId;
@@ -187,9 +191,24 @@ class GroundingCheckApiTest {
         reply = new FakeReply(200, contractExample(), 0);
     }
 
+    // 같은 답(contractExample)이 평소엔 통과한다 — 다른 이유로 실패한 게 아니다
+    @Test
+    void 외부_AI_가_고친_경험은_사용자가_정하기_전엔_EXPERIENCE_근거가_되지_않는다() throws Exception {
+        mcpWrites.updateExperience(TestLogin.USER_ID, "claude-ai", study, "스터디원 6명의 풀이를 매주 리뷰했다",
+                "스터디원 8명의 풀이를 매주 리뷰했다", "사용자가 대화에서 고침");
+
+        start(TEXT).andExpect(status().isAccepted());
+        String failed = awaitDone();
+
+        assertThat((String) JsonPath.read(failed, "$.groundingCheck.status")).isEqualTo("FAILED");
+        assertThat((String) JsonPath.read(failed, "$.groundingCheck.error.code")).isEqualTo("AI_FAILED");
+        assertThat(jdbc.queryForObject("select count(*) from grounding_sentence_evidence", Integer.class)).isZero();
+    }
+
     @AfterEach
     void cleanUp() {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
+        jdbc.execute("truncate table mcp_change");
         jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, grounding_sentence_evidence, grounding_sentence, grounding_check, "
                 + "question_recommendation_evidence, question_recommendation, question_requirement, supplement, clarification, "
                 + "question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");

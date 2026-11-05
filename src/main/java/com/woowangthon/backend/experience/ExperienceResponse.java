@@ -20,7 +20,16 @@ public record ExperienceResponse(
         SourceStatus sourceStatus,
         List<CitationResponse> citations,
         List<SupplementResponse> supplements,
+        McpChangeRef mcpChange,
         Origin origin) {
+
+    /** 외부 AI 가 고쳐 사용자가 아직 정하지 않은 경험만(S-53), 그 밖은 null. AI 서버 요청에는 싣지 않는다. */
+    public record McpChangeRef(Long changeId, String client) {
+
+        static McpChangeRef of(Experience e) {
+            return e.getMcpChangeId() == null ? null : new McpChangeRef(e.getMcpChangeId(), e.getMcpClient());
+        }
+    }
 
     /**
      * 경험이 온 곳(S-48) — 확정 답의 후보를 저장한 경험만, 그 밖은 null. 지원처 이름 · 문항 글은 응답 때 지금 값으로.
@@ -92,6 +101,7 @@ public record ExperienceResponse(
     public static ExperienceResponse from(Experience e) {
         return new ExperienceResponse(e.getId(), e.getActivity().getId(), e.getContent(), e.getCompetencies(),
                 e.getCompetenciesBy(), e.getActor(), e.getSourceStatus(), e.getCitations().stream().map(CitationResponse::from).toList(),
-                e.getSupplements().stream().map(SupplementResponse::from).toList(), Origin.of(e.getOriginQuestion()));
+                e.getSupplements().stream().map(SupplementResponse::from).toList(), McpChangeRef.of(e),
+                Origin.of(e.getOriginQuestion()));
     }
 }

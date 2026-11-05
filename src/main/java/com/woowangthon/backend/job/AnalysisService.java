@@ -88,10 +88,25 @@ public class AnalysisService {
         String text = checkText(request.text());
         List<SourceSection> sections = checkSections(kind == SourceKind.FILE ? sectionKind(name) : null,
                 request.sections(), text);
-        limiter.consume(CurrentUser.id());
+        return store(CurrentUser.id(), kind, name, text, sections);
+    }
 
-        Source source = sources.save(new Source(CurrentUser.id(), kind, name, text, sections));
-        AnalysisJob job = jobs.save(new AnalysisJob(CurrentUser.id(), source));
+    /**
+     * 외부 AI 가 보낸 글(S-52) — 세션이 없어 사용자를 토큰에서 받는다. 글자 수 · 하루 한도 · 저장은 웹과 같은 코드를 탄다.
+     * 분석은 이 트랜잭션이 끝난 뒤 따로 시작한다.
+     */
+    @Transactional
+    public JobResponses.Submitted submit(long userId, String client, String text) {
+        String name = client + " 에서 보냄 — " + ZonedDateTime.now(JobResponses.SEOUL).format(PASTED_NAME);
+        return store(userId, SourceKind.MCP, name, checkText(text), List.of());
+    }
+
+    private JobResponses.Submitted store(long userId, SourceKind kind, String name, String text,
+            List<SourceSection> sections) {
+        limiter.consume(userId);
+
+        Source source = sources.save(new Source(userId, kind, name, text, sections));
+        AnalysisJob job = jobs.save(new AnalysisJob(userId, source));
         return new JobResponses.Submitted(source.getId(), job.getId(), job.getStatus());
     }
 
@@ -269,7 +284,8 @@ public class AnalysisService {
     }
 
     private static SourceKind parseKind(String value) {
-        for (SourceKind kind : SourceKind.values()) {
+        // MCP 는 BE 만 붙인다 — 받지 않는다
+        for (SourceKind kind : List.of(SourceKind.TEXT, SourceKind.FILE)) {
             if (kind.name().equals(value)) {
                 return kind;
             }

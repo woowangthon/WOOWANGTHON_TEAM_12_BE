@@ -39,11 +39,11 @@ public class GetActivityTool implements McpTool {
     }
 
     @Override
-    public Object call(long userId, JsonNode arguments) {
+    public Object call(McpConnectionService.Authenticated caller, JsonNode arguments) {
         long activityId = McpArgs.integer(arguments, "activityId")
                 .orElseThrow(() -> McpToolException.invalidArgument("activityId 가 없습니다"));
         try {
-            return activities.mcpDetail(userId, activityId);
+            return activities.mcpDetail(caller.userId(), activityId);
         } catch (ApiException e) {
             if ("ACTIVITY_NOT_FOUND".equals(e.code())) {
                 throw new McpToolException(e.code(), e.getMessage());

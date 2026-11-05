@@ -33,7 +33,7 @@ public class ListActivitiesTool implements McpTool {
     }
 
     @Override
-    public Object call(long userId, JsonNode arguments) {
-        return activities.mcpTimeline(userId);
+    public Object call(McpConnectionService.Authenticated caller, JsonNode arguments) {
+        return activities.mcpTimeline(caller.userId());
     }
 }
