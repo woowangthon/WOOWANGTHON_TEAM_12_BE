@@ -13,6 +13,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +35,8 @@ public class AiClient {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Pattern ERROR_CODE = Pattern.compile("\"code\"\\s*:\\s*\"([A-Za-z_]+)\"");
+    /** ai-api.md 「POST /parse-application」 422 — FE 에 그대로 넘기는 링크 못 읽음(S-46). */
+    private static final Set<String> URL_REJECTED_CODES = Set.of("URL_BLOCKED", "URL_UNREADABLE");
 
     /** 제한 시간이 다른 두 갈래 — 작업(추출 · 매칭)과 사용자가 화면에서 기다리는 동기 호출(입구 셋, ai-api.md). */
     private record Caller(RestClient rest, long timeoutSeconds) {
@@ -96,7 +99,7 @@ public class AiClient {
         return post(sync, "/ask", request, AskResponse.class);
     }
 
-    /** 문항 · 공고에서 지원 칸 나누기(S-30) — 동기(entrance-api). */
+    /** 문항 · 공고(또는 공고 링크 — S-46)에서 지원 칸 나누기(S-30) — 동기(entrance-api). 링크를 못 읽으면 AiRejectedUrlException. */
     public ParseApplicationResponse parseApplication(ParseApplicationRequest request) {
         return post(sync, "/parse-application", request, ParseApplicationResponse.class);
     }
@@ -140,8 +143,7 @@ public class AiClient {
                     .body(request)
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, (req, res) -> {
-                        throw new AiCallException("AI_FAILED",
-                                aiErrorCode(res.getBody()) + " (HTTP " + res.getStatusCode().value() + ")");
+                        throw aiError(res.getStatusCode().value(), res.getBody());
                     })
                     .body(type);
         } catch (ResourceAccessException e) {
@@ -173,13 +175,32 @@ public class AiClient {
         return new AiCallException("AI_UNAVAILABLE", "AI 서버에 연결하지 못했습니다");
     }
 
-    // 오류 본문 { "error": { "code": "LLM_ERROR", ... } } 에서 code 만 꺼낸다. 모양이 다르면 UNKNOWN
-    private static String aiErrorCode(InputStream body) {
+    // 오류 본문 { "error": { "code": "LLM_ERROR", "message": ... } } 에서 code 를 꺼낸다. 모양이 다르면 UNKNOWN.
+    // 422 URL_BLOCKED · URL_UNREADABLE(S-46)만 message 까지 꺼내 그대로 넘긴다 — 그 밖은 AI_FAILED 로 뭉친다
+    private AiCallException aiError(int status, InputStream body) {
+        String text;
         try (body) {
-            Matcher m = ERROR_CODE.matcher(new String(body.readAllBytes(), StandardCharsets.UTF_8));
-            return m.find() ? m.group(1) : "UNKNOWN";
+            text = new String(body.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            return "UNKNOWN";
+            text = "";
+        }
+        Matcher m = ERROR_CODE.matcher(text);
+        String code = m.find() ? m.group(1) : "UNKNOWN";
+        if (status == 422 && URL_REJECTED_CODES.contains(code)) {
+            String message = rejectedMessage(text);
+            if (message != null) {
+                return new AiRejectedUrlException(code, message);
+            }
+        }
+        return new AiCallException("AI_FAILED", code + " (HTTP " + status + ")");
+    }
+
+    private String rejectedMessage(String text) {
+        try {
+            String message = json.readTree(text).path("error").path("message").asString();
+            return message == null || message.isBlank() ? null : message;
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 }

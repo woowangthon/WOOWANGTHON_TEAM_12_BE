@@ -23,7 +23,7 @@ public class EntranceController {
 
     @PostMapping("/parse-application")
     public EntranceService.ParseApplicationResult parseApplication(
-            @RequestBody EntranceService.TextRequest request) {
+            @RequestBody EntranceService.ParseRequest request) {
         return service.parseApplication(request);
     }
 }

@@ -2,11 +2,13 @@ package com.woowangthon.backend.entrance;
 
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.AiClient;
+import com.woowangthon.backend.ai.AiRejectedUrlException;
 import com.woowangthon.backend.ai.ParseApplicationRequest;
 import com.woowangthon.backend.ai.ParseApplicationResponse;
 import com.woowangthon.backend.ai.RouteRequest;
 import com.woowangthon.backend.ai.RouteResponse;
 import com.woowangthon.backend.common.ApiException;
+import com.woowangthon.backend.common.PostingUrls;
 import com.woowangthon.backend.question.JobRole;
 import com.woowangthon.backend.question.OrganizationType;
 import java.util.HashSet;
@@ -16,7 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
- * ETC docs/contracts/entrance-api.md — 홈 입력 가르기(S-28 · ADR-007) · 지원 나누기(S-30). AI 를 그 자리에서 부르고 저장하지 않는다.
+ * ETC docs/contracts/entrance-api.md — 홈 입력 가르기(S-28 · ADR-007) · 지원 나누기(S-30 · 공고 링크 S-46). AI 를 그 자리에서 부르고 저장하지 않는다.
  * 하루 분석 한도에 세지 않는다 — 뒤따르는 자료 넣기 · 지원 넣기가 센다.
  * AI 가 실패하면 오류로 돌려준다 — 정해진 kind 로 대신 채우지 않는다(대회 규칙 2).
  */
@@ -41,6 +43,10 @@ public class EntranceService {
     }
 
     public record TextRequest(String text) {
+    }
+
+    /** entrance-api 「parse-application」 — 붙여 넣은 글 text 나 공고 링크 url(S-46) 중 하나만. */
+    public record ParseRequest(String text, String url) {
     }
 
     public record RouteResult(EntranceKind kind, String reason) {
@@ -70,10 +76,24 @@ public class EntranceService {
         return new RouteResult(response.kind(), response.reason());
     }
 
-    public ParseApplicationResult parseApplication(TextRequest request) {
-        String text = checkedText(request, PARSE_TEXT_MAX_LENGTH);
+    public ParseApplicationResult parseApplication(ParseRequest request) {
+        String text = request == null ? null : request.text();
+        String url = request == null ? null : request.url();
+        if ((text == null) == (url == null)) {
+            throw ApiException.invalidRequest("text · url 중 하나만 보내야 합니다");
+        }
+        ParseApplicationRequest aiRequest;
+        if (url != null) {
+            if (!PostingUrls.isValid(url)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_URL",
+                        "url 은 " + PostingUrls.MAX_LENGTH + "자 이하의 http(s):// 주소여야 합니다");
+            }
+            aiRequest = ParseApplicationRequest.ofUrl(url);
+        } else {
+            aiRequest = ParseApplicationRequest.ofText(checkedText(new TextRequest(text), PARSE_TEXT_MAX_LENGTH));
+        }
         try {
-            ParseApplicationResponse response = ai.parseApplication(new ParseApplicationRequest(text));
+            ParseApplicationResponse response = ai.parseApplication(aiRequest);
             validate(response);
             return new ParseApplicationResult(response.organization(), response.organizationType(),
                     response.jobRole(), response.questions());
@@ -118,8 +138,12 @@ public class EntranceService {
         }
     }
 
-    // entrance-api.md: 시간 초과는 504 AI_TIMEOUT, 그 밖(AI 오류 · 연결 실패 · 응답 규칙 위반)은 502 AI_FAILED
+    // entrance-api.md: 시간 초과는 504 AI_TIMEOUT, 그 밖(AI 오류 · 연결 실패 · 응답 규칙 위반)은 502 AI_FAILED.
+    // 링크 못 읽음(422 URL_BLOCKED · URL_UNREADABLE, S-46)만 AI 의 code · message 그대로 — FE 가 「본문을 붙여 넣어 주세요」를 보인다
     public static ApiException toApi(AiCallException e) {
+        if (e instanceof AiRejectedUrlException) {
+            return new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, e.code(), e.getMessage());
+        }
         if ("AI_TIMEOUT".equals(e.code())) {
             return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "AI_TIMEOUT", e.getMessage());
         }
