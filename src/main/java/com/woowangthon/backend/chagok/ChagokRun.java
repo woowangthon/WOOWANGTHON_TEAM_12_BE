@@ -45,6 +45,8 @@ public class ChagokRun {
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    private OffsetDateTime finishedAt;
+
     protected ChagokRun() {
     }
 
@@ -65,16 +67,19 @@ public class ChagokRun {
     void done(String result) {
         this.status = ChagokStatus.DONE;
         this.result = result;
+        this.finishedAt = OffsetDateTime.now();
     }
 
     void cancel() {
         this.status = ChagokStatus.CANCELED;
+        this.finishedAt = OffsetDateTime.now();
     }
 
     void fail(String code, String message) {
         this.status = ChagokStatus.FAILED;
         this.errorCode = code;
         this.errorMessage = message;
+        this.finishedAt = OffsetDateTime.now();
     }
 
     public Long getId() {

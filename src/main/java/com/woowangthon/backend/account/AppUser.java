@@ -27,6 +27,9 @@ public class AppUser {
 
     private Integer dailyAnalysisLimit;
 
+    // 소식을 어디까지 봤나(work-api.md) — 한 번도 안 봤으면 null
+    private OffsetDateTime workSeenAt;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -55,6 +58,10 @@ public class AppUser {
 
     public Integer getDailyAnalysisLimit() {
         return dailyAnalysisLimit;
+    }
+
+    public OffsetDateTime getWorkSeenAt() {
+        return workSeenAt;
     }
 
     void reset(String passwordHash, Integer dailyAnalysisLimit) {
