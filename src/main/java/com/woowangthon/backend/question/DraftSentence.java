@@ -4,6 +4,8 @@ import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -31,6 +33,10 @@ public class DraftSentence {
     @Column(nullable = false)
     private int position;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private DraftSentenceKind kind;
+
     @Column(nullable = false)
     private String text;
 
@@ -42,11 +48,16 @@ public class DraftSentence {
     protected DraftSentence() {
     }
 
-    public DraftSentence(Draft draft, int position, String text, List<Evidence> evidence) {
+    public DraftSentence(Draft draft, int position, DraftSentenceKind kind, String text, List<Evidence> evidence) {
         this.draft = draft;
         this.position = position;
+        this.kind = kind;
         this.text = text;
         this.evidence.addAll(evidence);
+    }
+
+    public DraftSentenceKind getKind() {
+        return kind;
     }
 
     public String getText() {

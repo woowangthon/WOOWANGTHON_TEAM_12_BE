@@ -39,6 +39,7 @@ public class DraftService {
     // ai-api.md 「응답 규칙」
     private static final int MAX_SENTENCES = 15;
     private static final int MAX_OMITTED = 5;
+    private static final int MAX_OPINIONS = 3;
 
     private final QuestionRepository questions;
     private final DraftRepository drafts;
@@ -63,7 +64,7 @@ public class DraftService {
     public record StartRequest(List<Long> experienceIds) {
     }
 
-    public record Sentence(String text, List<SentenceEvidence.Ref> evidence) {
+    public record Sentence(DraftSentenceKind kind, String text, List<SentenceEvidence.Ref> evidence) {
     }
 
     /** 경험에 붙지 않은 빈칸은 text 만 있고 나머지는 null. supplementId 는 지금 그 되묻기에 달린 보완. */
@@ -143,20 +144,38 @@ public class DraftService {
             throw AiCallException.invalidResponse("받칠 것이 있는데 sentences 가 비었습니다");
         }
         List<DraftSentence> sentences = new ArrayList<>();
+        int opinions = 0;
         for (int position = 0; position < found.size(); position++) {
             DraftResponse.SentenceResult s = found.get(position);
             if (s.text() == null || s.text().isBlank() || s.text().contains("\n") || s.text().contains("\r")) {
                 throw AiCallException.invalidResponse("sentences[" + position + "].text 는 줄바꿈 없는 한 문장이어야 합니다");
             }
+            DraftSentenceKind kind = kind(position, s.kind());
             List<Evidence> backing = ids.checked(s.evidence());
-            if (backing.isEmpty()) {
+            // 사실은 받치는 것이 1개 이상, 생각(「AI 제안 — 확인 필요」)은 근거를 붙이지 않는다
+            if (kind == DraftSentenceKind.FACT && backing.isEmpty()) {
                 throw AiCallException.invalidResponse("sentences[" + position + "].evidence 가 비었습니다");
             }
-            sentences.add(new DraftSentence(draft, position, s.text(), backing));
+            if (kind == DraftSentenceKind.OPINION && !backing.isEmpty()) {
+                throw AiCallException.invalidResponse("sentences[" + position + "] 는 OPINION 이라 evidence 가 비어야 합니다");
+            }
+            if (kind == DraftSentenceKind.OPINION && ++opinions > MAX_OPINIONS) {
+                throw AiCallException.invalidResponse("OPINION 문장은 " + MAX_OPINIONS + "개까지입니다");
+            }
+            sentences.add(new DraftSentence(draft, position, kind, s.text(), backing));
         }
 
         List<DraftOmitted> omitted = omitted(questionId, draft, sent, orEmpty(result.omitted()));
         draft.complete(sentences, omitted);
+    }
+
+    // 새 응답에는 kind 가 필수다 — 빠졌다고 FACT 로 채우지 않는다(채우는 건 옛 저장 초안뿐, V21)
+    private static DraftSentenceKind kind(int position, String kind) {
+        try {
+            return DraftSentenceKind.valueOf(kind);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw AiCallException.invalidResponse("sentences[" + position + "].kind 는 FACT · OPINION 중 하나여야 합니다: " + kind);
+        }
     }
 
     // 모양을 다 확인한 뒤, 경험에 붙은 빈칸마다 되묻기를 만든다 — 추천 되묻기와 같은 답 저장 경로를 쓴다(ai-api.md 「응답 규칙」 omitted)
@@ -204,7 +223,7 @@ public class DraftService {
         List<Long> chosen = d.getExperienceIds().stream()
                 .filter(id -> current.containsKey(SentenceEvidence.key(EvidenceType.EXPERIENCE, id))).toList();
         List<Sentence> sentences = d.getSentences().stream()
-                .map(s -> new Sentence(s.getText(), SentenceEvidence.resolve(s.getEvidence(), current))).toList();
+                .map(s -> new Sentence(s.getKind(), s.getText(), SentenceEvidence.resolve(s.getEvidence(), current))).toList();
         ErrorResponse.Error error = d.getErrorCode() == null ? null
                 : new ErrorResponse.Error(d.getErrorCode(), d.getErrorMessage());
         return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current),
