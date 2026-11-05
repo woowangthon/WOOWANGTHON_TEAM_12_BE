@@ -1,6 +1,7 @@
 package com.woowangthon.backend.experience;
 
 import com.woowangthon.backend.activity.Activity;
+import com.woowangthon.backend.question.Question;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -70,6 +71,11 @@ public class Experience {
     @OrderBy("id asc")
     private List<Supplement> supplements = new ArrayList<>();
 
+    // 확정 답의 새 경험 후보를 저장해 생긴 경험만 그 문항(S-48 · origin). 고치거나 옮기거나 합쳐도 그대로다
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "origin_question_id", updatable = false)
+    private Question originQuestion;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -115,6 +121,15 @@ public class Experience {
         if (changed) {
             sourceStatus = SourceStatus.USER_ENTERED;
         }
+    }
+
+    /** 확정 답에서 왔다고 표시한다 — 만들 때 한 번만. */
+    public void markFromAnswer(Question question) {
+        this.originQuestion = question;
+    }
+
+    public Question getOriginQuestion() {
+        return originQuestion;
     }
 
     /** 다른 활동으로 옮긴다 — 묶음만 바뀌고 내용 · 근거 · 출처 상태는 그대로다(S-12). */

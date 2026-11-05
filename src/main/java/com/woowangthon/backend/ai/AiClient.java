@@ -89,6 +89,11 @@ public class AiClient {
         return post(job, "/draft", request, DraftResponse.class);
     }
 
+    /** 확정 답에서 새 경험 후보 찾기 — 작업(question-api 「확정 답변」). */
+    public NewFactsResponse newFacts(NewFactsRequest request) {
+        return post(job, "/new-facts", request, NewFactsResponse.class);
+    }
+
     /** 홈 입력 가르기 — 동기(entrance-api). */
     public RouteResponse route(RouteRequest request) {
         return post(sync, "/route", request, RouteResponse.class);
