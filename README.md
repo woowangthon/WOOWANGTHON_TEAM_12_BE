@@ -56,6 +56,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `GET /api/activities` | 활동 목록 — 활동마다 분류(`category` · `categoryBy`, S-57). 분석이 붙이면 AI 해석, 미분류면 `null`. 정리용이라 MCP · AI 요청엔 싣지 않는다 |
 | `GET /api/activities/{id}` | 활동 하나 |
 | `PATCH /api/activities/{id}` | 활동 고치기 — 이름 · 기간 · 계기 · 분류(`category` — 바꾸면 `categoryBy: USER`, `null` 이면 미분류) |
+| `GET /api/experiences` | 경험 찾기(S-58) — `query`(낱말 OR) · `competencies`(쉼표) · `year` · `sourceStatus` · `category` · `limit`(1 ~ 200, 기본 100), 조건은 AND. MCP `search_experiences` 와 같은 검색(`ExperienceSearch`). `{ total, experiences }` — 경험마다 `activity`(id · 이름 · 기간 · 분류) |
 | `PATCH /api/experiences/{id}` | 경험 고치기 |
 | `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
 | `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |

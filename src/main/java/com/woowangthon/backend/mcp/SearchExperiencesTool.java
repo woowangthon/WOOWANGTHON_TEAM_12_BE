@@ -2,34 +2,28 @@ package com.woowangthon.backend.mcp;
 
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.Period;
-import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.CompetenciesBy;
 import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.Experience;
-import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.ExperienceResponse;
+import com.woowangthon.backend.experience.ExperienceSearch;
 import com.woowangthon.backend.experience.ExperienceResponse.CitationResponse;
 import com.woowangthon.backend.experience.ExperienceResponse.SupplementResponse;
 import com.woowangthon.backend.experience.SourceStatus;
-import java.time.Year;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Stream;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 /**
- * search_experiences — 낱말 맞추기 검색(의미 검색 아님, AI 를 쓰지 않는다). 계약 「search_experiences」:
- * 조건은 모두 AND, 낱말은 하나라도(OR). 순서는 맞은 낱말 수 많은 것 → 활동 시작 최근 것(null 뒤) → 경험 id.
- * 사용자의 경험을 전부 읽어 메모리에서 거른다 — 한 사람의 경험은 많아야 수백 개라 충분하다.
+ * search_experiences — 낱말 맞추기 검색(의미 검색 아님, AI 를 쓰지 않는다). 계약 「search_experiences」.
+ * 거르기 · 순서는 앱 `GET /api/experiences` 와 같은 {@link ExperienceSearch} 가 한다(같은 입력이면 같은 결과 — BE#96).
+ * 여기는 MCP 입력 확인(틀리면 도구 오류) · MCP 응답 모양만 맡는다. 출처 상태 · 활동 분류는 MCP 에 열지 않는다(S-58 · S-57).
  */
 @Component
 public class SearchExperiencesTool implements McpTool {
@@ -37,10 +31,10 @@ public class SearchExperiencesTool implements McpTool {
     static final int DEFAULT_LIMIT = 20;
     static final int MAX_LIMIT = 50;
 
-    private final ExperienceRepository experiences;
+    private final ExperienceSearch search;
 
-    public SearchExperiencesTool(ExperienceRepository experiences) {
-        this.experiences = experiences;
+    public SearchExperiencesTool(ExperienceSearch search) {
+        this.search = search;
     }
 
     /** 계약의 Experience 에서 activityId 대신 activity(ActivitySummary 에서 experienceCount 를 뺀 것). */
@@ -98,9 +92,7 @@ public class SearchExperiencesTool implements McpTool {
     @Override
     @Transactional(readOnly = true)
     public Result call(long userId, JsonNode arguments) {
-        List<String> terms = McpArgs.string(arguments, "query")
-                .map(q -> Stream.of(q.toLowerCase(Locale.ROOT).trim().split("\\s+")).filter(t -> !t.isEmpty()).distinct().toList())
-                .orElse(List.of());
+        List<String> terms = McpArgs.string(arguments, "query").map(ExperienceSearch::terms).orElse(List.of());
         Set<Competency> competencies = McpArgs.strings(arguments, "competencies").map(SearchExperiencesTool::parseCompetencies)
                 .orElse(null);
         Integer year = McpArgs.string(arguments, "year").map(SearchExperiencesTool::parseYear).orElse(null);
@@ -109,32 +101,8 @@ public class SearchExperiencesTool implements McpTool {
             throw McpToolException.invalidArgument("limit 은 1 ~ " + MAX_LIMIT + " 이어야 합니다");
         }
 
-        record Scored(Experience experience, int matchedTerms) {
-        }
-        List<Scored> matched = new ArrayList<>();
-        for (Experience e : experiences.findAllOfUser(userId)) {
-            if (competencies != null && e.getCompetencies().stream().noneMatch(competencies::contains)) {
-                continue;
-            }
-            if (year != null && !overlaps(e.getActivity().getPeriod(), year)) {
-                continue;
-            }
-            int count = terms.isEmpty() ? 0 : countMatchedTerms(e, terms);
-            if (!terms.isEmpty() && count == 0) {
-                continue;
-            }
-            matched.add(new Scored(e, count));
-        }
-
-        Comparator<String> recentFirst = Comparator.nullsLast(Comparator.<String>reverseOrder());
-        List<Hit> hits = matched.stream()
-                .sorted(Comparator.comparingInt(Scored::matchedTerms).reversed()
-                        .thenComparing(s -> s.experience().getActivity().getPeriod().start(), recentFirst)
-                        .thenComparing(s -> s.experience().getId()))
-                .limit(limit)
-                .map(s -> toHit(s.experience()))
-                .toList();
-        return new Result(matched.size(), hits);
+        ExperienceSearch.Result found = search.search(userId, ExperienceSearch.Filter.of(terms, competencies, year), limit);
+        return new Result(found.total(), found.experiences().stream().map(SearchExperiencesTool::toHit).toList());
     }
 
     private static Set<Competency> parseCompetencies(List<String> values) {
@@ -147,34 +115,10 @@ public class SearchExperiencesTool implements McpTool {
     }
 
     private static int parseYear(String value) {
-        if (!value.matches("\\d{4}")) {
+        if (!ExperienceSearch.isYear(value)) {
             throw McpToolException.invalidArgument("year 는 YYYY 여야 합니다");
         }
         return Integer.parseInt(value);
-    }
-
-    // 시작을 모르면 빠진다. 진행 중이면 올해까지, 끝을 모르면(진행 중도 아니면) 시작한 해 하나로 본다
-    private static boolean overlaps(Period period, int year) {
-        if (period.start() == null) {
-            return false;
-        }
-        int start = Integer.parseInt(period.start().substring(0, 4));
-        int end = period.ongoing() ? Year.now(Times.SEOUL).getValue()
-                : period.end() != null ? Integer.parseInt(period.end().substring(0, 4)) : start;
-        return start <= year && year <= end;
-    }
-
-    private static int countMatchedTerms(Experience e, List<String> terms) {
-        List<String> fields = new ArrayList<>();
-        fields.add(e.getContent());
-        fields.add(e.getActivity().getName());
-        e.getCitations().forEach(c -> fields.add(c.getQuote()));
-        e.getSupplements().forEach(s -> {
-            fields.add(s.getQuestion());
-            fields.add(s.getAnswer());
-        });
-        String haystack = String.join("\n", fields).toLowerCase(Locale.ROOT);
-        return (int) terms.stream().filter(haystack::contains).count();
     }
 
     private static Hit toHit(Experience e) {
