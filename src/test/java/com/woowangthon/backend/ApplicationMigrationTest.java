@@ -43,6 +43,11 @@ class ApplicationMigrationTest {
                 .containsEntry("user_id", 1L).containsEntry("same_time", true);
         assertThat(rows.get(1)).containsEntry("application_id", 5L).containsEntry("organization", null);
 
+        // V14 — 기존 지원은 작성 중이고 낸 달이 없다(BE#63)
+        assertThat(jdbc.queryForList("select application_status, submitted_month from " + SCHEMA + ".application"))
+                .hasSize(2).allSatisfy(row -> assertThat(row).containsEntry("application_status", "WRITING")
+                        .containsEntry("submitted_month", null));
+
         Long next = jdbc.queryForObject("insert into " + SCHEMA + ".application (user_id) values (1) returning id",
                 Long.class);
         assertThat(next).isEqualTo(6L);

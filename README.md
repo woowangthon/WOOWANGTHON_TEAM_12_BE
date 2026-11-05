@@ -65,7 +65,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `GET /api/applications` | 넣었던 지원 목록(최근 것부터) |
 | `GET /api/applications/{id}` | 지원 하나 — 문항 목록 · 분석 상태 |
 | `POST /api/applications/{id}/questions` | 지원에 문항 더하기(202) — 지원 하나에 최대 20개 |
-| `PATCH /api/applications/{id}` | 지원처 종류 · 직무 바꾸기 · 비우기(보낸 칸만, 추천은 다시 돌지 않는다) |
+| `PATCH /api/applications/{id}` | 지원처 종류 · 직무 · 지원 상태 · 낸 달 바꾸기(보낸 칸만, 추천은 다시 돌지 않는다) |
 | `POST /api/questions` | 지원 문항 넣기 — 문항 저장 · 추천 작업 시작(202, AI `/match` 는 뒤에서) |
 | `GET /api/questions` | 넣었던 문항 목록(최근 것부터) |
 | `GET /api/questions/{id}` | 문항 하나: `ANALYZING` → `COMPLETED`(요구사항 · 추천 · 되묻기) / `FAILED`(이유) |

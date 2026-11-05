@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** ETC docs/contracts/question-api.md — 지원 넣기 · 문항 더하기 · 목록 · 지원 하나 · 종류 · 직무 바꾸기 (SPEC S-18 · S-21 · S-42). */
+/** ETC docs/contracts/question-api.md — 지원 넣기 · 문항 더하기 · 목록 · 지원 하나 · 종류 · 직무 · 상태 · 낸 달 바꾸기 (SPEC S-18 · S-21 · S-42 · S-36 · S-37). */
 @RestController
 @RequestMapping("/api/applications")
 public class ApplicationController {

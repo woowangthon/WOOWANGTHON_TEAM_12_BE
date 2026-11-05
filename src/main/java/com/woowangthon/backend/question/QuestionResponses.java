@@ -37,10 +37,12 @@ public final class QuestionResponses {
 
     // questions — 넣은 순서(지원서의 문항 순서)
     public record ApplicationResponse(Long id, String organization, OrganizationType organizationType, JobRole jobRole,
-            List<Summary> questions, OffsetDateTime createdAt) {
+            ApplicationStatus applicationStatus, String submittedMonth, List<Summary> questions,
+            OffsetDateTime createdAt) {
 
         static ApplicationResponse from(Application a) {
             return new ApplicationResponse(a.getId(), a.getOrganization(), a.getOrganizationType(), a.getJobRole(),
+                    a.getApplicationStatus(), a.getSubmittedMonth(),
                     a.getQuestions().stream().map(Summary::from).toList(), Times.seoul(a.getCreatedAt()));
         }
     }
