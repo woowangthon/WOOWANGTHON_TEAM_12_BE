@@ -64,6 +64,11 @@ public class AiClient {
         return post(job, "/match", request, MatchResponse.class);
     }
 
+    /** 내가 쓴 답 근거 점검 — 작업(question-api 「근거 점검」). */
+    public GroundCheckResponse groundCheck(GroundCheckRequest request) {
+        return post(job, "/ground-check", request, GroundCheckResponse.class);
+    }
+
     /** 홈 입력 가르기 — 동기(entrance-api). */
     public RouteResponse route(RouteRequest request) {
         return post(sync, "/route", request, RouteResponse.class);
