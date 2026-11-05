@@ -2,6 +2,7 @@ package com.woowangthon.backend.job;
 
 import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.activity.Activity;
+import com.woowangthon.backend.activity.ActivityCategory;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.ai.AiCallException;
@@ -149,6 +150,7 @@ public class AnalysisService {
                     new Activity(job.getUserId(), required(a.name(), "activities[].name"), period(a.period())));
             activityIds.add(activity.getId());
             activity.suggestMergeWith(sameAs(a.sameAsActivityId(), sent, job.getUserId()));
+            activity.categorizeByAi(category(a.category()));
 
             List<ExtractResponse.ExperienceResult> extracted = a.experiences() == null ? List.of() : a.experiences();
             for (int position = 0; position < extracted.size(); position++) {
@@ -224,6 +226,19 @@ public class AnalysisService {
             }
         }
         return List.copyOf(kept);
+    }
+
+    // 활동 분류(S-57) — AI 해석. 칸이 없거나 null 이면 미분류(AI 쪽 머지 전에도 돈다). 목록 밖 값은 계약 위반 — 실패
+    private static ActivityCategory category(String value) {
+        if (value == null) {
+            return null;
+        }
+        for (ActivityCategory category : ActivityCategory.values()) {
+            if (category.name().equals(value)) {
+                return category;
+            }
+        }
+        throw AiCallException.invalidResponse("activities[].category 는 PROJECT · STUDY · CLUB 중 하나여야 합니다: " + value);
     }
 
     private static Actor actor(String value) {

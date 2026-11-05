@@ -53,14 +53,14 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /api/sources` | 자료 넣기 — 원본 저장 · 분석 작업 시작(202, 분석은 뒤에서) |
 | `GET /api/jobs/{id}` | 분석 작업 상태: `ANALYZING` → `COMPLETED` / `FAILED`(이유) |
 | `POST /api/jobs/{id}/retry` | 실패한 작업 다시 시도 |
-| `GET /api/activities` | 활동 목록 |
+| `GET /api/activities` | 활동 목록 — 활동마다 분류(`category` · `categoryBy`, S-57). 분석이 붙이면 AI 해석, 미분류면 `null`. 정리용이라 MCP · AI 요청엔 싣지 않는다 |
 | `GET /api/activities/{id}` | 활동 하나 |
-| `PATCH /api/activities/{id}` | 활동 고치기 |
+| `PATCH /api/activities/{id}` | 활동 고치기 — 이름 · 기간 · 계기 · 분류(`category` — 바꾸면 `categoryBy: USER`, `null` 이면 미분류) |
 | `PATCH /api/experiences/{id}` | 경험 고치기 |
 | `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
 | `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |
 | `POST /api/experiences/{id}/move` | 경험 옮기기 — 속한 활동만 바꿈. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤 |
-| `POST /api/activities/{id}/merge` | 활동 합치기 — `fromActivityId` 의 경험을 전부 이 활동으로 옮기고 그 활동을 지움(한 번에) |
+| `POST /api/activities/{id}/merge` | 활동 합치기 — `fromActivityId` 의 경험을 전부 이 활동으로 옮기고 그 활동을 지움(한 번에). 남길 활동이 미분류면 분류를 옮겨 온다 |
 | `POST /api/activities/{id}/link-suggestions` | 이어짐 제안 받기 — 계기가 있는 활동에서 AI 가 고른 이어짐을 `SUGGESTED` 로 저장(동기, 후보 0개면 AI 를 안 부름) |
 | `PATCH /api/activity-links/{id}` | 이어짐 정하기 — `CONFIRMED`(맞아요) · `REJECTED`(아니에요, 다시 제안하지 않음) |
 | `POST /api/applications` | 지원 넣기 — 지원처 + 문항 1 ~ 10개 저장 · 문항마다 추천 작업 시작(202) |

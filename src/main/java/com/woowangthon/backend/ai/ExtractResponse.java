@@ -11,7 +11,8 @@ import java.util.List;
 public record ExtractResponse(List<ActivityResult> activities, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ActivityResult(String name, PeriodResult period, Long sameAsActivityId,
+    // category — 활동 분류(S-57). 문자열로 받아 저장할 때 목록을 확인한다. AI 쪽(AI#63) 머지 전엔 칸이 없을 수 있다
+    public record ActivityResult(String name, PeriodResult period, Long sameAsActivityId, String category,
             List<ExperienceResult> experiences) {
     }
 

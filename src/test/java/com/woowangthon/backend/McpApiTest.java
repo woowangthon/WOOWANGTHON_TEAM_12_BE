@@ -17,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.woowangthon.backend.account.AppUser;
 import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.activity.Activity;
+import com.woowangthon.backend.activity.ActivityCategory;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.Supplement;
@@ -322,27 +323,32 @@ class McpApiTest {
 
     @Test
     void list_activities_는_활동_목록_API_와_같다() throws Exception {
+        activities.findById(appId).orElseThrow().categorizeByAi(ActivityCategory.PROJECT);
         String rest = web.perform(get("/api/activities")).andReturn().getResponse().getContentAsString();
 
-        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안) · note(S-34)는 MCP 에 싣지 않는다
+        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안) · note(S-34) · 분류(S-57 — 화면 정리용)는 MCP 에 싣지 않는다
         JsonNode expected = json.readTree(rest);
-        expected.get("activities").forEach(a -> ((ObjectNode) a).remove(List.of("mergeSuggestion", "note")));
+        expected.get("activities").forEach(a -> ((ObjectNode) a).remove(List.of("mergeSuggestion", "note", "category", "categoryBy")));
         JsonNode result = toolResult(call(token, "list_activities", "{}"));
 
         assertThat(result).isEqualTo(expected);
         assertThat(result.get("activities").get(0).has("mergeSuggestion")).isFalse();
         assertThat(result.get("activities").get(0).has("note")).isFalse();
+        assertThat(result.get("activities").get(1).has("category")).isFalse();
+        assertThat(result.get("activities").get(1).has("categoryBy")).isFalse();
     }
 
     @Test
     void get_activity_는_활동_세부_API_와_같다() throws Exception {
         Experience websocket = activities.findById(appId).orElseThrow().getExperiences().getFirst();
         supplements.save(new Supplement(websocket, null, null, "질문", "답"));
+        activities.findById(appId).orElseThrow().categorizeByAi(ActivityCategory.PROJECT);
         String rest = web.perform(get("/api/activities/{id}", appId)).andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(rest).get("category").asString()).isEqualTo("PROJECT");
 
         JsonNode result = toolResult(call(token, "get_activity", "{\"activityId\":" + appId + "}"));
         ObjectNode expected = (ObjectNode) json.readTree(rest);
-        expected.remove(List.of("mergeSuggestion", "note", "links"));
+        expected.remove(List.of("mergeSuggestion", "note", "links", "category", "categoryBy"));
         // 쓰인 지원(S-38)은 활동 세부 화면의 것 — MCP 경험엔 없다
         expected.get("experiences").forEach(e -> ((ObjectNode) e).remove("usedIn"));
 
@@ -351,6 +357,8 @@ class McpApiTest {
         assertThat(result.has("mergeSuggestion")).isFalse();
         assertThat(result.has("note")).isFalse();
         assertThat(result.has("links")).isFalse();
+        assertThat(result.has("category")).isFalse();
+        assertThat(result.has("categoryBy")).isFalse();
         assertThat(result.get("experiences").get(0).get("supplements").get(0).get("answer").asString()).isEqualTo("답");
     }
 

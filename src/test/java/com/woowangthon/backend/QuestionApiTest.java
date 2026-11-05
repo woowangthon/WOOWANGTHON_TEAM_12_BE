@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jayway.jsonpath.JsonPath;
 import com.sun.net.httpserver.HttpServer;
 import com.woowangthon.backend.activity.Activity;
+import com.woowangthon.backend.activity.ActivityCategory;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.common.Times;
@@ -305,6 +306,16 @@ class QuestionApiTest {
 
         assertThat(RECEIVED).hasSize(1);
         assertThat(RECEIVED.getFirst()).doesNotContain("계기 비밀").doesNotContain("note");
+    }
+
+    @Test
+    void 매칭_요청엔_활동_분류를_싣지_않는다() throws Exception {
+        Activity app = activities.findById(appId).orElseThrow();
+        app.categorizeByAi(ActivityCategory.PROJECT);
+        activities.save(app);
+
+        awaitDone(submit(QUESTION_A));
+        assertThat(RECEIVED.getFirst()).doesNotContain("\"category\"").doesNotContain("\"categoryBy\"");
     }
 
     @Test

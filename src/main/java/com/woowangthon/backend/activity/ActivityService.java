@@ -87,6 +87,7 @@ public class ActivityService {
         });
 
         body.string("note").ifPresent(note -> activity.changeNote(validNote(note.value())));
+        body.string("category").ifPresent(category -> activity.chooseCategory(parseCategory(category.value())));
 
         activities.flush();
         return ActivityResponses.Summary.from(activity, suggestedFrom(activity, this::sameUser));
@@ -113,6 +114,8 @@ public class ActivityService {
         if (keep.getNote() == null) {
             keep.changeNote(from.getNote());
         }
+        // 분류(S-57): 남길 활동 것을 그대로 두고, 미분류일 때만 옮겨 온다
+        keep.takeCategoryIfNone(from);
         // 같은 활동 제안(S-44): from 에 붙은 제안은 from 과 같이 사라지고, from 을 가리키던 제안은 null.
         // 남길 활동의 제안은 그대로 — from 을 가리키고 있었으면 null(벌크 UPDATE 는 관리 중인 keep 을 고치지 않는다)
         if (fromActivityId.equals(keep.getMergeSuggestionActivityId())) {
@@ -133,6 +136,18 @@ public class ActivityService {
     }
 
     // 앞뒤 공백을 걷은 뒤 확인한다. null · 빈 문자열은 지움(계약 「PATCH /api/activities」)
+    // null 이면 비우기. 목록 밖 값은 400
+    private static ActivityCategory parseCategory(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return ActivityCategory.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            throw ApiException.invalidRequest("category 는 PROJECT · STUDY · CLUB 중 하나여야 합니다: " + value);
+        }
+    }
+
     private static String validNote(String note) {
         if (note == null || note.isBlank()) {
             return null;
