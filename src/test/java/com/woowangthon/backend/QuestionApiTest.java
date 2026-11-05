@@ -36,11 +36,15 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import jakarta.persistence.EntityManagerFactory;
 import java.time.YearMonth;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -136,6 +140,9 @@ class QuestionApiTest {
 
     @Autowired
     InterruptedQuestionCleaner cleaner;
+
+    @Autowired
+    EntityManagerFactory entityManagerFactory;
 
     MockMvc mvc;
 
@@ -1198,6 +1205,129 @@ class QuestionApiTest {
                 .andExpect(jsonPath("$.applicationStatus").value("SUBMITTED"))
                 .andExpect(jsonPath("$.submittedMonth").value("2025-02"));
         expectError(patchApplication(999_999, "{\"applicationStatus\": \"SUBMITTED\"}"), 404, "APPLICATION_NOT_FOUND");
+    }
+
+    // --- 쓰인 지원 usedIn (S-38) — BE#64 ---
+
+    @Test
+    void 경험마다_쓰인_지원이_최근_지원부터_문항은_지원서_순서로_실린다() throws Exception {
+        long older = submitApplication("""
+                {"organization": "OO 백엔드 부트캠프", "questions": [{"text": "문제 해결 경험"}]}""");
+        awaitApplication(older);
+        reply = new FakeReply(200, retroOnly(), 0);
+        addQuestion(older, "{\"text\": \"협업 경험\"}").andExpect(status().isAccepted());
+        awaitApplication(older);
+        long newer = submitApplication("""
+                {"organization": "OO 연합 동아리", "questions": [{"text": "팀에서 맡은 역할"}]}""");
+        awaitApplication(newer);
+        patchApplication(older, """
+                {"applicationStatus": "PASSED", "submittedMonth": "2025-02"}""").andExpect(status().isOk());
+        // 추천이 없는 실패한 문항은 세지 않는다
+        reply = new FakeReply(500, "{}", 0);
+        awaitApplication(submitApplication("""
+                {"organization": "실패한 지원", "questions": [{"text": "문항"}]}"""));
+
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experiences[0].id").value(chat))
+                .andExpect(jsonPath("$.experiences[0].content").isString())
+                .andExpect(jsonPath("$.experiences[0].usedIn.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].applicationId").value(older))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].organization").value("OO 백엔드 부트캠프"))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].applicationStatus").value("PASSED"))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].submittedMonth").value("2025-02"))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].questions.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].questions[0].id").isNumber())
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].questions[0].text").value("문제 해결 경험"))
+                .andExpect(jsonPath("$.experiences[1].id").value(retro))
+                .andExpect(jsonPath("$.experiences[1].usedIn.length()").value(2))
+                .andExpect(jsonPath("$.experiences[1].usedIn[0].applicationId").value(newer))
+                .andExpect(jsonPath("$.experiences[1].usedIn[0].applicationStatus").value("WRITING"))
+                .andExpect(jsonPath("$.experiences[1].usedIn[0].submittedMonth").value(nullValue()))
+                .andExpect(jsonPath("$.experiences[1].usedIn[1].applicationId").value(older))
+                .andExpect(jsonPath("$.experiences[1].usedIn[1].questions[0].text").value("문제 해결 경험"))
+                .andExpect(jsonPath("$.experiences[1].usedIn[1].questions[1].text").value("협업 경험"));
+        // 쓰이지 않은 경험은 빈 배열
+        mvc.perform(get("/api/activities/{id}", studyId))
+                .andExpect(jsonPath("$.experiences[0].id").value(study))
+                .andExpect(jsonPath("$.experiences[0].usedIn.length()").value(0));
+    }
+
+    @Test
+    void 쓰인_지원은_경험을_옮기거나_활동을_합쳐도_따라간다() throws Exception {
+        long questionId = submit(QUESTION_A);
+        awaitDone(questionId);
+
+        mvc.perform(post("/api/experiences/{id}/move", chat).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"toActivityId\": " + studyId + "}")).andExpect(status().isOk());
+        mvc.perform(get("/api/activities/{id}", studyId))
+                .andExpect(jsonPath("$.experiences[1].id").value(chat))
+                .andExpect(jsonPath("$.experiences[1].usedIn[0].questions[0].id").value(questionId));
+
+        // 합치기 응답도 활동 세부 모양이라 usedIn 이 실린다
+        String merged = mvc.perform(post("/api/activities/{id}/merge", appId).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromActivityId\": " + studyId + "}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat((List<Number>) JsonPath.read(merged,
+                "$.experiences[?(@.id == " + chat + ")].usedIn[0].questions[0].id"))
+                .extracting(Number::longValue).containsExactly(questionId);
+    }
+
+    @Test
+    void 쓰인_지원은_활동_세부에만_실린다() throws Exception {
+        long questionId = submit(QUESTION_A);
+        awaitDone(questionId);
+
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.recommendations[0].experience.id").value(chat))
+                .andExpect(jsonPath("$.recommendations[0].experience.usedIn").doesNotExist());
+        mvc.perform(patch("/api/experiences/{id}", chat).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\": \"고친 본문\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.usedIn").doesNotExist());
+        mvc.perform(post("/api/experiences/{id}/move", chat).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toActivityId\": " + studyId + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.usedIn").doesNotExist());
+    }
+
+    @Test
+    void 쓰인_지원은_경험_수만큼_쿼리를_내지_않는다() throws Exception {
+        // 경험 둘 다 쓰인 지원이 있어도 지원 쪽 쿼리는 한 번, Application 을 따로 불러오지 않는다
+        awaitDone(submit(QUESTION_A));
+        Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+        try {
+            mvc.perform(get("/api/activities/{id}", appId))
+                    .andExpect(jsonPath("$.experiences[0].usedIn.length()").value(1))
+                    .andExpect(jsonPath("$.experiences[1].usedIn.length()").value(1));
+
+            assertThat(Arrays.stream(statistics.getQueries()).filter(q -> q.contains("Recommendation"))
+                    .mapToLong(q -> statistics.getQueryStatistics(q).getExecutionCount()).sum()).isEqualTo(1);
+            assertThat(statistics.getEntityStatistics(Application.class.getName()).getLoadCount()).isZero();
+        } finally {
+            statistics.setStatisticsEnabled(false);
+        }
+    }
+
+    // 회고 경험 하나만 추천하는 /match 응답
+    private String retroOnly() {
+        return """
+                {
+                  "requirements": [{ "text": "팀과 함께 일한 방식", "status": "SUPPORTED", "experienceIds": [%1$d] }],
+                  "recommendations": [{
+                    "experienceId": %1$d,
+                    "reason": "팀이 매주 회고로 일하는 방식을 맞춘 사례다",
+                    "emphasis": "정기 회고",
+                    "evidence": [{ "type": "CITATION", "id": %2$d }],
+                    "gaps": []
+                  }],
+                  "clarifications": [],
+                  "model": "test-model"
+                }
+                """.formatted(retro, retroCitation);
     }
 
     private ResultActions patchApplication(long applicationId, String json) throws Exception {
