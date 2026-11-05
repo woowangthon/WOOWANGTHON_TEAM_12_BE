@@ -1,10 +1,12 @@
 package com.woowangthon.backend.activity;
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
+import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceResponse;
 import com.woowangthon.backend.question.ApplicationStatus;
 import com.woowangthon.backend.question.RecommendationRepository.UsedInRow;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,12 +65,27 @@ public final class ActivityResponses {
     public record DetailExperience(@JsonUnwrapped ExperienceResponse experience, List<UsedIn> usedIn) {
     }
 
-    public record Detail(Long id, String name, Period period, String note, MergeSuggestion mergeSuggestion,
-            List<DetailExperience> experiences) {
+    /** 이어짐(S-35, 계약 「이어짐 ActivityLink」) — 활동 이름은 지금 값. */
+    public record Link(Long id, Long fromActivityId, String fromActivityName, Long toActivityId, String toActivityName,
+            String reason, LinkStatus status, OffsetDateTime createdAt) {
 
-        public static Detail from(Activity a, Activity suggested, Map<Long, List<UsedIn>> usedIn) {
+        public static Link from(ActivityLink l) {
+            Activity from = l.getFromActivity();
+            Activity to = l.getToActivity();
+            return new Link(l.getId(), from.getId(), from.getName(), to.getId(), to.getName(), l.getReason(),
+                    l.getStatus(), Times.seoul(l.getCreatedAt()));
+        }
+    }
+
+    public record Links(List<Link> links) {
+    }
+
+    public record Detail(Long id, String name, Period period, String note, MergeSuggestion mergeSuggestion,
+            List<DetailExperience> experiences, List<Link> links) {
+
+        public static Detail from(Activity a, Activity suggested, Map<Long, List<UsedIn>> usedIn, List<Link> links) {
             return new Detail(a.getId(), a.getName(), a.getPeriod(), a.getNote(), MergeSuggestion.of(suggested),
-                    a.getExperiences().stream().map(e -> detailExperience(e, usedIn)).toList());
+                    a.getExperiences().stream().map(e -> detailExperience(e, usedIn)).toList(), links);
         }
 
         private static DetailExperience detailExperience(Experience e, Map<Long, List<UsedIn>> usedIn) {

@@ -61,6 +61,8 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |
 | `POST /api/experiences/{id}/move` | 경험 옮기기 — 속한 활동만 바꿈. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤 |
 | `POST /api/activities/{id}/merge` | 활동 합치기 — `fromActivityId` 의 경험을 전부 이 활동으로 옮기고 그 활동을 지움(한 번에) |
+| `POST /api/activities/{id}/link-suggestions` | 이어짐 제안 받기 — 계기가 있는 활동에서 AI 가 고른 이어짐을 `SUGGESTED` 로 저장(동기, 후보 0개면 AI 를 안 부름) |
+| `PATCH /api/activity-links/{id}` | 이어짐 정하기 — `CONFIRMED`(맞아요) · `REJECTED`(아니에요, 다시 제안하지 않음) |
 | `POST /api/applications` | 지원 넣기 — 지원처 + 문항 1 ~ 10개 저장 · 문항마다 추천 작업 시작(202) |
 | `GET /api/applications` | 넣었던 지원 목록(최근 것부터) |
 | `GET /api/applications/{id}` | 지원 하나 — 문항 목록 · 분석 상태 |

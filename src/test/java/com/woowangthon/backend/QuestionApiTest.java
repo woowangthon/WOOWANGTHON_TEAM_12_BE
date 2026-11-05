@@ -188,7 +188,7 @@ class QuestionApiTest {
     void cleanUp() {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table draft_sentence_evidence, draft_sentence, draft_omitted, draft_experience, draft, grounding_sentence_evidence, grounding_sentence, grounding_check, question_recommendation_evidence, question_recommendation, question_requirement, "
-                + "supplement, clarification, question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity, source_section, source");
+                + "supplement, clarification, question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
     }
 
     // ai-api.md 응답 예시(문항 A 모양) — ID 는 이 테스트가 만든 경험 · 근거
@@ -309,7 +309,7 @@ class QuestionApiTest {
 
     @Test
     void 경험이_없어도_받고_AI_에_빈_후보를_보낸다() throws Exception {
-        jdbc.execute("truncate table supplement, citation, experience, activity");
+        jdbc.execute("truncate table supplement, citation, experience, activity_link, activity");
         reply = new FakeReply(200, """
                 {"requirements": [{"text": "기술 문제를 해결한 경험", "status": "NOT_FOUND", "experienceIds": []}],
                  "recommendations": [], "clarifications": []}""", 0);
