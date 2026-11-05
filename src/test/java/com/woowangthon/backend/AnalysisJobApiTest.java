@@ -257,6 +257,77 @@ class AnalysisJobApiTest {
         mvc.perform(get("/api/activities")).andExpect(jsonPath("$.activities.length()").value(4));
     }
 
+    // --- 같은 활동 제안(S-44) ---
+
+    @Test
+    void 처음_넣으면_기존_활동은_빈_목록이고_제안도_없다() throws Exception {
+        String done = awaitDone(submitText());
+        assertThat((List<?>) JsonPath.read(RECEIVED.getFirst(), "$.existingActivities")).isEmpty();
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities[0].mergeSuggestion").value(nullValue()))
+                .andExpect(jsonPath("$.activities[1].mergeSuggestion").value(nullValue()));
+        assertThat((List<?>) JsonPath.read(done, "$.activityIds")).hasSize(2);
+    }
+
+    @Test
+    void 두_번째_자료는_기존_활동을_보내고_같아_보이는_활동을_제안으로_남긴다() throws Exception {
+        List<Integer> first = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+        long appId = first.get(0);
+        long studyId = first.get(1);
+
+        reply = new FakeReply(200, """
+                {"activities": [
+                  {"name": "캡스톤 「바꿔요」", "period": {"start": "2025", "end": "2025", "ongoing": false},
+                   "sameAsActivityId": %d, "experiences": []},
+                  {"name": "새 동아리", "period": null, "sameAsActivityId": null, "experiences": []}],
+                 "model": "test-model"}""".formatted(appId), 0);
+        List<Integer> second = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+
+        // 이름 · 기간만, start 최근 순
+        String sent = RECEIVED.get(1);
+        assertThat((List<?>) JsonPath.read(sent, "$.existingActivities")).hasSize(2);
+        assertThat(((Number) JsonPath.read(sent, "$.existingActivities[0].id")).longValue()).isEqualTo(appId);
+        assertThat((String) JsonPath.read(sent, "$.existingActivities[0].name")).isEqualTo("바꿔요 — 캠퍼스 중고거래 앱");
+        assertThat((String) JsonPath.read(sent, "$.existingActivities[0].period.start")).isEqualTo("2025-03");
+        assertThat(((Number) JsonPath.read(sent, "$.existingActivities[1].id")).longValue()).isEqualTo(studyId);
+        assertThat((java.util.Map<String, Object>) JsonPath.read(sent, "$.existingActivities[0]")).containsOnlyKeys("id", "name", "period");
+
+        mvc.perform(get("/api/activities/{id}", second.get(0)))
+                .andExpect(jsonPath("$.mergeSuggestion.activityId").value(appId))
+                .andExpect(jsonPath("$.mergeSuggestion.name").value("바꿔요 — 캠퍼스 중고거래 앱"))
+                .andExpect(jsonPath("$.mergeSuggestion.period.start").value("2025-03"));
+        mvc.perform(get("/api/activities/{id}", second.get(1)))
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()));
+        // 자동으로 합치지 않는다
+        mvc.perform(get("/api/activities")).andExpect(jsonPath("$.activities.length()").value(4));
+    }
+
+    @Test
+    void 보내지_않은_활동을_같다고_하면_아무것도_저장하지_않고_실패() throws Exception {
+        reply = new FakeReply(200, """
+                {"activities": [{"name": "스터디", "period": null, "sameAsActivityId": 424242, "experiences": []}],
+                 "model": "test-model"}""", 0);
+        String failed = awaitDone(submitText());
+        assertThat((String) JsonPath.read(failed, "$.status")).isEqualTo("FAILED");
+        assertThat((String) JsonPath.read(failed, "$.error.message")).contains("sameAsActivityId");
+        mvc.perform(get("/api/activities")).andExpect(jsonPath("$.activities.length()").value(0));
+    }
+
+    @Test
+    void 다시_시도하면_그때의_기존_활동_목록을_다시_보낸다() throws Exception {
+        reply = new FakeReply(502, """
+                {"error": {"code": "LLM_ERROR", "message": "rate limit"}}""", 0);
+        long failedJob = submitText();
+        awaitDone(failedJob);
+        assertThat((List<?>) JsonPath.read(RECEIVED.getFirst(), "$.existingActivities")).isEmpty();
+
+        reply = new FakeReply(200, CONTRACT_EXAMPLE, 0);
+        awaitDone(submitText());
+        mvc.perform(post("/api/jobs/{id}/retry", failedJob)).andExpect(status().isAccepted());
+        awaitDone(failedJob);
+        assertThat((List<?>) JsonPath.read(RECEIVED.get(2), "$.existingActivities")).hasSize(2);
+    }
+
     // --- 실패 → 다시 시도 ---
 
     @Test

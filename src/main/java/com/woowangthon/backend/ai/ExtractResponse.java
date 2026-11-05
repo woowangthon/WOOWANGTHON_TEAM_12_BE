@@ -11,7 +11,8 @@ import java.util.List;
 public record ExtractResponse(List<ActivityResult> activities, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ActivityResult(String name, PeriodResult period, List<ExperienceResult> experiences) {
+    public record ActivityResult(String name, PeriodResult period, Long sameAsActivityId,
+            List<ExperienceResult> experiences) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

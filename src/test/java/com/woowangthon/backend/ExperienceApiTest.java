@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
+import com.woowangthon.backend.account.AppUser;
 import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
@@ -542,6 +543,89 @@ class ExperienceApiTest {
 
         mvc.perform(get("/api/activities"))
                 .andExpect(jsonPath("$.activities.length()").value(2));
+    }
+
+    // --- 같은 활동 제안(S-44) ---
+
+    // 분석 작업이 붙이는 것과 같게 — 이력서를 넣어 생긴 새 활동이 기존 「바꿔요」를 가리킨다
+    private long newActivitySuggesting(long targetId) {
+        Activity created = new Activity(userId, "캡스톤 「바꿔요」", new Period("2025", "2025", false));
+        created.suggestMergeWith(targetId);
+        return activities.save(created).getId();
+    }
+
+    @Test
+    void 제안은_목록과_세부에_기존_활동의_지금_이름_기간으로_실린다() throws Exception {
+        long newId = newActivitySuggesting(appId);
+        activities.findById(appId).orElseThrow().rename("바꿔요");
+
+        mvc.perform(get("/api/activities"))
+                // 시작 「2025」 는 「2025-03」 보다 앞선다
+                .andExpect(jsonPath("$.activities[0].mergeSuggestion").value(nullValue()))
+                .andExpect(jsonPath("$.activities[1].id").value(newId))
+                .andExpect(jsonPath("$.activities[1].mergeSuggestion.activityId").value(appId))
+                .andExpect(jsonPath("$.activities[1].mergeSuggestion.name").value("바꿔요"))
+                .andExpect(jsonPath("$.activities[1].mergeSuggestion.period.start").value("2025-03"))
+                .andExpect(jsonPath("$.activities[1].mergeSuggestion.period.end").value("2025-06"))
+                .andExpect(jsonPath("$.activities[2].mergeSuggestion").value(nullValue()));
+        mvc.perform(get("/api/activities/{id}", newId))
+                .andExpect(jsonPath("$.mergeSuggestion.activityId").value(appId))
+                .andExpect(jsonPath("$.mergeSuggestion.name").value("바꿔요"));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()));
+        patchJson("/api/activities/" + newId, "{\"name\": \"캡스톤\"}")
+                .andExpect(jsonPath("$.mergeSuggestion.activityId").value(appId));
+    }
+
+    @Test
+    void 따로_두면_제안만_사라지고_두_번_눌러도_204() throws Exception {
+        long newId = newActivitySuggesting(appId);
+
+        mvc.perform(delete("/api/activities/{id}/merge-suggestion", newId)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/activities/{id}", newId))
+                .andExpect(jsonPath("$.name").value("캡스톤 「바꿔요」"))
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()));
+        mvc.perform(delete("/api/activities/{id}/merge-suggestion", newId)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/activities")).andExpect(jsonPath("$.activities.length()").value(3));
+    }
+
+    @Test
+    void 따로_두기_오류() throws Exception {
+        expectError(mvc.perform(delete("/api/activities/{id}/merge-suggestion", 999_999)), 404, "ACTIVITY_NOT_FOUND");
+        long otherId = users.save(new AppUser("other", "hash", null)).getId();
+        Activity others = new Activity(otherId, "남의 활동", new Period(null, null, false));
+        long othersId = activities.save(others).getId();
+        expectError(mvc.perform(delete("/api/activities/{id}/merge-suggestion", othersId)), 404, "ACTIVITY_NOT_FOUND");
+    }
+
+    @Test
+    void 붙이면_기존_활동이_남고_제안은_사라진다() throws Exception {
+        long newId = newActivitySuggesting(appId);
+
+        postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + newId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(appId))
+                .andExpect(jsonPath("$.name").value("바꿔요 — 캠퍼스 중고거래 앱"))
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()));
+        expectError(mvc.perform(get("/api/activities/{id}", newId)), 404, "ACTIVITY_NOT_FOUND");
+    }
+
+    @Test
+    void 가리키던_활동이_합쳐져_사라지면_제안은_null() throws Exception {
+        long newId = newActivitySuggesting(studyId);
+        Activity app = activities.findById(appId).orElseThrow();
+        app.suggestMergeWith(studyId);
+        long keptSuggestionId = newActivitySuggesting(appId);
+
+        // 남길 활동이 사라질 활동을 가리키고 있었어도 null
+        postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + studyId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()));
+
+        // 벌크 UPDATE 라 테스트 트랜잭션의 엔티티가 아닌 DB 를 본다
+        String suggestion = "select merge_suggestion_activity_id from activity where id = ?";
+        assertThat(jdbc.queryForObject(suggestion, Long.class, newId)).isNull();
+        assertThat(jdbc.queryForObject(suggestion, Long.class, keptSuggestionId)).isEqualTo(appId);
     }
 
     // 테스트 트랜잭션 밖에서 돌려 합치기 자체의 트랜잭션을 본다. 활동 DELETE 를 DB 트리거로 실패시킨다

@@ -39,6 +39,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -323,7 +324,13 @@ class McpApiTest {
     void list_activities_는_활동_목록_API_와_같다() throws Exception {
         String rest = web.perform(get("/api/activities")).andReturn().getResponse().getContentAsString();
 
-        assertThat(toolResult(call(token, "list_activities", "{}"))).isEqualTo(json.readTree(rest));
+        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안)은 MCP 에 싣지 않는다
+        JsonNode expected = json.readTree(rest);
+        expected.get("activities").forEach(a -> ((ObjectNode) a).remove("mergeSuggestion"));
+        JsonNode result = toolResult(call(token, "list_activities", "{}"));
+
+        assertThat(result).isEqualTo(expected);
+        assertThat(result.get("activities").get(0).has("mergeSuggestion")).isFalse();
     }
 
     @Test
@@ -333,8 +340,11 @@ class McpApiTest {
         String rest = web.perform(get("/api/activities/{id}", appId)).andReturn().getResponse().getContentAsString();
 
         JsonNode result = toolResult(call(token, "get_activity", "{\"activityId\":" + appId + "}"));
+        ObjectNode expected = (ObjectNode) json.readTree(rest);
+        expected.remove("mergeSuggestion");
 
-        assertThat(result).isEqualTo(json.readTree(rest));
+        assertThat(result).isEqualTo(expected);
+        assertThat(result.has("mergeSuggestion")).isFalse();
         assertThat(result.get("experiences").get(0).get("supplements").get(0).get("answer").asString()).isEqualTo("답");
     }
 

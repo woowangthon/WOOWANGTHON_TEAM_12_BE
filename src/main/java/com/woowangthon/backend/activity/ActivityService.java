@@ -4,6 +4,10 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.experience.ExperienceService;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,26 +25,30 @@ public class ActivityService {
 
     @Transactional(readOnly = true)
     public ActivityResponses.Timeline timeline() {
-        return timeline(CurrentUser.id());
-    }
-
-    /** 로그인 세션 밖(MCP 도구)에서 부를 때 — 사용자를 직접 받는다. */
-    @Transactional(readOnly = true)
-    public ActivityResponses.Timeline timeline(long userId) {
-        return new ActivityResponses.Timeline(activities.findTimeline(userId).stream()
-                .map(ActivityResponses.Summary::from)
+        List<Activity> all = activities.findTimeline(CurrentUser.id());
+        Map<Long, Activity> byId = all.stream().collect(Collectors.toMap(Activity::getId, Function.identity()));
+        return new ActivityResponses.Timeline(all.stream()
+                .map(a -> ActivityResponses.Summary.from(a, suggestedFrom(a, byId::get)))
                 .toList());
     }
 
     @Transactional(readOnly = true)
     public ActivityResponses.Detail detail(long activityId) {
-        return detail(CurrentUser.id(), activityId);
+        return detail(find(activityId));
     }
 
-    /** 로그인 세션 밖(MCP 도구)에서 부를 때 — 남의 활동은 없는 것과 같이 ACTIVITY_NOT_FOUND. */
+    /** MCP 도구 — 사용자를 직접 받고, mergeSuggestion 을 싣지 않는다(mcp-api.md). */
     @Transactional(readOnly = true)
-    public ActivityResponses.Detail detail(long userId, long activityId) {
-        return ActivityResponses.Detail.from(find(userId, activityId));
+    public ActivityResponses.McpTimeline mcpTimeline(long userId) {
+        return new ActivityResponses.McpTimeline(activities.findTimeline(userId).stream()
+                .map(ActivityResponses.McpSummary::from)
+                .toList());
+    }
+
+    /** MCP 도구 — 남의 활동은 없는 것과 같이 ACTIVITY_NOT_FOUND. mergeSuggestion 을 싣지 않는다. */
+    @Transactional(readOnly = true)
+    public ActivityResponses.McpDetail mcpDetail(long userId, long activityId) {
+        return ActivityResponses.McpDetail.from(find(userId, activityId));
     }
 
     /** 보낸 필드만 바꾼다. period 는 세 칸을 통째로 받는다(계약 「PATCH /api/activities」). */
@@ -70,7 +78,7 @@ public class ActivityService {
         });
 
         activities.flush();
-        return ActivityResponses.Summary.from(activity);
+        return ActivityResponses.Summary.from(activity, suggestedFrom(activity, this::sameUser));
     }
 
     /**
@@ -90,10 +98,36 @@ public class ActivityService {
         Activity from = find(fromActivityId);
 
         experiences.moveToEnd(from.getExperiences(), keep);
+        // 같은 활동 제안(S-44): from 에 붙은 제안은 from 과 같이 사라지고, from 을 가리키던 제안은 null.
+        // 남길 활동의 제안은 그대로 — from 을 가리키고 있었으면 null(벌크 UPDATE 는 관리 중인 keep 을 고치지 않는다)
+        if (fromActivityId.equals(keep.getMergeSuggestionActivityId())) {
+            keep.dismissMergeSuggestion();
+        }
+        activities.clearMergeSuggestionsTo(fromActivityId);
         // Hibernate 는 경험 UPDATE 를 활동 DELETE 보다 먼저 내보낸다 — 외래 키가 걸리지 않는다
         activities.delete(from);
         activities.flush();
-        return ActivityResponses.Detail.from(keep);
+        return detail(keep);
+    }
+
+    /** 따로 두기(S-44) — 제안만 null 로. 두 활동은 그대로고, 이미 없어도 된다. */
+    @Transactional
+    public void dismissMergeSuggestion(long activityId) {
+        find(activityId).dismissMergeSuggestion();
+    }
+
+    private ActivityResponses.Detail detail(Activity activity) {
+        return ActivityResponses.Detail.from(activity, suggestedFrom(activity, this::sameUser));
+    }
+
+    private Activity sameUser(Long activityId) {
+        return activities.findByIdAndUserId(activityId, CurrentUser.id()).orElse(null);
+    }
+
+    // 제안이 가리키는 활동(지금 값). 없거나 사라졌으면 null
+    private static Activity suggestedFrom(Activity activity, Function<Long, Activity> lookup) {
+        Long target = activity.getMergeSuggestionActivityId();
+        return target == null ? null : lookup.apply(target);
     }
 
     private Activity find(long activityId) {

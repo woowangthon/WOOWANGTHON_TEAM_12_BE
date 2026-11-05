@@ -2,6 +2,7 @@ package com.woowangthon.backend.job;
 
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.AiClient;
+import com.woowangthon.backend.ai.ExtractRequest;
 import com.woowangthon.backend.ai.ExtractResponse;
 import java.util.List;
 import org.slf4j.Logger;
@@ -30,8 +31,9 @@ public class ExtractionRunner {
     @Async
     public void run(long jobId) {
         try {
-            ExtractResponse result = ai.extract(service.extractRequest(jobId));
-            List<Long> activityIds = service.complete(jobId, result);
+            ExtractRequest request = service.extractRequest(jobId);
+            ExtractResponse result = ai.extract(request);
+            List<Long> activityIds = service.complete(jobId, request, result);
             log.info("분석 작업 {} 완료 — 활동 {}개, 모델 {}", jobId, activityIds.size(), result.model());
         } catch (AiCallException e) {
             log.warn("분석 작업 {} 실패 — {} {}", jobId, e.code(), e.getMessage());

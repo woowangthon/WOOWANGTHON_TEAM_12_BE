@@ -34,6 +34,6 @@ public class ListActivitiesTool implements McpTool {
 
     @Override
     public Object call(long userId, JsonNode arguments) {
-        return activities.timeline(userId);
+        return activities.mcpTimeline(userId);
     }
 }
