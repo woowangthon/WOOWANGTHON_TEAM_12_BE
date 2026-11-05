@@ -26,12 +26,12 @@ public final class ActivityResponses {
         }
     }
 
-    public record Summary(Long id, String name, Period period, int experienceCount, String note,
-            MergeSuggestion mergeSuggestion) {
+    public record Summary(Long id, String name, Period period, int experienceCount, ActivityCategory category,
+            CategoryBy categoryBy, String note, MergeSuggestion mergeSuggestion) {
 
         public static Summary from(Activity a, Activity suggested) {
-            return new Summary(a.getId(), a.getName(), a.getPeriod(), a.getExperienceCount(), a.getNote(),
-                    MergeSuggestion.of(suggested));
+            return new Summary(a.getId(), a.getName(), a.getPeriod(), a.getExperienceCount(), a.getCategory(),
+                    a.getCategoryBy(), a.getNote(), MergeSuggestion.of(suggested));
         }
     }
 
@@ -80,11 +80,12 @@ public final class ActivityResponses {
     public record Links(List<Link> links) {
     }
 
-    public record Detail(Long id, String name, Period period, String note, MergeSuggestion mergeSuggestion,
-            List<DetailExperience> experiences, List<Link> links) {
+    public record Detail(Long id, String name, Period period, ActivityCategory category, CategoryBy categoryBy,
+            String note, MergeSuggestion mergeSuggestion, List<DetailExperience> experiences, List<Link> links) {
 
         public static Detail from(Activity a, Activity suggested, Map<Long, List<UsedIn>> usedIn, List<Link> links) {
-            return new Detail(a.getId(), a.getName(), a.getPeriod(), a.getNote(), MergeSuggestion.of(suggested),
+            return new Detail(a.getId(), a.getName(), a.getPeriod(), a.getCategory(), a.getCategoryBy(), a.getNote(),
+                    MergeSuggestion.of(suggested),
                     a.getExperiences().stream().map(e -> detailExperience(e, usedIn)).toList(), links);
         }
 
@@ -93,7 +94,8 @@ public final class ActivityResponses {
         }
     }
 
-    // MCP 응답 — mergeSuggestion(화면에서 사용자가 정할 AI 제안) · note(S-34)를 싣지 않는다(mcp-api.md 「list_activities」)
+    // MCP 응답 — mergeSuggestion(화면에서 사용자가 정할 AI 제안) · note(S-34) · category · categoryBy(S-57 화면 정리용)를
+    // 싣지 않는다(mcp-api.md 「list_activities」). 앱 응답과 record 를 나눠 둬서 앱에 칸을 더해도 MCP 로 새지 않는다
 
     public record McpSummary(Long id, String name, Period period, int experienceCount) {
 

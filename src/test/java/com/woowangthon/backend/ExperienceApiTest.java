@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.woowangthon.backend.activity.Activity;
+import com.woowangthon.backend.activity.ActivityCategory;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.account.AppUser;
@@ -637,6 +638,91 @@ class ExperienceApiTest {
         postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + keepId + "}")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.note").value("앱 계기"));
+    }
+
+    // --- 활동 분류(S-57, BE#95) ---
+
+    @Test
+    void 활동_분류는_처음엔_미분류이고_목록_세부에_null_로_실린다() throws Exception {
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities[0].category").value(nullValue()))
+                .andExpect(jsonPath("$.activities[0].categoryBy").value(nullValue()))
+                .andExpect(jsonPath("$.activities[1].category").value(nullValue()));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.category").value(nullValue()))
+                .andExpect(jsonPath("$.categoryBy").value(nullValue()));
+
+        // 분석이 붙인 분류는 AI 해석으로 실린다
+        activities.findById(appId).orElseThrow().categorizeByAi(ActivityCategory.PROJECT);
+        mvc.perform(get("/api/activities"))
+                .andExpect(jsonPath("$.activities[1].category").value("PROJECT"))
+                .andExpect(jsonPath("$.activities[1].categoryBy").value("AI"));
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.category").value("PROJECT"))
+                .andExpect(jsonPath("$.categoryBy").value("AI"));
+    }
+
+    @Test
+    void 활동_분류를_바꾸면_USER_같은_값이면_그대로_null_이면_비운다() throws Exception {
+        activities.findById(appId).orElseThrow().categorizeByAi(ActivityCategory.PROJECT);
+        String url = "/api/activities/" + appId;
+
+        // 같은 값 — 출처도 그대로(AI 해석 표시가 남는다)
+        patchJson(url, "{\"category\": \"PROJECT\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("PROJECT"))
+                .andExpect(jsonPath("$.categoryBy").value("AI"));
+        // 안 보내면 그대로
+        patchJson(url, "{\"name\": \"바꿔요\"}")
+                .andExpect(jsonPath("$.category").value("PROJECT"))
+                .andExpect(jsonPath("$.categoryBy").value("AI"));
+        // 다른 값 — 사용자가 고른 것
+        patchJson(url, "{\"category\": \"CLUB\"}")
+                .andExpect(jsonPath("$.category").value("CLUB"))
+                .andExpect(jsonPath("$.categoryBy").value("USER"));
+        mvc.perform(get(url))
+                .andExpect(jsonPath("$.category").value("CLUB"))
+                .andExpect(jsonPath("$.categoryBy").value("USER"));
+        // null — 둘 다 비운다(미분류)
+        patchJson(url, "{\"category\": null}")
+                .andExpect(jsonPath("$.category").value(nullValue()))
+                .andExpect(jsonPath("$.categoryBy").value(nullValue()));
+        // 비운 뒤 다시 고르면 USER
+        patchJson(url, "{\"category\": \"STUDY\"}")
+                .andExpect(jsonPath("$.category").value("STUDY"))
+                .andExpect(jsonPath("$.categoryBy").value("USER"));
+    }
+
+    @Test
+    void 활동_분류가_목록_밖이면_400_이고_그대로다() throws Exception {
+        String url = "/api/activities/" + appId;
+        patchJson(url, "{\"category\": \"CLUB\"}").andExpect(status().isOk());
+        expectError(patchJson(url, "{\"category\": \"SPORTS\"}"), 400, "INVALID_REQUEST");
+        expectError(patchJson(url, "{\"category\": \"club\"}"), 400, "INVALID_REQUEST");
+        expectError(patchJson(url, "{\"category\": 3}"), 400, "INVALID_REQUEST");
+        expectError(patchJson(url, "{\"category\": \"\"}"), 400, "INVALID_REQUEST");
+        mvc.perform(get(url))
+                .andExpect(jsonPath("$.category").value("CLUB"))
+                .andExpect(jsonPath("$.categoryBy").value("USER"));
+    }
+
+    @Test
+    void 합치면_남길_활동이_미분류일_때만_분류를_옮겨_온다() throws Exception {
+        activities.findById(studyId).orElseThrow().categorizeByAi(ActivityCategory.STUDY);
+
+        // 남길 활동이 미분류면 출처까지 같이 옮겨 온다
+        long keepId = activities.save(new Activity(userId, "남길 활동", new Period(null, null, false))).getId();
+        postJson("/api/activities/" + keepId + "/merge", "{\"fromActivityId\": " + studyId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("STUDY"))
+                .andExpect(jsonPath("$.categoryBy").value("AI"));
+
+        // 남길 활동에 분류가 있으면 그대로
+        patchJson("/api/activities/" + appId, "{\"category\": \"PROJECT\"}").andExpect(status().isOk());
+        postJson("/api/activities/" + appId + "/merge", "{\"fromActivityId\": " + keepId + "}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("PROJECT"))
+                .andExpect(jsonPath("$.categoryBy").value("USER"));
     }
 
     @Test

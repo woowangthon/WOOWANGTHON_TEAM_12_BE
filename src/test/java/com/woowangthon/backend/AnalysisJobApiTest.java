@@ -376,6 +376,44 @@ class AnalysisJobApiTest {
     }
 
     @Test
+    void 활동_분류는_AI_해석으로_저장되고_없거나_null_이면_미분류다() throws Exception {
+        reply = new FakeReply(200, """
+                {"activities": [
+                  {"name": "캡스톤", "period": null, "category": "PROJECT", "experiences": []},
+                  {"name": "스터디", "period": null, "category": null, "experiences": []},
+                  {"name": "봉사", "period": null, "experiences": []}]}""", 0);
+        String done = awaitDone(submitText());
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        List<Integer> ids = JsonPath.read(done, "$.activityIds");
+
+        mvc.perform(get("/api/activities/{id}", ids.get(0)))
+                .andExpect(jsonPath("$.category").value("PROJECT"))
+                .andExpect(jsonPath("$.categoryBy").value("AI"));
+        for (int i = 1; i < 3; i++) {
+            mvc.perform(get("/api/activities/{id}", ids.get(i)))
+                    .andExpect(jsonPath("$.category").value(nullValue()))
+                    .andExpect(jsonPath("$.categoryBy").value(nullValue()));
+        }
+
+        // 다음 분석에 보내는 기존 활동엔 분류를 싣지 않는다(정리용)
+        awaitDone(submitText());
+        String sent = RECEIVED.get(1);
+        assertThat((List<?>) JsonPath.read(sent, "$.existingActivities")).hasSize(3);
+        assertThat((java.util.Map<String, ?>) JsonPath.read(sent, "$.existingActivities[0]"))
+                .doesNotContainKeys("category", "categoryBy");
+    }
+
+    @Test
+    void 활동_분류가_목록_밖이면_저장하지_않고_실패() throws Exception {
+        reply = new FakeReply(200, """
+                {"activities": [{"name": "캡스톤", "period": null, "category": "SPORTS", "experiences": []}]}""", 0);
+        String failed = awaitDone(submitText());
+        assertThat((String) JsonPath.read(failed, "$.error.code")).isEqualTo("AI_FAILED");
+        assertThat((String) JsonPath.read(failed, "$.error.message")).contains("category");
+        mvc.perform(get("/api/activities")).andExpect(jsonPath("$.activities.length()").value(0));
+    }
+
+    @Test
     void 제한_시간을_넘기면_AI_TIMEOUT() throws Exception {
         reply = new FakeReply(200, CONTRACT_EXAMPLE, 2_500);
         String failed = awaitDone(submitText());
