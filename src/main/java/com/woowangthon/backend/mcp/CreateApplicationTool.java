@@ -44,7 +44,7 @@ public class CreateApplicationTool implements McpWriteTool {
                                 "organization", Map.of("type", "string", "description", "지원처 이름. 100자 이하"),
                                 "organizationType", Map.of("type", List.of("string", "null"), "description", "지원처 종류. 모르면 null"),
                                 "jobRole", Map.of("type", List.of("string", "null"), "description", "직무. 모르면 null"),
-                                "postingUrl", Map.of("type", List.of("string", "null"), "description", "공고 원문 링크. 없으면 null"),
+                                "postingUrl", Map.of("type", List.of("string", "null"), "description", "공고 원문 링크 — 사용자가 준 http(s) 링크만. 없으면 null"),
                                 "questions", Map.of(
                                         "type", "array",
                                         "minItems", 1,
