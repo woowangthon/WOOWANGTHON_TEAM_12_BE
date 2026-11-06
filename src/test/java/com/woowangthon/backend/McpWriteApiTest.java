@@ -168,6 +168,12 @@ class McpWriteApiTest {
 
         rpc(chagok, "tools/list", "{}").andExpect(jsonPath("$.result.tools[*].name", containsInAnyOrder("search_experiences",
                 "list_activities", "get_activity", "add_source", "create_application")));
+        rpc(chagok, "tools/list", "{}")
+                .andExpect(jsonPath("$.result.tools[?(@.name == 'create_application')].inputSchema.properties.organizationType.enum[*]",
+                        containsInAnyOrder("CLUB", "EXTRACURRICULAR", "EXTERNAL", "BOOTCAMP", "INTERN", "JOB", "OTHER", null)))
+                .andExpect(jsonPath("$.result.tools[?(@.name == 'create_application')].inputSchema.properties.jobRole.enum[*]",
+                        containsInAnyOrder("BACKEND", "FRONTEND", "MOBILE", "AI_DATA", "INFRA", "DESIGN", "PLANNING", "MARKETING",
+                                "BUSINESS", "OTHER", null)));
         assertToolError(call(chagok, "add_source", "{\"text\":\"글\"}"), "CONFIRM_REQUIRED");
         call(chagok, "update_experience", "{}").andExpect(jsonPath("$.error.code").value(-32602));
         rpc(chagok, "initialize", "{\"protocolVersion\":\"2025-06-18\"}").andExpect(jsonPath("$.result.instructions", containsString("읽기 전용으로")));
