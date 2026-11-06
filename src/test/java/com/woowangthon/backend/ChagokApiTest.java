@@ -192,6 +192,8 @@ class ChagokApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.tools", hasSize(5)))
                 .andExpect(jsonPath("$.result.tools[?(@.name=='create_application')].annotations.readOnlyHint").value(false))
+                .andExpect(jsonPath("$.result.tools[?(@.name=='create_application')].inputSchema.properties.postingUrl.description")
+                        .value("공고 원문 링크 — 사용자가 준 http(s) 링크만. 없으면 null"))
                 .andExpect(jsonPath("$.result.tools[?(@.name=='add_source')].annotations.readOnlyHint").value(false));
         mvc.perform(rpc(mcp, "tools/call", "{\"name\":\"add_source\",\"arguments\":{\"text\":\"글\"}}"))
                 .andExpect(jsonPath("$.result.isError").value(true))
@@ -311,6 +313,42 @@ class ChagokApiTest {
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
         assertThat(jdbc.queryForObject("select count(*) from application", Long.class)).isZero();
+    }
+
+    @Test
+    void 확인하면_공고_원문_링크를_지원에_남긴다() throws Exception {
+        lines = List.of(confirmWithPostingUrl("\"https://example.com/recruit/1234?ref=a\""));
+        long runId = start("이 공고로 지원 만들어 줘 https://example.com/recruit/1234?ref=a");
+        String waiting = await(runId, "WAITING_CONFIRM");
+        // 확인 카드에서 사용자가 링크를 본다
+        assertThat((String) JsonPath.read(waiting, "$.steps[0].arguments.postingUrl"))
+                .isEqualTo("https://example.com/recruit/1234?ref=a");
+
+        mvc.perform(post("/api/chagok/runs/" + runId + "/confirm"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DONE"));
+        assertThat(jdbc.queryForObject("select posting_url from application", String.class))
+                .isEqualTo("https://example.com/recruit/1234?ref=a");
+    }
+
+    @Test
+    void 확인_뒤_공고_링크가_틀리면_POST_applications_와_같은_코드로_FAILED() throws Exception {
+        lines = List.of(confirmWithPostingUrl("\"ftp://example.com/recruit\""));
+        long runId = start("이 공고로 지원 만들어 줘");
+        await(runId, "WAITING_CONFIRM");
+
+        mvc.perform(post("/api/chagok/runs/" + runId + "/confirm"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("postingUrl")));
+        assertThat(jdbc.queryForObject("select count(*) from application", Long.class)).isZero();
+    }
+
+    private static String confirmWithPostingUrl(String postingUrl) {
+        return """
+                {"type":"confirm","tool":"create_application","arguments":{"organization":"OO","postingUrl":%s,"questions":[{"text":"문항"}]},"label":"만들까요?"}"""
+                .formatted(postingUrl);
     }
 
     @Test
