@@ -32,8 +32,8 @@ public class ExperienceController {
     public ExperienceSearch.AppResult search(@RequestParam(required = false) String query,
             @RequestParam(required = false) String competencies, @RequestParam(required = false) String year,
             @RequestParam(required = false) String sourceStatus, @RequestParam(required = false) String category,
-            @RequestParam(required = false) Integer limit) {
-        return search.searchForApp(CurrentUser.id(), query, competencies, year, sourceStatus, category, limit);
+            @RequestParam(required = false) String saved, @RequestParam(required = false) Integer limit) {
+        return search.searchForApp(CurrentUser.id(), query, competencies, year, sourceStatus, category, saved, limit);
     }
 
     @PatchMapping("/api/experiences/{experienceId}")
@@ -59,6 +59,12 @@ public class ExperienceController {
     public ExperienceResponse setShared(@PathVariable long experienceId,
             @RequestBody(required = false) Map<String, Object> body) {
         return service.setShared(experienceId, new PatchBody(body));
+    }
+
+    @PutMapping("/api/experiences/{experienceId}/saved")
+    public ExperienceResponse setSaved(@PathVariable long experienceId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        return service.setSaved(experienceId, new PatchBody(body));
     }
 
     @DeleteMapping("/api/experiences/{experienceId}")

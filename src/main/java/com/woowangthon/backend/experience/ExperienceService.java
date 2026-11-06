@@ -109,6 +109,22 @@ public class ExperienceService {
         return ExperienceResponse.from(experience);
     }
 
+    /** 저장 · 빼기(계약 「PUT .../saved」). 경험 수정과 달리 출처 상태 · 역량 출처를 바꾸지 않는다(S-71). */
+    @Transactional
+    public ExperienceResponse setSaved(long experienceId, PatchBody body) {
+        Boolean saved = body.bool("saved").map(PatchBody.Field::value).orElse(null);
+        if (saved == null) {
+            throw ApiException.invalidRequest("saved 가 없습니다");
+        }
+        // 행 전체를 다시 쓰므로 외부 AI 고치기가 같이 들어와도 그 값을 덮지 않게 잠근다
+        Experience experience = experiences.findOwnedForUpdate(experienceId, CurrentUser.id())
+                .orElseThrow(() -> ApiException.notFound("EXPERIENCE_NOT_FOUND",
+                        "경험 " + experienceId + " 이(가) 없습니다"));
+        experience.setSaved(saved);
+        experiences.flush();
+        return ExperienceResponse.from(experience);
+    }
+
     /** 경험과 그 근거 · 보완을 지운다. 원본과 활동은 남는다(계약 「경험 지우기」 · S-11). */
     @Transactional
     public void delete(long experienceId) {
