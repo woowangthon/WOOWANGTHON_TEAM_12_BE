@@ -2,8 +2,11 @@ package com.woowangthon.backend.mcp;
 
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.question.ApplicationService;
+import com.woowangthon.backend.question.JobRole;
 import com.woowangthon.backend.question.MatchRunner;
+import com.woowangthon.backend.question.OrganizationType;
 import com.woowangthon.backend.question.QuestionResponses;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -42,8 +45,14 @@ public class CreateApplicationTool implements McpWriteTool {
                         "type", "object",
                         "properties", Map.of(
                                 "organization", Map.of("type", "string", "description", "지원처 이름. 100자 이하"),
-                                "organizationType", Map.of("type", List.of("string", "null"), "description", "지원처 종류. 모르면 null"),
-                                "jobRole", Map.of("type", List.of("string", "null"), "description", "직무. 모르면 null"),
+                                "organizationType", Map.of(
+                                        "type", List.of("string", "null"),
+                                        "enum", valuesOrNull(OrganizationType.values()),
+                                        "description", "지원처 종류. 모르면 null"),
+                                "jobRole", Map.of(
+                                        "type", List.of("string", "null"),
+                                        "enum", valuesOrNull(JobRole.values()),
+                                        "description", "직무. 모르면 null"),
                                 "postingUrl", Map.of("type", List.of("string", "null"), "description", "공고 원문 링크 — 사용자가 준 http(s) 링크만. 없으면 null"),
                                 "questions", Map.of(
                                         "type", "array",
@@ -69,5 +78,15 @@ public class CreateApplicationTool implements McpWriteTool {
         return new Written(
                 Map.of("applicationId", submitted.applicationId(), "questionIds", submitted.questionIds()),
                 () -> submitted.questionIds().forEach(matches::run));
+    }
+
+    /** 값 목록 + null — 코드의 enum 이 원본이라 값을 여기 또 적지 않는다. List.of 는 null 을 받지 않는다. */
+    private static List<String> valuesOrNull(Enum<?>[] values) {
+        List<String> names = new ArrayList<>();
+        for (Enum<?> value : values) {
+            names.add(value.name());
+        }
+        names.add(null);
+        return names;
     }
 }
