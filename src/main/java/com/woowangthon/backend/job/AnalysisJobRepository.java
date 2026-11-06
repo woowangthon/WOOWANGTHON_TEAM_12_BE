@@ -17,4 +17,18 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, Long> 
     Optional<AnalysisJob> findForUpdate(Long id, Long userId);
 
     List<AnalysisJob> findByStatus(JobStatus status);
+
+    @Query("select distinct j.userId from AnalysisJob j where j.status = com.woowangthon.backend.job.JobStatus.QUEUED")
+    List<Long> findUsersWithQueued();
+
+    // 사용자의 분석이 하나도 돌지 않을 때만 가장 먼저 만든 QUEUED 를 시작한다. 묶음이 겹쳐도 묶음 안 순서가 지켜진다.
+    // 작업 둘이 같이 끝나도 한 문장이라 하나만 시작된다 — 늦은 쪽은 status 를 다시 보고 0행이 된다
+    @Query(value = """
+            update analysis_job set status = 'ANALYZING', updated_at = now()
+            where id = (select min(id) from analysis_job where user_id = :userId and status = 'QUEUED')
+              and status = 'QUEUED'
+              and not exists (select 1 from analysis_job where user_id = :userId and status = 'ANALYZING')
+            returning id
+            """, nativeQuery = true)
+    Optional<Long> startNextQueued(Long userId);
 }

@@ -26,6 +26,9 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
@@ -60,6 +63,8 @@ class AnalysisJobApiTest {
     // uvicorn 은 Upgrade: h2c 요청을 400 으로 거절한다 — BE 는 HTTP/1.1 로만 부른다
     static final List<String> UPGRADE_HEADERS = new CopyOnWriteArrayList<>();
     static volatile FakeReply reply;
+    // 먼저 쓰는 응답 — 작업마다 다른 답이 필요할 때. 비면 reply
+    static final Queue<FakeReply> NEXT_REPLIES = new ConcurrentLinkedQueue<>();
 
     static {
         try {
@@ -74,7 +79,8 @@ class AnalysisJobApiTest {
             if (upgrade != null) {
                 UPGRADE_HEADERS.add(upgrade);
             }
-            FakeReply r = reply;
+            FakeReply queued = NEXT_REPLIES.poll();
+            FakeReply r = queued != null ? queued : reply;
             if (r.delayMillis() > 0) {
                 try {
                     Thread.sleep(r.delayMillis());
@@ -169,11 +175,13 @@ class AnalysisJobApiTest {
         mvc = TestLogin.mvc(context);
         RECEIVED.clear();
         UPGRADE_HEADERS.clear();
+        NEXT_REPLIES.clear();
         reply = new FakeReply(200, CONTRACT_EXAMPLE, 0);
     }
 
     @AfterEach
     void cleanUp() {
+        jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity_link, activity, source_section, source");
     }
 
@@ -470,6 +478,309 @@ class AnalysisJobApiTest {
         assertThat(after.getErrorCode()).isEqualTo("INTERNAL_ERROR");
     }
 
+    // --- 자료 여러 개 한 번에(S-59) ---
+
+    @Test
+    void 묶음은_1번부터_차례로_돌고_앞_파일의_활동이_다음_파일의_기존_활동이_된다() throws Exception {
+        reply = new FakeReply(200, CONTRACT_EXAMPLE, 200);
+        String submitted = postBatch(batch("a.md", "b.md", "c.md"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.items.length()").value(3))
+                .andExpect(jsonPath("$.items[0].status").value("ANALYZING"))
+                .andExpect(jsonPath("$.items[1].status").value("QUEUED"))
+                .andExpect(jsonPath("$.items[2].status").value("QUEUED"))
+                .andReturn().getResponse().getContentAsString();
+        long first = jobId(submitted, 0);
+        long second = jobId(submitted, 1);
+        long third = jobId(submitted, 2);
+
+        // 기다리는 작업은 다시 시도할 수 없고 작업 응답에도 QUEUED 로 보인다
+        mvc.perform(get("/api/jobs/{id}", third))
+                .andExpect(jsonPath("$.status").value("QUEUED"))
+                .andExpect(jsonPath("$.targetActivityId").value(nullValue()))
+                .andExpect(jsonPath("$.targetMatched").value(nullValue()));
+        expectError(mvc.perform(post("/api/jobs/{id}/retry", third)), 409, "JOB_NOT_FAILED");
+
+        List<Integer> firstActivities = JsonPath.read(awaitDone(first), "$.activityIds");
+        awaitDone(second);
+        awaitDone(third);
+
+        assertThat(RECEIVED).hasSize(3);
+        assertThat(RECEIVED.stream().map(r -> (String) JsonPath.read(r, "$.sourceName")))
+                .containsExactly("a.md", "b.md", "c.md");
+        assertThat((List<?>) JsonPath.read(RECEIVED.get(0), "$.existingActivities")).isEmpty();
+        List<Integer> sent = JsonPath.read(RECEIVED.get(1), "$.existingActivities[*].id");
+        assertThat(sent).containsExactlyInAnyOrderElementsOf(firstActivities);
+        assertThat((List<?>) JsonPath.read(RECEIVED.get(2), "$.existingActivities")).hasSize(4);
+        assertThat(usage()).isEqualTo(3);
+    }
+
+    @Test
+    void 앞_작업이_돌고_있으면_다음_작업은_시작하지_않는다() throws Exception {
+        NEXT_REPLIES.add(new FakeReply(200, CONTRACT_EXAMPLE, 500));
+        String submitted = postBatch(batch("a.md", "b.md")).andReturn().getResponse().getContentAsString();
+
+        awaitReceived(1);
+
+        // 끼어든 자료가 먼저 끝나도 묶음의 다음 작업은 돌지 않는다
+        awaitDone(submitText());
+        assertThat(jobs.findById(jobId(submitted, 1)).orElseThrow().getStatus()).isEqualTo(JobStatus.QUEUED);
+
+        awaitDone(jobId(submitted, 0));
+        awaitDone(jobId(submitted, 1));
+        assertThat(RECEIVED).hasSize(3);
+    }
+
+    @Test
+    void 실패해도_다음이_돌고_실패한_작업은_차례를_기다리지_않고_다시_돈다() throws Exception {
+        NEXT_REPLIES.add(new FakeReply(502, """
+                {"error": {"code": "LLM_ERROR", "message": "rate limit"}}""", 0));
+        NEXT_REPLIES.add(new FakeReply(200, CONTRACT_EXAMPLE, 500));
+        String submitted = postBatch(batch("a.md", "b.md", "c.md")).andReturn().getResponse().getContentAsString();
+        long first = jobId(submitted, 0);
+        assertThat((String) JsonPath.read(awaitDone(first), "$.status")).isEqualTo("FAILED");
+
+        // 2번이 도는 동안 1번을 다시 시도한다 — 3번은 그대로 기다린다
+        mvc.perform(post("/api/jobs/{id}/retry", first))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("ANALYZING"));
+        assertThat(jobs.findById(jobId(submitted, 2)).orElseThrow().getStatus()).isEqualTo(JobStatus.QUEUED);
+
+        assertThat((String) JsonPath.read(awaitDone(first), "$.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(awaitDone(jobId(submitted, 1)), "$.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(awaitDone(jobId(submitted, 2)), "$.status")).isEqualTo("COMPLETED");
+        assertThat(usage()).isEqualTo(4); // 묶음 3 + 다시 시도 1
+    }
+
+    @Test
+    void 서버가_다시_켜지면_끊긴_작업은_실패하고_남은_QUEUED_는_차례대로_돈다() throws Exception {
+        AnalysisJob cut = jobs.save(new AnalysisJob(TestLogin.USER_ID, savedSource("끊긴 자료")));
+        AnalysisJob second = jobs.save(AnalysisJob.queued(TestLogin.USER_ID, savedSource("둘째.md")));
+        AnalysisJob third = jobs.save(AnalysisJob.queued(TestLogin.USER_ID, savedSource("셋째.md")));
+
+        cleaner.run(null);
+
+        assertThat(jobs.findById(cut.getId()).orElseThrow().getStatus()).isEqualTo(JobStatus.FAILED);
+        awaitDone(second.getId());
+        assertThat((String) JsonPath.read(awaitDone(third.getId()), "$.status")).isEqualTo("COMPLETED");
+        assertThat(RECEIVED.stream().map(r -> (String) JsonPath.read(r, "$.sourceName")))
+                .containsExactly("둘째.md", "셋째.md");
+    }
+
+    @Test
+    void 묶음_오류는_하나도_넣지_않고_횟수도_세지_않는다() throws Exception {
+        expectError(postBatch("{}"), 400, "INVALID_REQUEST");
+        expectError(postBatch("{\"sources\": []}"), 400, "INVALID_REQUEST");
+        expectError(postBatch(batch("1.md", "2.md", "3.md", "4.md", "5.md", "6.md", "7.md", "8.md", "9.md", "10.md",
+                "11.md")), 400, "INVALID_REQUEST");
+        expectError(postBatch("""
+                {"sources": [{"kind": "FILE", "name": "a.md", "text": "a", "activityId": 1}]}"""), 400, "INVALID_REQUEST");
+        expectError(postBatch("""
+                {"sources": [{"kind": "FILE", "name": "a.md", "text": "a"}, {"kind": "HTML", "name": "b.md", "text": "b"}]}"""),
+                400, "INVALID_REQUEST");
+        expectError(postBatch("""
+                {"sources": [{"kind": "FILE", "name": "a.md", "text": "a"}, {"kind": "FILE", "name": "b.md", "text": "  "}]}"""),
+                400, "EMPTY_TEXT");
+        expectError(postBatch("""
+                {"sources": [{"kind": "FILE", "name": "a.md", "text": "a"}, {"kind": "FILE", "name": "b.docx", "text": "b"}]}"""),
+                400, "UNSUPPORTED_FILE_TYPE");
+        expectError(postBatch("""
+                {"sources": [{"kind": "FILE", "name": "a.md", "text": "a"}, {"kind": "FILE", "name": "b.pdf", "text": "b"}]}"""),
+                400, "INVALID_SECTIONS");
+
+        String tooLong = JsonPath.parse(Map.of("sources", List.of(
+                Map.of("kind", "FILE", "name", "a.md", "text", "a"),
+                Map.of("kind", "FILE", "name", "README.md", "text", "가".repeat(50_001))))).jsonString();
+        postBatch(tooLong)
+                .andExpect(status().isContentTooLarge())
+                .andExpect(jsonPath("$.error.code").value("TEXT_TOO_LONG"))
+                .andExpect(jsonPath("$.error.message").value("2번째 자료(README.md): 텍스트가 50000자를 넘습니다"));
+
+        // 남은 횟수 1 < 자료 2 — 일부만 넣지 않는다
+        jdbc.update("update app_user set daily_analysis_limit = 1 where id = ?", TestLogin.USER_ID);
+        expectError(postBatch(batch("a.md", "b.md")), 429, "DAILY_LIMIT_EXCEEDED");
+
+        assertThat(sources.count()).isZero();
+        assertThat(jobs.count()).isZero();
+        assertThat(usage()).isZero();
+        assertThat(RECEIVED).isEmpty();
+    }
+
+    @Test
+    void 폴더_안_경로_이름은_받은_그대로_남는다() throws Exception {
+        String submitted = postBatch(batch("볼트/활동/바꿔요 회고.md", "owner/repo (GitHub).md"))
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        awaitDone(jobId(submitted, 0));
+        awaitDone(jobId(submitted, 1));
+        assertThat(sources.findAll().stream().map(Source::getName))
+                .containsExactlyInAnyOrder("볼트/활동/바꿔요 회고.md", "owner/repo (GitHub).md");
+    }
+
+    // --- 활동에 자료 더하기(S-60) ---
+
+    private static final String ATTACH_REPLY = """
+            {"activities": [
+              {"name": "캡스톤", "period": {"start": "2025", "end": "2025", "ongoing": false},
+               "sameAsActivityId": %d, "category": "PROJECT", "experiences": [
+                 {"content": "README 를 썼다", "competencies": [], "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
+                  "citations": [{"quote": "README", "matched": true, "location": {"startLine": 1, "endLine": 1}}]},
+                 {"content": "배포 문서를 썼다", "competencies": [], "actor": "ME", "sourceStatus": "SOURCE_CONFIRMED",
+                  "citations": [{"quote": "배포", "matched": true, "location": {"startLine": 2, "endLine": 2}}]}]},
+              {"name": "캡스톤 발표", "period": null, "sameAsActivityId": %d, "category": "CLUB", "experiences": [
+                 {"content": "발표를 했다", "competencies": [], "actor": "ME", "sourceStatus": "NEEDS_REVIEW",
+                  "citations": []}]},
+              {"name": "새 동아리", "period": null, "sameAsActivityId": %d, "experiences": []}],
+             "model": "test-model"}""";
+
+    private static final String NOTHING_MATCHES = """
+            {"activities": [{"name": "다른 활동", "period": null, "sameAsActivityId": null, "experiences": []}],
+             "model": "test-model"}""";
+
+    @Test
+    void 자료_더하기는_대상에_바로_붙이고_나머지만_새_활동이_된다() throws Exception {
+        List<Integer> first = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+        long target = first.get(0);
+        long other = first.get(1);
+
+        reply = new FakeReply(200, ATTACH_REPLY.formatted(target, target, other), 0);
+        String submitted = postSource(addTo(target)).andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("ANALYZING"))
+                .andReturn().getResponse().getContentAsString();
+        long sourceId = ((Number) JsonPath.read(submitted, "$.sourceId")).longValue();
+        String done = awaitDone(((Number) JsonPath.read(submitted, "$.jobId")).longValue());
+
+        assertThat(((Number) JsonPath.read(RECEIVED.get(1), "$.targetActivityId")).longValue()).isEqualTo(target);
+        assertThat(((Number) JsonPath.read(done, "$.targetActivityId")).longValue()).isEqualTo(target);
+        assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isTrue();
+        List<Integer> created = JsonPath.read(done, "$.activityIds");
+        assertThat(created).hasSize(1);
+
+        // 대상의 이름 · 기간은 그대로, 붙는 경험은 대상의 경험 뒤에 AI 가 준 순서로, 미분류면 첫 활동의 분류를 가져온다
+        mvc.perform(get("/api/activities/{id}", target))
+                .andExpect(jsonPath("$.name").value("바꿔요 — 캠퍼스 중고거래 앱"))
+                .andExpect(jsonPath("$.period.start").value("2025-03"))
+                .andExpect(jsonPath("$.category").value("PROJECT"))
+                .andExpect(jsonPath("$.categoryBy").value("AI"))
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()))
+                .andExpect(jsonPath("$.experiences.length()").value(6))
+                .andExpect(jsonPath("$.experiences[3].content").value("README 를 썼다"))
+                .andExpect(jsonPath("$.experiences[3].citations[0].sourceId").value(sourceId))
+                .andExpect(jsonPath("$.experiences[4].content").value("배포 문서를 썼다"))
+                .andExpect(jsonPath("$.experiences[5].content").value("발표를 했다"));
+        // 그 밖의 활동은 보통처럼 새 활동 + 제안
+        mvc.perform(get("/api/activities/{id}", created.getFirst()))
+                .andExpect(jsonPath("$.name").value("새 동아리"))
+                .andExpect(jsonPath("$.mergeSuggestion.activityId").value(other));
+        mvc.perform(get("/api/activities")).andExpect(jsonPath("$.activities.length()").value(3));
+    }
+
+    @Test
+    void 자료_더하기는_대상의_분류와_계기를_바꾸지_않는다() throws Exception {
+        List<Integer> first = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+        long target = first.get(0);
+        jdbc.update("update activity set category = 'STUDY', category_by = 'USER', note = '계기' where id = ?", target);
+
+        reply = new FakeReply(200, ATTACH_REPLY.formatted(target, target, null), 0);
+        awaitDone(submit(addTo(target)));
+
+        mvc.perform(get("/api/activities/{id}", target))
+                .andExpect(jsonPath("$.category").value("STUDY"))
+                .andExpect(jsonPath("$.categoryBy").value("USER"))
+                .andExpect(jsonPath("$.note").value("계기"));
+    }
+
+    @Test
+    void 대상과_같은_활동이_없으면_targetMatched_는_false_이고_새_활동으로_남는다() throws Exception {
+        long target = ((Number) JsonPath.read(awaitDone(submitText()), "$.activityIds[0]")).longValue();
+
+        reply = new FakeReply(200, NOTHING_MATCHES, 0);
+        String done = awaitDone(submit(addTo(target)));
+
+        assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isFalse();
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        assertThat((List<?>) JsonPath.read(done, "$.activityIds")).hasSize(1);
+    }
+
+    @Test
+    void 경험이_없는_활동이_붙어도_targetMatched_는_true() throws Exception {
+        long target = ((Number) JsonPath.read(awaitDone(submitText()), "$.activityIds[0]")).longValue();
+
+        reply = new FakeReply(200, """
+                {"activities": [{"name": "캡스톤", "period": null, "sameAsActivityId": %d, "experiences": []}],
+                 "model": "test-model"}""".formatted(target), 0);
+        String done = awaitDone(submit(addTo(target)));
+
+        assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isTrue();
+        assertThat((List<?>) JsonPath.read(done, "$.activityIds")).isEmpty();
+    }
+
+    @Test
+    void 대상은_300개_한도와_상관없이_목록에_실린다() throws Exception {
+        long target = ((Number) JsonPath.read(awaitDone(submitText()), "$.activityIds[0]")).longValue();
+        jdbc.update("""
+                insert into activity (user_id, name, period_start, ongoing, created_at, updated_at)
+                select ?, '활동 ' || n, '2026', false, now(), now() from generate_series(1, 300) n""", TestLogin.USER_ID);
+
+        awaitDone(submit(addTo(target)));
+
+        List<Integer> sent = JsonPath.read(RECEIVED.get(1), "$.existingActivities[*].id");
+        assertThat(sent).hasSize(301);
+        assertThat(sent.getLast()).isEqualTo((int) target);
+    }
+
+    @Test
+    void 분석_중에_대상이_합쳐지면_대상_없이_끝나고_targetMatched_는_false() throws Exception {
+        List<Integer> first = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+        long target = first.get(0);
+        long keep = first.get(1);
+
+        reply = new FakeReply(200, ATTACH_REPLY.formatted(target, target, null), 300);
+        long jobId = submit(addTo(target));
+        awaitReceived(2);
+        mvc.perform(post("/api/activities/{id}/merge", keep).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"fromActivityId\": %d}".formatted(target))).andExpect(status().isOk());
+        String done = awaitDone(jobId);
+
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isFalse();
+        assertThat(((Number) JsonPath.read(done, "$.targetActivityId")).longValue()).isEqualTo(target);
+        assertThat((List<?>) JsonPath.read(done, "$.activityIds")).hasSize(3);
+    }
+
+    @Test
+    void 자료_더하기_다시_시도는_같은_대상으로_돌고_대상이_사라졌으면_대상_없이_돈다() throws Exception {
+        List<Integer> first = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+        long target = first.get(0);
+        long keep = first.get(1);
+
+        reply = new FakeReply(502, """
+                {"error": {"code": "LLM_ERROR", "message": "rate limit"}}""", 0);
+        long jobId = submit(addTo(target));
+        String failed = awaitDone(jobId);
+        assertThat((Object) JsonPath.read(failed, "$.targetMatched")).isNull();
+        assertThat(((Number) JsonPath.read(failed, "$.targetActivityId")).longValue()).isEqualTo(target);
+
+        mvc.perform(post("/api/jobs/{id}/retry", jobId)).andExpect(status().isAccepted());
+        awaitDone(jobId);
+        assertThat(((Number) JsonPath.read(RECEIVED.get(2), "$.targetActivityId")).longValue()).isEqualTo(target);
+
+        mvc.perform(post("/api/activities/{id}/merge", keep).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"fromActivityId\": %d}".formatted(target))).andExpect(status().isOk());
+        reply = new FakeReply(200, NOTHING_MATCHES, 0);
+        mvc.perform(post("/api/jobs/{id}/retry", jobId)).andExpect(status().isAccepted());
+        String done = awaitDone(jobId);
+
+        assertThat((Object) JsonPath.read(RECEIVED.get(3), "$.targetActivityId")).isNull();
+        assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isFalse();
+    }
+
+    @Test
+    void 대상이_없는_활동이면_404_이고_원본도_횟수도_남지_않는다() throws Exception {
+        expectError(postSource(addTo(999_999)), 404, "ACTIVITY_NOT_FOUND");
+        assertThat(sources.count()).isZero();
+        assertThat(usage()).isZero();
+    }
+
     // --- 오류 ---
 
     @Test
@@ -612,6 +923,44 @@ class AnalysisJobApiTest {
         return ((Number) JsonPath.read(body, "$.jobId")).longValue();
     }
 
+    private ResultActions postBatch(String json) throws Exception {
+        return mvc.perform(post("/api/sources/batch").contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private static void awaitReceived(int count) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (RECEIVED.size() < count) {
+            if (System.currentTimeMillis() > deadline) {
+                throw new AssertionError("AI 요청이 " + count + "개 오지 않았습니다");
+            }
+            Thread.sleep(10);
+        }
+    }
+
+    private static String batch(String... names) {
+        List<Map<String, String>> elements = java.util.Arrays.stream(names)
+                .map(name -> Map.of("kind", "FILE", "name", name, "text", "내용")).toList();
+        return JsonPath.parse(Map.of("sources", elements)).jsonString();
+    }
+
+    private static String addTo(long activityId) {
+        return "{\"kind\": \"TEXT\", \"name\": null, \"text\": \"더하는 자료\", \"activityId\": %d}".formatted(activityId);
+    }
+
+    private static long jobId(String submitted, int index) {
+        return ((Number) JsonPath.read(submitted, "$.items[" + index + "].jobId")).longValue();
+    }
+
+    private Source savedSource(String name) {
+        return sources.save(new Source(TestLogin.USER_ID, SourceKind.TEXT, name, "내용"));
+    }
+
+    private int usage() {
+        Integer used = jdbc.queryForObject("select coalesce(sum(count), 0)::int from analysis_usage where user_id = ?",
+                Integer.class, TestLogin.USER_ID);
+        return used == null ? 0 : used;
+    }
+
     private ResultActions postSource(String json) throws Exception {
         return mvc.perform(post("/api/sources").contentType(MediaType.APPLICATION_JSON).content(json));
     }
@@ -623,7 +972,8 @@ class AnalysisJobApiTest {
             String body = mvc.perform(get("/api/jobs/{id}", jobId))
                     .andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString();
-            if (!"ANALYZING".equals(JsonPath.read(body, "$.status"))) {
+            String status = JsonPath.read(body, "$.status");
+            if (!"ANALYZING".equals(status) && !"QUEUED".equals(status)) {
                 return body;
             }
             Thread.sleep(50);

@@ -30,6 +30,14 @@ public class JobController {
         return submitted;
     }
 
+    @PostMapping("/sources/batch")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public JobResponses.Batch submitBatch(@RequestBody AnalysisService.BatchRequest request) {
+        JobResponses.Batch batch = service.submitBatch(request);
+        runner.run(batch.items().getFirst().jobId()); // 나머지는 앞 작업이 끝나면 이어 돈다
+        return batch;
+    }
+
     @GetMapping("/jobs/{jobId}")
     public JobResponses.Job get(@PathVariable long jobId) {
         return service.get(jobId);

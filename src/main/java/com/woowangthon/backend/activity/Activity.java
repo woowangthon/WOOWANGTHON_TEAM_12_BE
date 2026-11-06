@@ -97,6 +97,13 @@ public class Activity {
         this.categoryBy = category == null ? null : CategoryBy.AI;
     }
 
+    /** 자료 더하기(S-60) — 미분류일 때만 붙는 활동의 AI 분류를 받는다. 합치기와 같은 규칙이다. */
+    public void categorizeByAiIfNone(ActivityCategory category) {
+        if (this.category == null) {
+            categorizeByAi(category);
+        }
+    }
+
     /** 사용자가 고르거나 비운다(S-57). 값이 실제로 바뀔 때만 USER — 같은 값이면 출처도 그대로. */
     public void chooseCategory(ActivityCategory category) {
         if (category == null) {

@@ -72,6 +72,17 @@ class WorkApiTest {
     }
 
     @Test
+    void 차례를_기다리는_자료는_진행_중이고_시작은_만든_시각이다() throws Exception {
+        long queued = job(userId, source(userId, "README.md"), "QUEUED", null, "1 minute");
+
+        mvc.perform(get("/api/work"))
+                .andExpect(jsonPath("$.inProgress[*].key", contains("SOURCE_ANALYSIS:" + queued)))
+                .andExpect(jsonPath("$.inProgress[0].status").value("QUEUED"))
+                .andExpect(jsonPath("$.inProgress[0].finishedAt", nullValue()))
+                .andExpect(jsonPath("$.recent", hasSize(0)));
+    }
+
+    @Test
     void 다섯_종류의_진행_중인_일을_시작이_최근인_것부터() throws Exception {
         long source = source(userId, "바꿔요-회고.md");
         long job = job(userId, source, "ANALYZING", null, "5 hours");

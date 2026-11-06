@@ -17,11 +17,17 @@ public final class JobResponses {
     public record Submitted(Long sourceId, Long jobId, JobStatus status) {
     }
 
+    /** 계약 「POST /api/sources/batch」 — 요청 순서 그대로. */
+    public record Batch(List<Submitted> items) {
+    }
+
     public record Job(
             Long jobId,
             Long sourceId,
             JobStatus status,
             List<Long> activityIds,
+            Long targetActivityId,
+            Boolean targetMatched,
             ErrorResponse.Error error,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt) {
@@ -30,8 +36,8 @@ public final class JobResponses {
             ErrorResponse.Error error = j.getErrorCode() == null
                     ? null
                     : new ErrorResponse.Error(j.getErrorCode(), j.getErrorMessage());
-            return new Job(j.getId(), j.getSource().getId(), j.getStatus(), List.copyOf(j.getActivityIds()), error,
-                    seoul(j.getCreatedAt()), seoul(j.getUpdatedAt()));
+            return new Job(j.getId(), j.getSource().getId(), j.getStatus(), List.copyOf(j.getActivityIds()),
+                    j.getTargetActivityId(), j.getTargetMatched(), error, seoul(j.getCreatedAt()), seoul(j.getUpdatedAt()));
         }
 
         // 계약 예시처럼 "2026-11-03T14:05:00+09:00" 으로 내보낸다

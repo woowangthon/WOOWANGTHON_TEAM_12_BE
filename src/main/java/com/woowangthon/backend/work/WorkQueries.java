@@ -23,10 +23,10 @@ class WorkQueries {
             select j.id, j.status, left(s.name, %s) as label, j.error_code, s.id as source_id,
                    null::bigint as application_id, null::bigint as question_id,
                    case when j.status = 'ANALYZING' then j.updated_at else j.created_at end as started_at,
-                   case when j.status <> 'ANALYZING' then j.updated_at end as finished_at
+                   case when j.status not in ('QUEUED', 'ANALYZING') then j.updated_at end as finished_at
             from analysis_job j
             join source s on s.id = j.source_id
-            where j.user_id = ? and (j.status = 'ANALYZING' or j.updated_at >= ?)
+            where j.user_id = ? and (j.status in ('QUEUED', 'ANALYZING') or j.updated_at >= ?)
             """.formatted(LABEL_HEAD);
 
     private static final String MATCH = """

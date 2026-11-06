@@ -41,6 +41,12 @@ public class AnalysisJob {
     @Column(nullable = false)
     private JobStatus status;
 
+    // 활동에 자료 더하기(S-60) — 넣을 때 고른 활동. 대상이 지워져도 그대로 남는다
+    private Long targetActivityId;
+
+    // COMPLETED 이고 대상이 있을 때만 true · false
+    private Boolean targetMatched;
+
     private String errorCode;
 
     private String errorMessage;
@@ -68,8 +74,23 @@ public class AnalysisJob {
         this.status = JobStatus.ANALYZING;
     }
 
-    public void complete(List<Long> createdActivityIds) {
+    /** 활동에 자료 더하기(S-60). */
+    public static AnalysisJob forActivity(Long userId, Source source, Long targetActivityId) {
+        AnalysisJob job = new AnalysisJob(userId, source);
+        job.targetActivityId = targetActivityId;
+        return job;
+    }
+
+    /** 묶음의 2번째 이후(S-59) — 앞 작업이 끝날 때까지 기다린다. */
+    public static AnalysisJob queued(Long userId, Source source) {
+        AnalysisJob job = new AnalysisJob(userId, source);
+        job.status = JobStatus.QUEUED;
+        return job;
+    }
+
+    public void complete(List<Long> createdActivityIds, Boolean targetMatched) {
         status = JobStatus.COMPLETED;
+        this.targetMatched = targetMatched;
         activityIds.clear();
         activityIds.addAll(createdActivityIds);
         errorCode = null;
@@ -104,6 +125,14 @@ public class AnalysisJob {
 
     public JobStatus getStatus() {
         return status;
+    }
+
+    public Long getTargetActivityId() {
+        return targetActivityId;
+    }
+
+    public Boolean getTargetMatched() {
+        return targetMatched;
     }
 
     public String getErrorCode() {

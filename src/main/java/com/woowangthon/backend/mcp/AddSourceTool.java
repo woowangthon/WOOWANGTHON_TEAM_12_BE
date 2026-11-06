@@ -87,7 +87,7 @@ public class AddSourceTool implements McpWriteTool {
             throw ApiException.invalidRequest("text 는 문자열이어야 합니다");
         }
         JobResponses.Submitted submitted = analyses.submit(
-                new AnalysisService.SourceRequest("TEXT", null, text.isString() ? text.asString() : null, null));
+                new AnalysisService.SourceRequest("TEXT", null, text.isString() ? text.asString() : null, null, null));
         return new Written(Map.of("sourceId", submitted.sourceId(), "jobId", submitted.jobId()),
                 () -> extractions.run(submitted.jobId()));
     }
