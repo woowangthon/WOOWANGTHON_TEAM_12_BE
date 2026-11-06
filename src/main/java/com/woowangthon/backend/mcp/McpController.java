@@ -114,7 +114,8 @@ public class McpController {
         connections.rememberClient(owner.tokenId(), client.isString() ? client.asString() : null);
 
         String requested = params.path("protocolVersion").isString() ? params.path("protocolVersion").asString() : null;
-        String version = PROTOCOL_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSIONS.getFirst();
+        // 버전이 없으면(null) 모르는 버전과 같다 — List.of 의 contains(null) 은 NullPointerException 이라 먼저 거른다(BE#106)
+        String version = requested != null && PROTOCOL_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSIONS.getFirst();
         return Map.of(
                 "protocolVersion", version,
                 "capabilities", Map.of("tools", Map.of("listChanged", false)),

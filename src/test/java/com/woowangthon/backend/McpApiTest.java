@@ -184,6 +184,16 @@ class McpApiTest {
     }
 
     @Test
+    void 버전이_없거나_문자열이_아니어도_지원하는_최신으로_답한다() throws Exception {
+        rpc(token, "initialize", "{}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.protocolVersion").value("2025-11-25"));
+        rpc(token, "initialize", "{\"protocolVersion\":20250618}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.protocolVersion").value("2025-11-25"));
+    }
+
+    @Test
     void 알림은_본문_없이_202() throws Exception {
         client.perform(post("/mcp/{token}", token).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"))
