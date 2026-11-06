@@ -42,6 +42,8 @@ public class McpChange {
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    private OffsetDateTime decidedAt;
+
     private Long sourceId;
 
     private Long jobId;
@@ -88,7 +90,73 @@ public class McpChange {
         return change;
     }
 
+    void undo() {
+        status = McpChangeStatus.UNDONE;
+        decidedAt = OffsetDateTime.now();
+    }
+
+    void confirm() {
+        status = McpChangeStatus.CONFIRMED;
+        decidedAt = OffsetDateTime.now();
+    }
+
     public Long getId() {
         return id;
+    }
+
+    public McpChangeType getType() {
+        return type;
+    }
+
+    public String getClient() {
+        return client;
+    }
+
+    public McpChangeStatus getStatus() {
+        return status;
+    }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public OffsetDateTime getDecidedAt() {
+        return decidedAt;
+    }
+
+    public Long getSourceId() {
+        return sourceId;
+    }
+
+    public Long getJobId() {
+        return jobId;
+    }
+
+    public Long getExperienceId() {
+        return experienceId;
+    }
+
+    public Long getActivityId() {
+        return activityId;
+    }
+
+    public String getActivityName() {
+        return activityName;
+    }
+
+    public String getBeforeContent() {
+        return beforeContent;
+    }
+
+    public String getAfterContent() {
+        return afterContent;
+    }
+
+    public SourceStatus getBeforeSourceStatus() {
+        return beforeSourceStatus;
     }
 }
