@@ -8,6 +8,7 @@ import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.question.Question;
 import java.util.List;
 import org.hibernate.Hibernate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -87,6 +88,25 @@ public class ExperienceService {
             activity.getExperiences().add(experience);
         }
         return experience;
+    }
+
+    /** 프로필에 넣기 · 빼기(share-api.md 「PUT .../shared」). 빼기는 언제나 되고, 넣기는 「확인 필요」면 막는다. */
+    @Transactional
+    public ExperienceResponse setShared(long experienceId, PatchBody body) {
+        Boolean shared = body.bool("shared").map(PatchBody.Field::value).orElse(null);
+        if (shared == null) {
+            throw ApiException.invalidRequest("shared 가 없습니다");
+        }
+        // 외부 AI 고치기가 같이 들어와도 지금 출처 상태로 정하게 잠근다
+        Experience experience = experiences.findOwnedForUpdate(experienceId, CurrentUser.id())
+                .orElseThrow(() -> ApiException.notFound("EXPERIENCE_NOT_FOUND",
+                        "경험 " + experienceId + " 이(가) 없습니다"));
+        if (shared && experience.getSourceStatus() == SourceStatus.NEEDS_REVIEW) {
+            throw new ApiException(HttpStatus.CONFLICT, "EXPERIENCE_NEEDS_REVIEW", "확인이 필요한 경험은 넣을 수 없습니다");
+        }
+        experience.setShared(shared);
+        experiences.flush();
+        return ExperienceResponse.from(experience);
     }
 
     /** 경험과 그 근거 · 보완을 지운다. 원본과 활동은 남는다(계약 「경험 지우기」 · S-11). */

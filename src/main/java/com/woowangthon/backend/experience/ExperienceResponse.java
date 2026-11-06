@@ -18,6 +18,7 @@ public record ExperienceResponse(
         CompetenciesBy competenciesBy,
         Actor actor,
         SourceStatus sourceStatus,
+        boolean shared,
         List<CitationResponse> citations,
         List<SupplementResponse> supplements,
         McpChangeRef mcpChange,
@@ -100,7 +101,7 @@ public record ExperienceResponse(
 
     public static ExperienceResponse from(Experience e) {
         return new ExperienceResponse(e.getId(), e.getActivity().getId(), e.getContent(), e.getCompetencies(),
-                e.getCompetenciesBy(), e.getActor(), e.getSourceStatus(), e.getCitations().stream().map(CitationResponse::from).toList(),
+                e.getCompetenciesBy(), e.getActor(), e.getSourceStatus(), e.isShared(), e.getCitations().stream().map(CitationResponse::from).toList(),
                 e.getSupplements().stream().map(SupplementResponse::from).toList(), McpChangeRef.of(e),
                 Origin.of(e.getOriginQuestion()));
     }

@@ -2,8 +2,12 @@ package com.woowangthon.backend.activity;
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.woowangthon.backend.common.Times;
+import com.woowangthon.backend.experience.Actor;
+import com.woowangthon.backend.experience.CompetenciesBy;
+import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceResponse;
+import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.question.ApplicationStatus;
 import com.woowangthon.backend.question.RecommendationRepository.UsedInRow;
 import java.time.OffsetDateTime;
@@ -107,11 +111,24 @@ public final class ActivityResponses {
     public record McpTimeline(List<McpSummary> activities) {
     }
 
-    public record McpDetail(Long id, String name, Period period, List<ExperienceResponse> experiences) {
+    /** 앱의 Experience 에서 shared 를 뺀 것 — 공개 프로필 선택은 외부 AI 에 보이지 않는다(share-api.md). */
+    public record McpExperience(Long id, Long activityId, String content, List<Competency> competencies,
+            CompetenciesBy competenciesBy, Actor actor, SourceStatus sourceStatus,
+            List<ExperienceResponse.CitationResponse> citations, List<ExperienceResponse.SupplementResponse> supplements,
+            ExperienceResponse.McpChangeRef mcpChange, ExperienceResponse.Origin origin) {
+
+        static McpExperience from(Experience e) {
+            ExperienceResponse r = ExperienceResponse.from(e);
+            return new McpExperience(r.id(), r.activityId(), r.content(), r.competencies(), r.competenciesBy(),
+                    r.actor(), r.sourceStatus(), r.citations(), r.supplements(), r.mcpChange(), r.origin());
+        }
+    }
+
+    public record McpDetail(Long id, String name, Period period, List<McpExperience> experiences) {
 
         public static McpDetail from(Activity a) {
             return new McpDetail(a.getId(), a.getName(), a.getPeriod(),
-                    a.getExperiences().stream().map(ExperienceResponse::from).toList());
+                    a.getExperiences().stream().map(McpExperience::from).toList());
         }
     }
 }

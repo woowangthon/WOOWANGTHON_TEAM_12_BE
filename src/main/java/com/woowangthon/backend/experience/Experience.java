@@ -81,6 +81,10 @@ public class Experience {
 
     private String mcpClient;
 
+    // 공개 프로필에 넣었나(S-65) — 웹에서 사용자만 바꾼다. 내용을 고친 게 아니라 출처 상태를 건드리지 않는다
+    @Column(nullable = false)
+    private boolean shared;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -163,6 +167,14 @@ public class Experience {
     /** 확정 답에서 왔다고 표시한다 — 만들 때 한 번만. */
     public void markFromAnswer(Question question) {
         this.originQuestion = question;
+    }
+
+    public boolean isShared() {
+        return shared;
+    }
+
+    public void setShared(boolean shared) {
+        this.shared = shared;
     }
 
     public Long getMcpChangeId() {
