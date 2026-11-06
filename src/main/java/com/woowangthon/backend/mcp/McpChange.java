@@ -61,6 +61,12 @@ public class McpChange {
     @Enumerated(EnumType.STRING)
     private SourceStatus beforeSourceStatus;
 
+    private Long applicationId;
+
+    private String organization;
+
+    private Integer questionCount;
+
     protected McpChange() {
     }
 
@@ -87,6 +93,16 @@ public class McpChange {
         change.beforeContent = before.getContent();
         change.afterContent = afterContent;
         change.beforeSourceStatus = before.getSourceStatus();
+        return change;
+    }
+
+    /** organization · questionCount 는 만들 때 값이다 — 되돌려 지원이 지워져도 기록에 남는다. */
+    static McpChange createApplication(long userId, String client, long applicationId, String organization,
+            int questionCount) {
+        McpChange change = new McpChange(userId, McpChangeType.CREATE_APPLICATION, client);
+        change.applicationId = applicationId;
+        change.organization = organization;
+        change.questionCount = questionCount;
         return change;
     }
 
@@ -158,5 +174,17 @@ public class McpChange {
 
     public SourceStatus getBeforeSourceStatus() {
         return beforeSourceStatus;
+    }
+
+    public Long getApplicationId() {
+        return applicationId;
+    }
+
+    public String getOrganization() {
+        return organization;
+    }
+
+    public Integer getQuestionCount() {
+        return questionCount;
     }
 }

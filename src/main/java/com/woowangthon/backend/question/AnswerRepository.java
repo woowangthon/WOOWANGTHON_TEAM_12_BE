@@ -2,6 +2,7 @@ package com.woowangthon.backend.question;
 
 import com.woowangthon.backend.job.JobStatus;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,6 +19,9 @@ public interface AnswerRepository extends JpaRepository<Answer, Long> {
     Optional<Answer> lockByQuestionId(Long questionId);
 
     List<Answer> findByNewFactsStatus(JobStatus status);
+
+    @Query("select a.questionId from Answer a where a.questionId in :questionIds")
+    List<Long> findQuestionIds(Collection<Long> questionIds);
 
     /**
      * 비슷한 확정 답변(S-43)의 후보 — 그 사용자의 확정 답 전부와 그 문항 · 지원. 기준 문항 자신의 답은 뺀다(같은 지원의 다른 문항은 넣는다).

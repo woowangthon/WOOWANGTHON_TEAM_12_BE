@@ -82,7 +82,13 @@ public class QuestionService {
 
     @Transactional(readOnly = true)
     public QuestionResponses.Detail get(long questionId) {
-        Question question = questions.findByIdAndUserId(questionId, CurrentUser.id())
+        return get(CurrentUser.id(), questionId);
+    }
+
+    /** 외부 AI 는 세션 없이 사용자를 넘긴다. */
+    @Transactional(readOnly = true)
+    public QuestionResponses.Detail get(long userId, long questionId) {
+        Question question = questions.findByIdAndUserId(questionId, userId)
                 .orElseThrow(() -> notFound(questionId));
         return detail(question);
     }

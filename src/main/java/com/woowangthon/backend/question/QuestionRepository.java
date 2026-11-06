@@ -25,6 +25,11 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     @Query("select q from Question q where q.id = :id")
     Optional<Question> lockById(Long id);
 
+    // 외부 AI 가 만든 지원을 되돌리는 동안 다시 시도 · 초안이 끼어들지 않게 잠근다
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select q from Question q where q.application.id = :applicationId order by q.id")
+    List<Question> lockByApplicationId(Long applicationId);
+
     List<Question> findByStatus(JobStatus status);
 
     long countByApplicationId(Long applicationId);

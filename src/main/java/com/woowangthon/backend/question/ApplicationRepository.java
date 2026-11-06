@@ -1,6 +1,7 @@
 package com.woowangthon.backend.question;
 
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,4 +19,7 @@ public interface ApplicationRepository extends JpaRepository<Application, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Application a where a.id = :id and a.userId = :userId")
     Optional<Application> findForUpdate(Long id, Long userId);
+
+    @Query("select distinct a from Application a left join fetch a.questions where a.id in :ids and a.userId = :userId")
+    List<Application> findAllWithQuestions(Collection<Long> ids, Long userId);
 }
