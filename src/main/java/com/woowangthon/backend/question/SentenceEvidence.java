@@ -59,13 +59,13 @@ public class SentenceEvidence {
         return evidence.stream().map(v -> current.get(key(v.getType(), v.getRefId()))).filter(Objects::nonNull).toList();
     }
 
-    /** AI 에 싣는 경험 — 근거는 원본에서 찾은 것만(「원문」으로 칠하지 않게), 보완은 전부. */
+    /** AI 에 싣는 경험 — 근거는 원본에서 찾은 것만(「원문」으로 칠하지 않게), 보완은 확인 전인 외부 AI 답만 빼고 전부(S-56). */
     static MatchRequest.ExperiencePart matchedPart(Experience e) {
         return new MatchRequest.ExperiencePart(e.getId(), e.getActivity().getName(), e.getActivity().getPeriod(),
                 e.getContent(), e.getCompetencies(), e.getActor(), e.getSourceStatus(),
                 e.getCitations().stream().filter(c -> Boolean.TRUE.equals(c.getMatched()))
                         .map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
-                e.getSupplements().stream()
+                e.getConfirmedSupplements().stream()
                         .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList());
     }
 

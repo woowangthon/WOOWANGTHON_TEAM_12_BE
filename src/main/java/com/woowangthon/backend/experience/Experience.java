@@ -234,4 +234,9 @@ public class Experience {
     public List<Supplement> getSupplements() {
         return supplements;
     }
+
+    /** AI 에 근거로 보내도 되는 보완 — 외부 AI 를 거쳐 아직 확인 전인 답은 뺀다(S-56). */
+    public List<Supplement> getConfirmedSupplements() {
+        return supplements.stream().filter(Supplement::isConfirmed).toList();
+    }
 }

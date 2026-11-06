@@ -63,8 +63,8 @@ public class UpdateExperienceTool implements McpTool {
                 .orElseThrow(() -> McpToolException.invalidArgument("experienceId 가 없습니다"));
         String expected = McpArgs.string(arguments, "expectedContent")
                 .orElseThrow(() -> McpToolException.invalidArgument("expectedContent 가 없습니다"));
-        String content = text(arguments, "content", MAX_CONTENT);
-        String reason = text(arguments, "reason", MAX_REASON);
+        String content = McpArgs.text(arguments, "content", MAX_CONTENT);
+        String reason = McpArgs.text(arguments, "reason", MAX_REASON);
         if (content.equals(expected)) {
             throw McpToolException.invalidArgument("content 가 expectedContent 와 같습니다");
         }
@@ -73,17 +73,5 @@ public class UpdateExperienceTool implements McpTool {
                 expected, content, reason);
         return Map.of("changeId", updated.changeId(), "experienceId", updated.experienceId(),
                 "sourceStatus", updated.sourceStatus());
-    }
-
-    private static String text(JsonNode arguments, String name, int max) {
-        String value = McpArgs.string(arguments, name)
-                .orElseThrow(() -> McpToolException.invalidArgument(name + " 이(가) 없습니다"));
-        if (value.isBlank()) {
-            throw McpToolException.invalidArgument(name + " 이(가) 비었습니다");
-        }
-        if (value.length() > max) {
-            throw McpToolException.invalidArgument(name + " 은(는) " + max + "자 이하여야 합니다");
-        }
-        return value;
     }
 }

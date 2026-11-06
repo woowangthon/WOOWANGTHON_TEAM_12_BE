@@ -121,6 +121,7 @@ class DraftApiTest {
     static final String S3 = "스터디원 6명의 풀이를 매주 리뷰했습니다.";
     static final String QUOTE = "채팅 메시지가 늦게 도착하는 문제가 있었다. 내가 폴링을 WebSocket 으로 바꿔 해결했다.";
     static final String ANSWER = "서버에 STOMP 엔드포인트를 만들고, 앱의 3초 폴링 코드를 구독 방식으로 바꿨다";
+    static final String PENDING_ANSWER = "외부 AI 가 전한 아직 확인 전인 답";
     static final String ASK = "WebSocket 으로 바꾼 뒤 메시지가 제때 오는지 어떻게 확인했나요?";
 
     @Autowired
@@ -256,6 +257,28 @@ class DraftApiTest {
         start(chat, study).andExpect(status().isAccepted());
 
         assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+    }
+
+    // 답이 있는 되묻기를 넣고 외부 AI 로 답한다 — 그 뒤 만든 초안 요청에 실리는지 본다
+    private long answeredByExternalAi() {
+        long asked = jdbc.queryForObject("insert into clarification (question_id, position, experience_id, question) "
+                + "values (?, 0, ?, '외부 AI 되묻기') returning id", Long.class, questionId, chat);
+        return mcpWrites.answerClarification(TestLogin.USER_ID, "claude-ai", asked, PENDING_ANSWER).changeId();
+    }
+
+    @Test
+    void 외부_AI_가_전한_답은_확인_전엔_초안_요청에_실리지_않고_맞아요_뒤에_실린다() throws Exception {
+        long change = answeredByExternalAi();
+
+        start(chat, study).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat(RECEIVED.getFirst()).doesNotContain(PENDING_ANSWER).contains(ANSWER);
+
+        mcpChanges.confirm(TestLogin.USER_ID, change);
+        RECEIVED.clear();
+        start(chat, study).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat(RECEIVED.getFirst()).contains(PENDING_ANSWER);
     }
 
     @AfterEach

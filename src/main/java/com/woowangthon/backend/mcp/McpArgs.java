@@ -22,6 +22,18 @@ final class McpArgs {
         return Optional.of(value.asString());
     }
 
+    /** 필수 글 — 빠졌거나 비었거나 max 자를 넘으면 INVALID_ARGUMENT. */
+    static String text(JsonNode args, String name, int max) {
+        String value = string(args, name).orElseThrow(() -> McpToolException.invalidArgument(name + " 이(가) 없습니다"));
+        if (value.isBlank()) {
+            throw McpToolException.invalidArgument(name + " 이(가) 비었습니다");
+        }
+        if (value.length() > max) {
+            throw McpToolException.invalidArgument(name + " 은(는) " + max + "자 이하여야 합니다");
+        }
+        return value;
+    }
+
     static Optional<List<String>> strings(JsonNode args, String name) {
         JsonNode value = args.path(name);
         if (value.isMissingNode() || value.isNull()) {

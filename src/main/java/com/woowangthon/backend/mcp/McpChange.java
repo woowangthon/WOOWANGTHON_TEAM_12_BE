@@ -2,6 +2,7 @@ package com.woowangthon.backend.mcp;
 
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.SourceStatus;
+import com.woowangthon.backend.experience.Supplement;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -67,6 +68,12 @@ public class McpChange {
 
     private Integer questionCount;
 
+    private Long supplementId;
+
+    private String question;
+
+    private String answer;
+
     protected McpChange() {
     }
 
@@ -103,6 +110,18 @@ public class McpChange {
         change.applicationId = applicationId;
         change.organization = organization;
         change.questionCount = questionCount;
+        return change;
+    }
+
+    /** question · answer 는 전한 때 값이다 — 되돌려 보완이 지워져도 기록에 남는다. */
+    static McpChange answerClarification(long userId, String client, Experience experience, Supplement supplement) {
+        McpChange change = new McpChange(userId, McpChangeType.ANSWER_CLARIFICATION, client);
+        change.experienceId = experience.getId();
+        change.activityId = experience.getActivity().getId();
+        change.activityName = experience.getActivity().getName();
+        change.supplementId = supplement.getId();
+        change.question = supplement.getQuestion();
+        change.answer = supplement.getAnswer();
         return change;
     }
 
@@ -186,5 +205,17 @@ public class McpChange {
 
     public Integer getQuestionCount() {
         return questionCount;
+    }
+
+    public Long getSupplementId() {
+        return supplementId;
+    }
+
+    public String getQuestion() {
+        return question;
+    }
+
+    public String getAnswer() {
+        return answer;
     }
 }

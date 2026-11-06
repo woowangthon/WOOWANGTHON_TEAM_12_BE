@@ -1,9 +1,11 @@
 package com.woowangthon.backend.experience;
 
+import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
@@ -17,6 +19,11 @@ public interface SupplementRepository extends JpaRepository<Supplement, Long> {
     @Query("select s from Supplement s join fetch s.experience e join fetch e.activity a "
             + "where s.id = :id and a.userId = :userId")
     Optional<Supplement> findOwned(Long id, Long userId);
+
+    // 외부 AI 답의 맞아요 · 되돌리기와 웹 고치기가 겹쳐도 한쪽씩 지금 값을 보게 행을 잠근다
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Supplement s where s.id = :id and s.experience.activity.userId = :userId")
+    Optional<Supplement> findOwnedForUpdate(Long id, Long userId);
 
     // ── 추천 근거 줄 정리(BE#37) ───────────────────────────────────────────────
     // 근거 줄의 ref_id 는 근거 · 보완 번호를 함께 담아 외래 키가 없다 — 보완을 지울 때 여기서 지운다.

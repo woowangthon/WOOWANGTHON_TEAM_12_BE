@@ -24,11 +24,15 @@ public record ExperienceResponse(
         McpChangeRef mcpChange,
         Origin origin) {
 
-    /** 외부 AI 가 고쳐 사용자가 아직 정하지 않은 경험만(S-53), 그 밖은 null. AI 서버 요청에는 싣지 않는다. */
+    /** 외부 AI 가 고쳤거나(S-53) 전해(S-56) 사용자가 아직 정하지 않은 경험 · 보완만, 그 밖은 null. AI 서버 요청에는 싣지 않는다. */
     public record McpChangeRef(Long changeId, String client) {
 
         static McpChangeRef of(Experience e) {
             return e.getMcpChangeId() == null ? null : new McpChangeRef(e.getMcpChangeId(), e.getMcpClient());
+        }
+
+        static McpChangeRef of(Supplement s) {
+            return s.getMcpChangeId() == null ? null : new McpChangeRef(s.getMcpChangeId(), s.getMcpClient());
         }
     }
 
@@ -84,18 +88,19 @@ public record ExperienceResponse(
         }
     }
 
-    /** 계약의 Supplement 모양 — 늘 「내가 입력」이라 출처 칸이 없다. */
+    /** 계약의 Supplement 모양 — mcpChange 가 없으면 「내가 입력」이라 출처 칸이 없다. */
     public record SupplementResponse(
             Long id,
             String question,
             String answer,
             Long questionId,
             OffsetDateTime createdAt,
-            OffsetDateTime updatedAt) {
+            OffsetDateTime updatedAt,
+            McpChangeRef mcpChange) {
 
         public static SupplementResponse from(Supplement s) {
             return new SupplementResponse(s.getId(), s.getQuestion(), s.getAnswer(), s.getQuestionId(),
-                    Times.seoul(s.getCreatedAt()), Times.seoul(s.getUpdatedAt()));
+                    Times.seoul(s.getCreatedAt()), Times.seoul(s.getUpdatedAt()), McpChangeRef.of(s));
         }
     }
 

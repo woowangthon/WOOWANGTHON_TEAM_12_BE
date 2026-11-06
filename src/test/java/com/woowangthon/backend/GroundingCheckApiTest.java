@@ -231,6 +231,24 @@ class GroundingCheckApiTest {
         assertThat((String) JsonPath.read(awaitDone(), "$.groundingCheck.status")).isEqualTo("COMPLETED");
     }
 
+    @Test
+    void 외부_AI_가_전한_답은_확인_전엔_근거_점검_요청에_실리지_않고_맞아요_뒤에_실린다() throws Exception {
+        long asked = jdbc.queryForObject("insert into clarification (question_id, position, experience_id, question) "
+                + "values (?, 0, ?, '외부 AI 되묻기') returning id", Long.class, questionId, chat);
+        long change = mcpWrites.answerClarification(TestLogin.USER_ID, "claude-ai", asked, "외부 AI 가 전한 아직 확인 전인 답")
+                .changeId();
+
+        start(TEXT).andExpect(status().isAccepted());
+        awaitDone();
+        assertThat(RECEIVED.getFirst()).doesNotContain("외부 AI 가 전한 아직 확인 전인 답");
+
+        mcpChanges.confirm(TestLogin.USER_ID, change);
+        RECEIVED.clear();
+        start(TEXT).andExpect(status().isAccepted());
+        awaitDone();
+        assertThat(RECEIVED.getFirst()).contains("외부 AI 가 전한 아직 확인 전인 답");
+    }
+
     @AfterEach
     void cleanUp() {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
