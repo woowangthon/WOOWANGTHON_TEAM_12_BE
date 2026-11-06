@@ -27,7 +27,7 @@ public final class McpChangeResponses {
     public record Confirmed(Change change) {
     }
 
-    /** experience · source · application · supplement 중 type 에 맞는 칸 하나만 찬다. supplement 는 BE#94 가 채운다. */
+    /** experience · source · application · supplement 중 type 에 맞는 칸 하나만 찬다. */
     public record Change(
             Long id,
             McpChangeType type,
@@ -41,7 +41,7 @@ public final class McpChangeResponses {
             ExperienceChange experience,
             SourceChange source,
             ApplicationChange application,
-            Object supplement) {
+            SupplementChange supplement) {
     }
 
     public record ExperienceChange(Long id, Long activityId, String activityName, String beforeContent,
@@ -52,5 +52,8 @@ public final class McpChangeResponses {
     }
 
     public record ApplicationChange(Long id, String organization, int questionCount, int analyzingCount) {
+    }
+
+    public record SupplementChange(Long id, Long experienceId, String activityName, String question, String answer) {
     }
 }

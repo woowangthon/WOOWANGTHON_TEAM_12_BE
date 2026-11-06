@@ -11,7 +11,8 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface McpChangeRepository extends JpaRepository<McpChange, Long> {
 
-    long countByUserIdAndTypeAndCreatedAtGreaterThanEqual(Long userId, McpChangeType type, OffsetDateTime from);
+    long countByUserIdAndTypeInAndCreatedAtGreaterThanEqual(Long userId, Collection<McpChangeType> types,
+            OffsetDateTime from);
 
     List<McpChange> findTop100ByUserIdOrderByCreatedAtDescIdDesc(Long userId);
 
@@ -20,9 +21,9 @@ public interface McpChangeRepository extends JpaRepository<McpChange, Long> {
     @Query("select c from McpChange c where c.id = :id and c.userId = :userId")
     Optional<McpChange> findOwnedForUpdate(Long id, Long userId);
 
-    // 이 변경 바로 앞에서 아직 정하지 않은 고치기
-    Optional<McpChange> findFirstByExperienceIdAndStatusAndIdLessThanOrderByIdDesc(Long experienceId,
-            McpChangeStatus status, Long id);
+    // 이 변경 바로 앞에서 아직 정하지 않은 고치기 — 같은 경험에 달린 되묻기 답은 건너뛴다
+    Optional<McpChange> findFirstByExperienceIdAndTypeAndStatusAndIdLessThanOrderByIdDesc(Long experienceId,
+            McpChangeType type, McpChangeStatus status, Long id);
 
     @Query("select distinct c.experienceId from McpChange c where c.experienceId in :experienceIds")
     List<Long> findExperienceIdsWithChange(Collection<Long> experienceIds);

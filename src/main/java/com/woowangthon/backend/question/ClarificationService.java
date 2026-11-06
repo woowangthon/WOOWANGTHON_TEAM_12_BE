@@ -41,8 +41,13 @@ public class ClarificationService {
 
     @Transactional
     public Answered answer(long clarificationId, AnswerRequest request) {
+        return answer(CurrentUser.id(), clarificationId, request);
+    }
+
+    /** 외부 AI 는 세션 없이 사용자를 넘긴다 — 웹과 같은 코드다(S-56). */
+    @Transactional
+    public Answered answer(long userId, long clarificationId, AnswerRequest request) {
         String answer = Supplement.checkAnswer(request == null ? null : request.answer());
-        long userId = CurrentUser.id();
         Clarification clarification = clarifications.findOwned(clarificationId, userId)
                 .orElseThrow(() -> ApiException.notFound("CLARIFICATION_NOT_FOUND",
                         "되묻기 " + clarificationId + " 이(가) 없습니다"));

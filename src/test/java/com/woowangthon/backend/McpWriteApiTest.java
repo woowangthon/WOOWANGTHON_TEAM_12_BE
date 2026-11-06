@@ -111,7 +111,8 @@ class McpWriteApiTest {
                 .andExpect(jsonPath("$.writeEnabled").value(true));
         rpc(token, "tools/list", "{}")
                 .andExpect(jsonPath("$.result.tools[*].name", containsInAnyOrder("search_experiences", "list_activities",
-                        "get_activity", "get_question", "add_source", "update_experience", "create_application")))
+                        "get_activity", "get_question", "add_source", "update_experience", "create_application",
+                        "answer_clarification")))
                 .andExpect(jsonPath("$.result.tools[?(@.name == 'add_source')].description",
                         hasItem(not(containsString("confirm")))))
                 .andExpect(jsonPath("$.result.tools[?(@.name == 'update_experience')].annotations.destructiveHint",

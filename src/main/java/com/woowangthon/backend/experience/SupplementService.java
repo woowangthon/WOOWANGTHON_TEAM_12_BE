@@ -26,7 +26,8 @@ public class SupplementService {
     @Transactional
     public ExperienceResponse.SupplementResponse update(long supplementId, AnswerRequest request) {
         String answer = Supplement.checkAnswer(request == null ? null : request.answer());
-        Supplement supplement = findOwned(supplementId);
+        Supplement supplement = supplements.findOwnedForUpdate(supplementId, CurrentUser.id())
+                .orElseThrow(() -> notFound(supplementId));
         supplement.changeAnswer(answer);
         // 응답의 updatedAt 이 바뀐 시각이 되게 지금 저장한다
         supplements.flush();
@@ -40,7 +41,13 @@ public class SupplementService {
      */
     @Transactional
     public void delete(long supplementId) {
-        Supplement supplement = findOwned(supplementId);
+        delete(CurrentUser.id(), supplementId);
+    }
+
+    /** 변경 기록의 되돌리기도 같은 코드로 지운다(S-56). */
+    @Transactional
+    public void delete(long userId, long supplementId) {
+        Supplement supplement = supplements.findOwned(supplementId, userId).orElseThrow(() -> notFound(supplementId));
         Experience experience = supplement.getExperience();
         supplements.delete(supplement);
         // 같은 요청 · 같은 영속성 컨텍스트에서 경험을 다시 읽어도 안 보이게
@@ -61,9 +68,7 @@ public class SupplementService {
         supplements.restoreEvidencePositions(recommendationIds);
     }
 
-    private Supplement findOwned(long supplementId) {
-        return supplements.findOwned(supplementId, CurrentUser.id())
-                .orElseThrow(() -> ApiException.notFound("SUPPLEMENT_NOT_FOUND",
-                        "보완 " + supplementId + " 이(가) 없습니다"));
+    private static ApiException notFound(long supplementId) {
+        return ApiException.notFound("SUPPLEMENT_NOT_FOUND", "보완 " + supplementId + " 이(가) 없습니다");
     }
 }

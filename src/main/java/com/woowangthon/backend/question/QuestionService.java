@@ -141,8 +141,8 @@ public class QuestionService {
                         e.getActivity().getPeriod(), e.getContent(), e.getCompetencies(), e.getActor(),
                         e.getSourceStatus(),
                         e.getCitations().stream().map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
-                        // 앞 문항에서 답한 보완도 근거로 쓸 수 있게 싣는다(S-25)
-                        e.getSupplements().stream()
+                        // 앞 문항에서 답한 보완도 근거로 쓸 수 있게 싣는다(S-25) — 확인 전인 외부 AI 답은 뺀다(S-56)
+                        e.getConfirmedSupplements().stream()
                                 .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList()))
                 .toList();
     }
