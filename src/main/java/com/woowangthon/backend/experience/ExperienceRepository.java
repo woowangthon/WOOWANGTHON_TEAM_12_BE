@@ -25,6 +25,19 @@ public interface ExperienceRepository extends JpaRepository<Experience, Long> {
             + "order by a.periodStart asc nulls last, a.id asc, e.position asc, e.id asc")
     List<Experience> findAllOfUser(Long userId);
 
+    // 공개 조건 — 고른 경험 중 「확인 필요」가 아닌 것(share-api.md). 순서는 타임라인 · 활동 세부와 같다
+    @Query("select e from Experience e join fetch e.activity a where a.userId = :userId and e.shared = true "
+            + "and e.sourceStatus <> com.woowangthon.backend.experience.SourceStatus.NEEDS_REVIEW "
+            + "order by a.periodStart asc nulls last, a.id asc, e.position asc, e.id asc")
+    List<Experience> findVisible(Long userId);
+
+    @Query("select count(e) from Experience e where e.activity.userId = :userId and e.shared = true")
+    long countShared(Long userId);
+
+    @Query("select count(e) from Experience e where e.activity.userId = :userId and e.shared = true "
+            + "and e.sourceStatus <> com.woowangthon.backend.experience.SourceStatus.NEEDS_REVIEW")
+    long countVisible(Long userId);
+
     // 활동의 경험 맨 뒤 자리 — 경험이 없으면 -1
     @Query("select coalesce(max(e.position), -1) from Experience e where e.activity.id = :activityId")
     int findLastPosition(Long activityId);

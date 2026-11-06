@@ -61,6 +61,10 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
 | `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |
 | `POST /api/experiences/{id}/move` | 경험 옮기기 — 속한 활동만 바꿈. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤 |
+| `PUT /api/experiences/{id}/shared` | 공개 프로필에 넣기 · 빼기(S-65) — 「확인 필요」는 넣을 수 없다(409). 내용 · 출처 상태는 그대로 |
+| `GET` · `PATCH /api/public-profile` | 내 공개 설정 읽기 · 제목 고치기 |
+| `POST` · `DELETE /api/public-profile/link` | 링크 켜기 · 새로 만들기(언제나 새 토큰, 201) · 끄기(204) — 옛 주소는 바로 404 |
+| `GET /api/public/profiles/{token}` | 공개 읽기 — **로그인 없음**. 고른 경험의 허용 필드만, 꺼진 · 없는 주소는 같은 404 |
 | `POST /api/activities/{id}/merge` | 활동 합치기 — `fromActivityId` 의 경험을 전부 이 활동으로 옮기고 그 활동을 지움(한 번에). 남길 활동이 미분류면 분류를 옮겨 온다 |
 | `POST /api/activities/{id}/link-suggestions` | 이어짐 제안 받기 — 계기가 있는 활동에서 AI 가 고른 이어짐을 `SUGGESTED` 로 저장(동기, 후보 0개면 AI 를 안 부름) |
 | `PATCH /api/activity-links/{id}` | 이어짐 정하기 — `CONFIRMED`(맞아요) · `REJECTED`(아니에요, 다시 제안하지 않음) |

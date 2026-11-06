@@ -391,11 +391,12 @@ class McpApiTest {
         JsonNode result = toolResult(call(token, "get_activity", "{\"activityId\":" + appId + "}"));
         ObjectNode expected = (ObjectNode) json.readTree(rest);
         expected.remove(List.of("mergeSuggestion", "note", "links", "category", "categoryBy"));
-        // 쓰인 지원(S-38)은 활동 세부 화면의 것 — MCP 경험엔 없다
-        expected.get("experiences").forEach(e -> ((ObjectNode) e).remove("usedIn"));
+        // 쓰인 지원(S-38)은 활동 세부 화면의 것, 공개 프로필 선택(S-65)은 웹에서만 — MCP 경험엔 없다
+        expected.get("experiences").forEach(e -> ((ObjectNode) e).remove(List.of("usedIn", "shared")));
 
         assertThat(result).isEqualTo(expected);
         assertThat(result.get("experiences").get(0).has("usedIn")).isFalse();
+        assertThat(result.get("experiences").get(0).has("shared")).isFalse();
         assertThat(result.has("mergeSuggestion")).isFalse();
         assertThat(result.has("note")).isFalse();
         assertThat(result.has("links")).isFalse();
