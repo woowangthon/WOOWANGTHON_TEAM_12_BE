@@ -11,6 +11,7 @@ import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.job.AnalysisJob;
 import com.woowangthon.backend.job.AnalysisJobRepository;
 import com.woowangthon.backend.mcp.McpChangeResponses.UndoBlockedReason;
+import com.woowangthon.backend.question.ApplicationService;
 import com.woowangthon.backend.source.SourceRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -37,10 +38,11 @@ public class McpChangeService {
     private final CitationRepository citations;
     private final AnalysisJobRepository jobs;
     private final SourceRepository sources;
+    private final ApplicationService applications;
 
     public McpChangeService(McpChangeRepository changes, ExperienceRepository experiences,
             ExperienceService experienceService, ActivityService activityService, CitationRepository citations,
-            AnalysisJobRepository jobs, SourceRepository sources) {
+            AnalysisJobRepository jobs, SourceRepository sources, ApplicationService applications) {
         this.changes = changes;
         this.experiences = experiences;
         this.experienceService = experienceService;
@@ -48,11 +50,13 @@ public class McpChangeService {
         this.citations = citations;
         this.jobs = jobs;
         this.sources = sources;
+        this.applications = applications;
     }
 
-    // 변경들이 가리키는 지금 값 — 목록이 한 건씩 읽지 않게 한 번에 모은다. 지워진 경험은 experiences 에 없다
+    // 변경들이 가리키는 지금 값 — 목록이 한 건씩 읽지 않게 한 번에 모은다. 지워진 경험 · 지원은 그 맵에 없다
     private record Targets(Map<Long, Experience> experiences, Map<Long, AnalysisJob> jobs,
-            Map<Long, String> sourceNames, Map<Long, Long> experienceCounts) {
+            Map<Long, String> sourceNames, Map<Long, Long> experienceCounts,
+            Map<Long, ApplicationService.ApplicationState> applications) {
     }
 
     private record Removed(int removed, int kept) {
@@ -68,7 +72,7 @@ public class McpChangeService {
     @Transactional
     public McpChangeResponses.Undone undo(long userId, long changeId) {
         McpChange change = findForUpdate(userId, changeId);
-        lockExperience(userId, change);
+        lockTarget(userId, change);
         Targets targets = targets(userId, List.of(change));
         if (blockedReason(change, targets) != null) {
             throw new ApiException(HttpStatus.CONFLICT, "MCP_CHANGE_NOT_UNDOABLE",
@@ -77,6 +81,7 @@ public class McpChangeService {
         Removed result = switch (change.getType()) {
             case UPDATE_EXPERIENCE -> undoRewrite(change, targets.experiences().get(change.getExperienceId()));
             case ADD_SOURCE -> undoSource(userId, change, targets.jobs().get(change.getJobId()));
+            case CREATE_APPLICATION -> undoApplication(userId, change);
         };
         change.undo();
         return new McpChangeResponses.Undone(response(change, targets(userId, List.of(change))), result.removed(),
@@ -86,7 +91,7 @@ public class McpChangeService {
     @Transactional
     public McpChangeResponses.Confirmed confirm(long userId, long changeId) {
         McpChange change = findForUpdate(userId, changeId);
-        lockExperience(userId, change);
+        lockTarget(userId, change);
         Targets targets = targets(userId, List.of(change));
         if (change.getType() != McpChangeType.UPDATE_EXPERIENCE || blockedReason(change, targets) != null) {
             throw new ApiException(HttpStatus.CONFLICT, "MCP_CHANGE_NOT_CONFIRMABLE",
@@ -103,9 +108,11 @@ public class McpChangeService {
     }
 
     // targets 보다 먼저 부른다 — 이미 읽은 엔티티는 잠가도 값이 새로 읽히지 않는다
-    private void lockExperience(long userId, McpChange change) {
+    private void lockTarget(long userId, McpChange change) {
         if (change.getType() == McpChangeType.UPDATE_EXPERIENCE) {
             experiences.findOwnedForUpdate(change.getExperienceId(), userId);
+        } else if (change.getType() == McpChangeType.CREATE_APPLICATION) {
+            applications.lock(userId, change.getApplicationId());
         }
     }
 
@@ -138,6 +145,12 @@ public class McpChangeService {
         return new Removed(removed, cited.size() - removed);
     }
 
+    // 쓴 분석 횟수는 돌아오지 않는다(S-55)
+    private Removed undoApplication(long userId, McpChange change) {
+        applications.remove(userId, change.getApplicationId());
+        return new Removed(0, 0);
+    }
+
     private static boolean touchedByUser(Experience experience, List<Long> createdActivities, Set<Long> withChange) {
         return experience.getSourceStatus() == SourceStatus.USER_ENTERED
                 || !experience.getSupplements().isEmpty()
@@ -158,7 +171,16 @@ public class McpChangeService {
                 case FAILED -> UndoBlockedReason.ANALYSIS_FAILED;
                 case COMPLETED -> null;
             };
+            case CREATE_APPLICATION -> applicationBlocked(change, targets.applications().get(change.getApplicationId()));
         };
+    }
+
+    // 분석이 끝나도 풀리지 않는 쪽(CHANGED_AFTER)을 먼저 알린다
+    private static UndoBlockedReason applicationBlocked(McpChange change, ApplicationService.ApplicationState now) {
+        if (now == null || now.touched() || now.questionCount() != change.getQuestionCount()) {
+            return UndoBlockedReason.CHANGED_AFTER;
+        }
+        return now.analyzingCount() > 0 ? UndoBlockedReason.ANALYZING : null;
     }
 
     private static boolean changedAfter(McpChange change, Experience experience) {
@@ -171,6 +193,7 @@ public class McpChangeService {
         List<Long> experienceIds = of.stream().map(McpChange::getExperienceId).filter(Objects::nonNull).toList();
         List<Long> jobIds = of.stream().map(McpChange::getJobId).filter(Objects::nonNull).toList();
         List<Long> sourceIds = of.stream().map(McpChange::getSourceId).filter(Objects::nonNull).toList();
+        List<Long> applicationIds = of.stream().map(McpChange::getApplicationId).filter(Objects::nonNull).toList();
         return new Targets(
                 experiences.findAllOwned(experienceIds, userId).stream()
                         .collect(Collectors.toMap(Experience::getId, Function.identity())),
@@ -179,7 +202,8 @@ public class McpChangeService {
                         .collect(Collectors.toMap(SourceRepository.Name::getId, SourceRepository.Name::getName)),
                 citations.countExperiencesBySource(sourceIds).stream()
                         .collect(Collectors.toMap(CitationRepository.ExperienceCount::getSourceId,
-                                CitationRepository.ExperienceCount::getExperienceCount)));
+                                CitationRepository.ExperienceCount::getExperienceCount)),
+                applications.states(userId, applicationIds));
     }
 
     private static McpChangeResponses.Change response(McpChange c, Targets targets) {
@@ -191,9 +215,17 @@ public class McpChangeService {
                 : new McpChangeResponses.SourceChange(c.getSourceId(), targets.sourceNames().get(c.getSourceId()),
                         c.getJobId(), targets.jobs().get(c.getJobId()).getStatus(),
                         targets.experienceCounts().getOrDefault(c.getSourceId(), 0L));
+        McpChangeResponses.ApplicationChange application = c.getType() != McpChangeType.CREATE_APPLICATION ? null
+                : applicationChange(c, targets.applications().get(c.getApplicationId()));
         return new McpChangeResponses.Change(c.getId(), c.getType(), c.getClient(), c.getReason(), c.getStatus(),
                 Times.seoul(c.getCreatedAt()), seoulOrNull(c.getDecidedAt()), blocked == null, blocked, experience,
-                source, null, null);
+                source, application, null);
+    }
+
+    private static McpChangeResponses.ApplicationChange applicationChange(McpChange c,
+            ApplicationService.ApplicationState now) {
+        return new McpChangeResponses.ApplicationChange(c.getApplicationId(), c.getOrganization(), c.getQuestionCount(),
+                now == null ? 0 : now.analyzingCount());
     }
 
     private static OffsetDateTime seoulOrNull(OffsetDateTime time) {

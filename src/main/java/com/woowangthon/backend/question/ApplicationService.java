@@ -5,9 +5,15 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.common.PostingUrls;
+import com.woowangthon.backend.job.JobStatus;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,11 +31,21 @@ public class ApplicationService {
     private final ApplicationRepository applications;
     private final QuestionRepository questions;
     private final UsageLimiter limiter;
+    private final ClarificationRepository clarifications;
+    private final DraftRepository drafts;
+    private final GroundingCheckRepository groundingChecks;
+    private final AnswerRepository answers;
 
-    public ApplicationService(ApplicationRepository applications, QuestionRepository questions, UsageLimiter limiter) {
+    public ApplicationService(ApplicationRepository applications, QuestionRepository questions, UsageLimiter limiter,
+            ClarificationRepository clarifications, DraftRepository drafts, GroundingCheckRepository groundingChecks,
+            AnswerRepository answers) {
         this.applications = applications;
         this.questions = questions;
         this.limiter = limiter;
+        this.clarifications = clarifications;
+        this.drafts = drafts;
+        this.groundingChecks = groundingChecks;
+        this.answers = answers;
     }
 
     public record QuestionText(String text) {
@@ -40,9 +56,18 @@ public class ApplicationService {
             List<QuestionText> questions) {
     }
 
-    /** 지원과 문항을 넣은 순서대로 저장한다. 남은 분석 횟수가 문항 수보다 적으면 아무것도 저장하지 않는다(429). */
+    /** 외부 AI 가 만든 지원을 되돌려도 되나 볼 때 쓰는 지금 상태. touched — 사용자가 손댔다(계약 「변경 기록」 CHANGED_AFTER). */
+    public record ApplicationState(int questionCount, int analyzingCount, boolean touched) {
+    }
+
     @Transactional
     public QuestionResponses.ApplicationSubmitted submit(ApplicationRequest request) {
+        return submit(CurrentUser.id(), request);
+    }
+
+    /** 지원과 문항을 넣은 순서대로 저장한다. 남은 분석 횟수가 문항 수보다 적으면 아무것도 저장하지 않는다(429). 외부 AI 는 세션 없이 사용자를 넘긴다. */
+    @Transactional
+    public QuestionResponses.ApplicationSubmitted submit(long userId, ApplicationRequest request) {
         List<QuestionText> asked = request.questions();
         if (asked == null || asked.isEmpty() || asked.size() > MAX_QUESTIONS_PER_SUBMIT) {
             throw ApiException.invalidRequest("questions 는 1 ~ " + MAX_QUESTIONS_PER_SUBMIT + "개여야 합니다");
@@ -60,10 +85,10 @@ public class ApplicationService {
             throw ApiException.invalidRequest(
                     "postingUrl 은 " + PostingUrls.MAX_LENGTH + "자 이하의 http(s):// 주소여야 합니다");
         }
-        limiter.consume(CurrentUser.id(), texts.size());
+        limiter.consume(userId, texts.size());
 
         Application application = applications.save(
-                new Application(CurrentUser.id(), organization, organizationType, jobRole, postingUrl));
+                new Application(userId, organization, organizationType, jobRole, postingUrl));
         // 하나씩 저장해 ID 가 넣은 순서대로 커지게 한다 — 지원 안의 문항 순서는 ID 순서다
         List<Long> questionIds = new ArrayList<>();
         for (String text : texts) {
@@ -126,6 +151,45 @@ public class ApplicationService {
     public QuestionResponses.ApplicationResponse get(long applicationId) {
         return QuestionResponses.ApplicationResponse.from(applications.findByIdAndUserId(applicationId, CurrentUser.id())
                 .orElseThrow(() -> notFound(applicationId)));
+    }
+
+    /** 지원들의 지금 상태 — 지워진 지원은 결과에 없다. */
+    @Transactional(readOnly = true)
+    public Map<Long, ApplicationState> states(long userId, Collection<Long> applicationIds) {
+        if (applicationIds.isEmpty()) {
+            return Map.of();
+        }
+        List<Application> found = applications.findAllWithQuestions(applicationIds, userId);
+        List<Long> questionIds = found.stream().flatMap(a -> a.getQuestions().stream()).map(Question::getId).toList();
+        Set<Long> worked = new HashSet<>(clarifications.findAnsweredQuestionIds(questionIds));
+        worked.addAll(drafts.findQuestionIds(questionIds));
+        worked.addAll(groundingChecks.findQuestionIds(questionIds));
+        worked.addAll(answers.findQuestionIds(questionIds));
+        return found.stream().collect(Collectors.toMap(Application::getId, a -> state(a, worked)));
+    }
+
+    private static ApplicationState state(Application application, Set<Long> worked) {
+        List<Question> asked = application.getQuestions();
+        return new ApplicationState(asked.size(),
+                (int) asked.stream().filter(q -> q.getStatus() == JobStatus.ANALYZING).count(),
+                application.getApplicationStatus() != ApplicationStatus.WRITING
+                        || asked.stream().anyMatch(q -> worked.contains(q.getId())));
+    }
+
+    /** 상태를 보기 전에 지원 · 문항 행을 잠근다 — 본 뒤에 문항 더하기 · 다시 시도 · 초안이 끼어들지 못한다. 없으면 그대로 둔다. */
+    @Transactional
+    public void lock(long userId, long applicationId) {
+        applications.findForUpdate(applicationId, userId).ifPresent(a -> questions.lockByApplicationId(applicationId));
+    }
+
+    /** 지원과 문항 · 요구사항 · 추천 · 되묻기를 지운다. question.application_id 는 저절로 지워지지 않아 문항부터 지운다. */
+    @Transactional
+    public void remove(long userId, long applicationId) {
+        Application application = applications.findByIdAndUserId(applicationId, userId)
+                .orElseThrow(() -> notFound(applicationId));
+        questions.deleteAll(application.getQuestions());
+        questions.flush();
+        applications.delete(application);
     }
 
     private static ApplicationStatus applicationStatus(String value) {

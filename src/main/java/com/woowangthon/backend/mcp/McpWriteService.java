@@ -7,6 +7,9 @@ import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.job.AnalysisService;
 import com.woowangthon.backend.job.JobResponses;
+import com.woowangthon.backend.question.ApplicationRepository;
+import com.woowangthon.backend.question.ApplicationService;
+import com.woowangthon.backend.question.QuestionResponses;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,13 +26,18 @@ public class McpWriteService {
     private final AnalysisService analyses;
     private final ExperienceRepository experiences;
     private final McpChangeRepository changes;
+    private final ApplicationService applications;
+    private final ApplicationRepository applicationRows;
     private final int dailyWriteLimit;
 
     public McpWriteService(AnalysisService analyses, ExperienceRepository experiences, McpChangeRepository changes,
+            ApplicationService applications, ApplicationRepository applicationRows,
             @Value("${app.mcp.daily-write-limit}") int dailyWriteLimit) {
         this.analyses = analyses;
         this.experiences = experiences;
         this.changes = changes;
+        this.applications = applications;
+        this.applicationRows = applicationRows;
         this.dailyWriteLimit = dailyWriteLimit;
     }
 
@@ -39,11 +47,25 @@ public class McpWriteService {
     public record UpdatedExperience(long changeId, long experienceId, SourceStatus sourceStatus) {
     }
 
+    public record CreatedApplication(long changeId, QuestionResponses.ApplicationSubmitted submitted) {
+    }
+
     @Transactional
     public AddedSource addSource(long userId, String client, String text) {
         JobResponses.Submitted submitted = analyses.submit(userId, client, text);
         McpChange change = changes.save(McpChange.addSource(userId, client, submitted.sourceId(), submitted.jobId()));
         return new AddedSource(change.getId(), submitted);
+    }
+
+    /** 웹과 같은 코드로 지원을 저장한다 — 검사 · 한도가 같고, 걸리면 변경 기록도 남지 않는다. */
+    @Transactional
+    public CreatedApplication createApplication(long userId, String client, ApplicationService.ApplicationRequest request) {
+        QuestionResponses.ApplicationSubmitted submitted = applications.submit(userId, request);
+        String organization = applicationRows.findByIdAndUserId(submitted.applicationId(), userId).orElseThrow()
+                .getOrganization();
+        McpChange change = changes.save(McpChange.createApplication(userId, client, submitted.applicationId(),
+                organization, submitted.questionIds().size()));
+        return new CreatedApplication(change.getId(), submitted);
     }
 
     /** 본문만 바꾸고 NEEDS_REVIEW 로 낮춘다. 행을 잠그고 비교해, 읽은 뒤 바뀐 본문을 덮어쓰지 않는다. */

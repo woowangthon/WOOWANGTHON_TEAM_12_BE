@@ -2,6 +2,7 @@ package com.woowangthon.backend.question;
 
 import com.woowangthon.backend.job.JobStatus;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,4 +19,7 @@ public interface DraftRepository extends JpaRepository<Draft, Long> {
     Optional<Draft> lockByQuestionId(Long questionId);
 
     List<Draft> findByStatus(JobStatus status);
+
+    @Query("select d.questionId from Draft d where d.questionId in :questionIds")
+    List<Long> findQuestionIds(Collection<Long> questionIds);
 }
