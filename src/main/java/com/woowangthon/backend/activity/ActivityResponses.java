@@ -111,7 +111,7 @@ public final class ActivityResponses {
     public record McpTimeline(List<McpSummary> activities) {
     }
 
-    /** 앱의 Experience 에서 shared 를 뺀 것 — 공개 프로필 선택은 외부 AI 에 보이지 않는다(share-api.md). */
+    /** 앱의 Experience 에서 shared · saved 를 뺀 것 — 공개 프로필 선택(share-api.md) · 저장(S-71)은 외부 AI 에 보이지 않는다. */
     public record McpExperience(Long id, Long activityId, String content, List<Competency> competencies,
             CompetenciesBy competenciesBy, Actor actor, SourceStatus sourceStatus,
             List<ExperienceResponse.CitationResponse> citations, List<ExperienceResponse.SupplementResponse> supplements,

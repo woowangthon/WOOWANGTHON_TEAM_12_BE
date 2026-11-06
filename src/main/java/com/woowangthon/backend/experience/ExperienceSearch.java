@@ -26,12 +26,12 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>낱말 맞추기다(의미 검색 아님, AI 를 부르지 않는다). 조건은 모두 AND, 낱말은 하나라도(OR) —
  *       경험 본문 · 근거 발췌문 · 보완 질문과 답 · 활동 이름에서 대소문자 무시 · 부분 일치로 찾는다.</li>
  *   <li>순서: 맞은 낱말 수 많은 것 → 활동 시작 최근 것(null 은 뒤) → 경험 id.</li>
- *   <li>출처 상태 · 활동 분류는 앱에서만 쓴다 — MCP 입력엔 없다(S-58 범위 제외, 분류는 MCP 에 싣지 않는다 — S-57).</li>
+ *   <li>출처 상태 · 활동 분류 · 저장은 앱에서만 쓴다 — MCP 입력엔 없다(S-58 · S-71 범위 제외, 분류는 MCP 에 싣지 않는다 — S-57).</li>
  *   <li>입력 확인 · 오류 모양 · 응답 모양은 부르는 쪽이 각자 계약대로 한다 — MCP 는 도구 오류, 앱은 400.</li>
  * </ul>
  *
  * 규칙(낱말 · 역량 · 연도 · 순서 · limit · total)의 시험은 McpApiTest 「search_experiences」가 맡는다. 앱 쪽 시험
- * (ExperienceSearchApiTest)은 앱에만 있는 것(쿼리 읽기 · 출처 상태 · 분류 · 400 · 응답 모양)과 「MCP 와 같은 결과」만 본다 —
+ * (ExperienceSearchApiTest)은 앱에만 있는 것(쿼리 읽기 · 출처 상태 · 분류 · 저장 · 400 · 응답 모양)과 「MCP 와 같은 결과」만 본다 —
  * 같은 규칙을 두 곳에서 시험하면 규칙이 바뀔 때 한쪽만 고치기 쉽다.
  *
  * 사용자의 경험을 전부 읽어 메모리에서 거른다 — 한 사람의 경험은 많아야 수백 개라 충분하다(느리면 그때 쿼리로).
@@ -52,14 +52,14 @@ public class ExperienceSearch {
     /**
      * 거를 조건 — null 인 칸은 거르지 않는다. terms 가 빈 목록이면 낱말로 거르지 않는다.
      * competencies 는 빈 집합이어도 「그중 하나라도」라 아무것도 안 맞는다 — MCP 가 `[]` 를 받았을 때의 예전 동작 그대로.
-     * 앱은 빈 칸을 null 로 넘긴다.
+     * 앱은 빈 칸을 null 로 넘긴다. savedOnly 가 true 면 저장한 경험만, false 면 거르지 않는다.
      */
     public record Filter(List<String> terms, Set<Competency> competencies, Integer year, SourceStatus sourceStatus,
-            ActivityCategory category) {
+            ActivityCategory category, boolean savedOnly) {
 
         /** MCP — 낱말 · 역량 · 연도만. */
         public static Filter of(List<String> terms, Set<Competency> competencies, Integer year) {
-            return new Filter(terms, competencies, year, null, null);
+            return new Filter(terms, competencies, year, null, null, false);
         }
     }
 
@@ -102,6 +102,9 @@ public class ExperienceSearch {
             if (filter.category() != null && e.getActivity().getCategory() != filter.category()) {
                 continue;
             }
+            if (filter.savedOnly() && !e.isSaved()) {
+                continue;
+            }
             int count = terms.isEmpty() ? 0 : countMatchedTerms(e, terms);
             if (!terms.isEmpty() && count == 0) {
                 continue;
@@ -123,14 +126,14 @@ public class ExperienceSearch {
     /** 앱 `GET /api/experiences` — 쿼리를 확인하고(틀리면 400 INVALID_REQUEST) 찾아서 계약 모양으로. 다 선택이다. */
     @Transactional(readOnly = true)
     public AppResult searchForApp(long userId, String query, String competencies, String year, String sourceStatus,
-            String category, Integer limit) {
+            String category, String saved, Integer limit) {
         int max = limit == null ? APP_DEFAULT_LIMIT : limit;
         if (max < 1 || max > APP_MAX_LIMIT) {
             throw ApiException.invalidRequest("limit 은 1 ~ " + APP_MAX_LIMIT + " 이어야 합니다");
         }
         Filter filter = new Filter(terms(query), appCompetencies(competencies), appYear(year),
                 appEnum(SourceStatus.class, "sourceStatus", sourceStatus),
-                appEnum(ActivityCategory.class, "category", category));
+                appEnum(ActivityCategory.class, "category", category), appSavedOnly(saved));
         Result result = search(userId, filter, max);
         return new AppResult(result.total(), result.experiences().stream().map(ExperienceSearch::appHit).toList());
     }
@@ -204,6 +207,17 @@ public class ExperienceSearch {
             throw ApiException.invalidRequest("year 는 YYYY 여야 합니다");
         }
         return Integer.parseInt(value);
+    }
+
+    // true 만 받는다 — 비우면 거르지 않고, false 를 포함한 그 밖의 값은 400
+    private static boolean appSavedOnly(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        if (!value.equals("true")) {
+            throw ApiException.invalidRequest("saved 는 true 만 받습니다");
+        }
+        return true;
     }
 
     private static <E extends Enum<E>> E appEnum(Class<E> type, String name, String value) {

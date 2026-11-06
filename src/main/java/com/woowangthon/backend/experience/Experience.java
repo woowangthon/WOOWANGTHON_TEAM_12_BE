@@ -85,6 +85,10 @@ public class Experience {
     @Column(nullable = false)
     private boolean shared;
 
+    // 다시 쓰려고 저장했나(S-71) — 웹에서 사용자만 바꾼다. 내용을 고친 게 아니라 출처 상태를 건드리지 않는다
+    @Column(nullable = false)
+    private boolean saved;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -175,6 +179,14 @@ public class Experience {
 
     public void setShared(boolean shared) {
         this.shared = shared;
+    }
+
+    public boolean isSaved() {
+        return saved;
+    }
+
+    public void setSaved(boolean saved) {
+        this.saved = saved;
     }
 
     public Long getMcpChangeId() {
