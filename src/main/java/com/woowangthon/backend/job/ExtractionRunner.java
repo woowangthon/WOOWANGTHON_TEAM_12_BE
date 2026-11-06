@@ -5,6 +5,7 @@ import com.woowangthon.backend.ai.AiClient;
 import com.woowangthon.backend.ai.ExtractRequest;
 import com.woowangthon.backend.ai.ExtractResponse;
 import java.util.List;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -27,9 +28,27 @@ public class ExtractionRunner {
         this.ai = ai;
     }
 
-    /** 원본 저장 트랜잭션이 끝난 뒤에 부른다(SourceController · JobController). */
+    /** 원본 저장 트랜잭션이 끝난 뒤에 부른다(JobController 등). 끝나면 이 사용자의 다음 QUEUED 를 이어 돌린다(S-59). */
     @Async
     public void run(long jobId) {
+        Optional<Long> next = Optional.of(jobId);
+        while (next.isPresent()) {
+            analyze(next.get());
+            next = startNext(next.get());
+        }
+    }
+
+    // 실패해도 다음 작업은 돈다. 여기서 못 넘기면 다음 작업이 끝날 때나 서버가 다시 켜질 때 이어진다
+    private Optional<Long> startNext(long finishedJobId) {
+        try {
+            return service.startNextAfter(finishedJobId);
+        } catch (RuntimeException e) {
+            log.error("분석 작업 {} 다음 차례를 시작하지 못했습니다", finishedJobId, e);
+            return Optional.empty();
+        }
+    }
+
+    private void analyze(long jobId) {
         try {
             ExtractRequest request = service.extractRequest(jobId);
             ExtractResponse result = ai.extract(request);

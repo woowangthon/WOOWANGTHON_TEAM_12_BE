@@ -52,6 +52,9 @@ public class AnalysisService {
     // ai-api.md 「POST /extract」 existingActivities 최대 개수
     static final int MAX_EXISTING_ACTIVITIES = 300;
 
+    // experience-api.md 「POST /api/sources/batch」 sources 최대 개수
+    static final int MAX_BATCH_SOURCES = 10;
+
     private static final DateTimeFormatter PASTED_NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final SourceRepository sources;
@@ -74,21 +77,83 @@ public class AnalysisService {
         this.maxTextLength = maxTextLength;
     }
 
-    public record SourceRequest(String kind, String name, String text, List<SectionRequest> sections) {
+    public record SourceRequest(String kind, String name, String text, List<SectionRequest> sections,
+            Long activityId) {
+    }
+
+    public record BatchRequest(List<SourceRequest> sources) {
     }
 
     public record SectionRequest(String kind, Integer number, Integer startLine, Integer endLine) {
     }
 
+    // 검사를 통과한 자료 한 건 — 아직 저장하지 않았다
+    private record CheckedSource(SourceKind kind, String name, String text, List<SourceSection> sections) {
+    }
+
     /** 원본을 저장하고 분석 작업을 만든다. 분석은 이 트랜잭션이 끝난 뒤 따로 시작한다. */
     @Transactional
     public JobResponses.Submitted submit(SourceRequest request) {
+        CheckedSource checked = check(request);
+        long userId = CurrentUser.id();
+        Long target = request.activityId();
+        if (target != null && activities.findByIdAndUserId(target, userId).isEmpty()) {
+            throw ApiException.notFound("ACTIVITY_NOT_FOUND", "활동 " + target + " 이(가) 없습니다");
+        }
+        limiter.consume(userId);
+
+        Source source = save(userId, checked);
+        return saved(target == null ? new AnalysisJob(userId, source) : AnalysisJob.forActivity(userId, source, target));
+    }
+
+    /**
+     * 자료 여러 개를 한 번에 넣는다(S-59). 전부 검사하고 횟수를 한꺼번에 센 뒤에야 저장해서, 하나라도 틀리면 아무것도 남지 않는다.
+     * 1번만 ANALYZING 이고 나머지는 앞 작업이 끝나기를 기다린다. 분석은 이 트랜잭션이 끝난 뒤 따로 시작한다.
+     */
+    @Transactional
+    public JobResponses.Batch submitBatch(BatchRequest request) {
+        List<SourceRequest> requested = request.sources();
+        if (requested == null || requested.isEmpty() || requested.size() > MAX_BATCH_SOURCES) {
+            throw ApiException.invalidRequest("sources 는 1 ~ " + MAX_BATCH_SOURCES + "개여야 합니다");
+        }
+        List<CheckedSource> checked = new ArrayList<>();
+        for (int i = 0; i < requested.size(); i++) {
+            checked.add(checkElement(i + 1, requested.get(i)));
+        }
+        long userId = CurrentUser.id();
+        limiter.consume(userId, checked.size());
+
+        List<JobResponses.Submitted> items = new ArrayList<>();
+        for (CheckedSource c : checked) {
+            Source source = save(userId, c);
+            items.add(saved(items.isEmpty() ? new AnalysisJob(userId, source) : AnalysisJob.queued(userId, source)));
+        }
+        return new JobResponses.Batch(items);
+    }
+
+    // 원소 오류는 코드 그대로, message 에 몇째(1부터) · 파일 이름을 담는다
+    private CheckedSource checkElement(int number, SourceRequest element) {
+        if (element == null) {
+            throw ApiException.invalidRequest(number + "번째 자료: 비었습니다");
+        }
+        try {
+            if (element.activityId() != null) {
+                throw ApiException.invalidRequest("activityId 는 묶음에서 받지 않습니다");
+            }
+            return check(element);
+        } catch (ApiException e) {
+            String label = element.name() == null || element.name().isBlank() ? "" : "(" + element.name() + ")";
+            throw new ApiException(e.status(), e.code(), number + "번째 자료" + label + ": " + e.getMessage());
+        }
+    }
+
+    private CheckedSource check(SourceRequest request) {
         SourceKind kind = parseKind(request.kind());
         String name = kind == SourceKind.FILE ? fileName(request.name()) : pastedName();
         String text = checkText(request.text());
         List<SourceSection> sections = checkSections(kind == SourceKind.FILE ? sectionKind(name) : null,
                 request.sections(), text);
-        return store(CurrentUser.id(), kind, name, text, sections);
+        return new CheckedSource(kind, name, text, sections);
     }
 
     /**
@@ -98,16 +163,18 @@ public class AnalysisService {
     @Transactional
     public JobResponses.Submitted submit(long userId, String client, String text) {
         String name = client + " 에서 보냄 — " + ZonedDateTime.now(JobResponses.SEOUL).format(PASTED_NAME);
-        return store(userId, SourceKind.MCP, name, checkText(text), List.of());
+        CheckedSource checked = new CheckedSource(SourceKind.MCP, name, checkText(text), List.of());
+        limiter.consume(userId);
+        return saved(new AnalysisJob(userId, save(userId, checked)));
     }
 
-    private JobResponses.Submitted store(long userId, SourceKind kind, String name, String text,
-            List<SourceSection> sections) {
-        limiter.consume(userId);
+    private Source save(long userId, CheckedSource c) {
+        return sources.save(new Source(userId, c.kind(), c.name(), c.text(), c.sections()));
+    }
 
-        Source source = sources.save(new Source(userId, kind, name, text, sections));
-        AnalysisJob job = jobs.save(new AnalysisJob(userId, source));
-        return new JobResponses.Submitted(source.getId(), job.getId(), job.getStatus());
+    private JobResponses.Submitted saved(AnalysisJob job) {
+        jobs.save(job);
+        return new JobResponses.Submitted(job.getSource().getId(), job.getId(), job.getStatus());
     }
 
     @Transactional(readOnly = true)
@@ -131,23 +198,35 @@ public class AnalysisService {
     }
 
     /**
-     * 부를 때마다 그때의 기존 활동 목록을 새로 만든다(다시 시도 포함). 실패한 작업은 활동을 남기지 않으므로
-     * 이 작업이 만든 활동은 목록에 없다.
+     * 부를 때마다 그때의 기존 활동 목록을 새로 만든다(다시 시도 포함) — 그래서 묶음의 앞 파일로 생긴 활동도 들어간다(S-59).
+     * 실패한 작업은 활동을 남기지 않으므로 이 작업이 만든 활동은 목록에 없다.
+     * 자료 더하기(S-60)의 대상은 300개 한도와 상관없이 싣고, 그새 사라졌으면 대상 없이 보낸다.
      */
     @Transactional(readOnly = true)
     public ExtractRequest extractRequest(long jobId) {
         AnalysisJob job = jobs.findById(jobId).orElseThrow();
         Source source = job.getSource();
-        List<ExtractRequest.ExistingActivity> existing = activities
-                .findRecent(job.getUserId(), Limit.of(MAX_EXISTING_ACTIVITIES)).stream()
-                .map(a -> new ExtractRequest.ExistingActivity(a.getId(), a.getName(), a.getPeriod()))
-                .toList();
-        return new ExtractRequest(source.getName(), source.getText(), existing);
+        List<Activity> existing = new ArrayList<>(
+                activities.findRecent(job.getUserId(), Limit.of(MAX_EXISTING_ACTIVITIES)));
+        Activity target = target(job.getTargetActivityId(), job.getUserId());
+        if (target != null && !existing.contains(target)) {
+            existing.add(target);
+        }
+        return new ExtractRequest(source.getName(), source.getText(),
+                existing.stream()
+                        .map(a -> new ExtractRequest.ExistingActivity(a.getId(), a.getName(), a.getPeriod()))
+                        .toList(),
+                target == null ? null : target.getId());
+    }
+
+    private Activity target(Long targetActivityId, long userId) {
+        return targetActivityId == null ? null : activities.findByIdAndUserId(targetActivityId, userId).orElse(null);
     }
 
     /**
      * AI 응답을 활동 · 경험 · 근거로 저장한다 — 출처 상태 · matched 는 AI 가 준 그대로.
      * 계약을 벗어난 칸이 하나라도 있으면 아무것도 남기지 않고 AiCallException(AI_FAILED)을 던진다.
+     * 자료 더하기(S-60)면 대상과 같다고 한 활동은 새로 만들지 않고 대상에 바로 붙인다. 대상이 그새 사라졌으면 보통 자료 넣기처럼 끝낸다.
      */
     @Transactional
     public List<Long> complete(long jobId, ExtractRequest request, ExtractResponse result) {
@@ -159,12 +238,21 @@ public class AnalysisService {
         Set<Long> sent = new HashSet<>();
         request.existingActivities().forEach(e -> sent.add(e.id()));
 
+        Activity target = target(request.targetActivityId(), job.getUserId());
+        boolean matched = false;
         List<Long> activityIds = new ArrayList<>();
         for (ExtractResponse.ActivityResult a : result.activities()) {
-            Activity activity = activities.save(
-                    new Activity(job.getUserId(), required(a.name(), "activities[].name"), period(a.period())));
+            Long sameAs = sameAs(a.sameAsActivityId(), sent, job.getUserId());
+            String name = required(a.name(), "activities[].name");
+            Period period = period(a.period());
+            if (target != null && target.getId().equals(sameAs)) {
+                attach(target, a, source);
+                matched = true;
+                continue;
+            }
+            Activity activity = activities.save(new Activity(job.getUserId(), name, period));
             activityIds.add(activity.getId());
-            activity.suggestMergeWith(sameAs(a.sameAsActivityId(), sent, job.getUserId()));
+            activity.suggestMergeWith(sameAs);
             activity.categorizeByAi(category(a.category()));
 
             List<ExtractResponse.ExperienceResult> extracted = a.experiences() == null ? List.of() : a.experiences();
@@ -172,8 +260,42 @@ public class AnalysisService {
                 saveExperience(activity, position, extracted.get(position), source);
             }
         }
-        job.complete(activityIds);
+        job.complete(activityIds, job.getTargetActivityId() == null ? null : matched);
         return activityIds;
+    }
+
+    // 결과는 합치기(S-13)와 같다 — 대상의 이름 · 기간 · 계기는 그대로, 경험은 뒤에 AI 가 준 순서로, 미분류면 분류를 가져온다
+    private void attach(Activity target, ExtractResponse.ActivityResult a, Source source) {
+        target.categorizeByAiIfNone(category(a.category()));
+        int position = experiences.findLastPosition(target.getId()) + 1;
+        List<ExtractResponse.ExperienceResult> extracted = a.experiences() == null ? List.of() : a.experiences();
+        for (ExtractResponse.ExperienceResult e : extracted) {
+            saveExperience(target, position++, e, source);
+        }
+    }
+
+    /** 끝난 작업의 사용자에게 돌아가는 분석이 없으면 다음 QUEUED 를 시작한다(S-59). 돌릴 작업 ID 를 돌려준다. */
+    @Transactional
+    public Optional<Long> startNextAfter(long finishedJobId) {
+        return startNext(jobs.findById(finishedJobId).orElseThrow().getUserId());
+    }
+
+    @Transactional
+    public Optional<Long> startNext(long userId) {
+        return jobs.startNextQueued(userId);
+    }
+
+    /** 서버가 꺼지며 끊긴 작업을 실패로 돌린다. 몇 개인지 돌려준다. */
+    @Transactional
+    public int failInterrupted() {
+        List<AnalysisJob> interrupted = jobs.findByStatus(JobStatus.ANALYZING);
+        interrupted.forEach(job -> job.fail("INTERNAL_ERROR", "서버가 다시 시작되어 분석이 끊겼습니다"));
+        return interrupted.size();
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> usersWithQueued() {
+        return jobs.findUsersWithQueued();
     }
 
     // 같은 활동 제안(S-44). 칸이 없으면 null(AI 쪽 변경과 머지 순서 상관없게).
