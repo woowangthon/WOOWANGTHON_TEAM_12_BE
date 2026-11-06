@@ -141,6 +141,25 @@ public class Experience {
         mcpClient = client;
     }
 
+    /**
+     * 외부 AI 고치기를 되돌린다 — 본문 · 출처 상태만 이전 값으로(S-54). 그 앞에 아직 정하지 않은 외부 AI 고치기가 있으면
+     * 그 변경이 다시 이 경험의 mcpChange 가 된다(없으면 둘 다 null).
+     */
+    public void undoExternalAiRewrite(String beforeContent, SourceStatus beforeSourceStatus, Long pendingChangeId,
+            String pendingClient) {
+        content = beforeContent;
+        sourceStatus = beforeSourceStatus;
+        mcpChangeId = pendingChangeId;
+        mcpClient = pendingClient;
+    }
+
+    /** 맞아요 — 외부 AI 가 고친 본문을 사용자가 자기 말로 받는다(S-53). 역량 출처는 그대로다. */
+    public void confirmExternalAiRewrite() {
+        sourceStatus = SourceStatus.USER_ENTERED;
+        mcpChangeId = null;
+        mcpClient = null;
+    }
+
     /** 확정 답에서 왔다고 표시한다 — 만들 때 한 번만. */
     public void markFromAnswer(Question question) {
         this.originQuestion = question;

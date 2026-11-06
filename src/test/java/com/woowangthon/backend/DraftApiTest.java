@@ -27,6 +27,7 @@ import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
 import com.woowangthon.backend.job.JobStatus;
+import com.woowangthon.backend.mcp.McpChangeService;
 import com.woowangthon.backend.mcp.McpWriteService;
 import com.woowangthon.backend.question.Application;
 import com.woowangthon.backend.question.ApplicationRepository;
@@ -158,6 +159,9 @@ class DraftApiTest {
     @Autowired
     McpWriteService mcpWrites;
 
+    @Autowired
+    McpChangeService mcpChanges;
+
     MockMvc mvc;
 
     long appId;
@@ -230,6 +234,28 @@ class DraftApiTest {
         assertThat((String) JsonPath.read(failed, "$.draft.status")).isEqualTo("FAILED");
         assertThat((String) JsonPath.read(failed, "$.draft.error.code")).isEqualTo("AI_FAILED");
         assertThat(jdbc.queryForObject("select count(*) from draft_sentence_evidence", Integer.class)).isZero();
+    }
+
+    @Test
+    void 외부_AI_고치기를_되돌리면_경험이_다시_EXPERIENCE_근거가_된다() throws Exception {
+        long change = mcpWrites.updateExperience(TestLogin.USER_ID, "claude-ai", study, "스터디원 6명의 풀이를 매주 리뷰했다",
+                "스터디원 8명의 풀이를 매주 리뷰했다", "사용자가 대화에서 고침").changeId();
+        mcpChanges.undo(TestLogin.USER_ID, change);
+
+        start(chat, study).andExpect(status().isAccepted());
+
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void 맞아요를_누른_경험은_EXPERIENCE_근거가_된다() throws Exception {
+        long change = mcpWrites.updateExperience(TestLogin.USER_ID, "claude-ai", study, "스터디원 6명의 풀이를 매주 리뷰했다",
+                "스터디원 8명의 풀이를 매주 리뷰했다", "사용자가 대화에서 고침").changeId();
+        mcpChanges.confirm(TestLogin.USER_ID, change);
+
+        start(chat, study).andExpect(status().isAccepted());
+
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.status")).isEqualTo("COMPLETED");
     }
 
     @AfterEach

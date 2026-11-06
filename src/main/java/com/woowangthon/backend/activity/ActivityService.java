@@ -23,13 +23,15 @@ public class ActivityService {
     private final ExperienceService experiences;
     private final RecommendationRepository recommendations;
     private final ActivityLinkService links;
+    private final ActivityLinkRepository linkRows;
 
     public ActivityService(ActivityRepository activities, ExperienceService experiences,
-            RecommendationRepository recommendations, ActivityLinkService links) {
+            RecommendationRepository recommendations, ActivityLinkService links, ActivityLinkRepository linkRows) {
         this.activities = activities;
         this.experiences = experiences;
         this.recommendations = recommendations;
         this.links = links;
+        this.linkRows = linkRows;
     }
 
     @Transactional(readOnly = true)
@@ -133,6 +135,19 @@ public class ActivityService {
     @Transactional
     public void dismissMergeSuggestion(long activityId) {
         find(activityId).dismissMergeSuggestion();
+    }
+
+    /** 자료 넣기 되돌리기(S-54) — 활동에 경험 · 계기 · 이어짐이 하나도 없으면 지운다. 합치기로 이미 없어졌으면 그냥 넘어간다. */
+    @Transactional
+    public void removeIfBare(long userId, long activityId) {
+        activities.findByIdAndUserId(activityId, userId)
+                .filter(activity -> activity.getExperiences().isEmpty() && activity.getNote() == null
+                        && !linkRows.existsByFromActivityIdOrToActivityId(activityId, activityId))
+                .ifPresent(activity -> {
+                    activities.clearMergeSuggestionsTo(activityId);
+                    activities.delete(activity);
+                    activities.flush();
+                });
     }
 
     // 앞뒤 공백을 걷은 뒤 확인한다. null · 빈 문자열은 지움(계약 「PATCH /api/activities」)

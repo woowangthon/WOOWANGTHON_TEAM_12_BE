@@ -20,6 +20,8 @@ public interface ActivityLinkRepository extends JpaRepository<ActivityLink, Long
             order by l.createdAt asc, l.id asc""")
     List<ActivityLink> findTouching(Long activityId);
 
+    boolean existsByFromActivityIdOrToActivityId(Long fromActivityId, Long toActivityId);
+
     Optional<ActivityLink> findByFromActivityIdAndToActivityId(Long fromActivityId, Long toActivityId);
 
     // 그새 같은 쌍이 생겼으면(두 번 눌렀을 때) 아무것도 넣지 않고 빈 값
