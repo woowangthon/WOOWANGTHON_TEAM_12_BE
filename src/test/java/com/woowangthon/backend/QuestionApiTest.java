@@ -921,6 +921,20 @@ class QuestionApiTest {
     }
 
     @Test
+    void 지원처_이름을_고치고_비운다() throws Exception {
+        long applicationId = submitApplication(APPLICATION);
+        awaitApplication(applicationId);
+        patchApplication(applicationId, "{\"organization\": \"  OO 부트캠프 백엔드 4기  \"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.organization").value("OO 부트캠프 백엔드 4기"));
+        patchApplication(applicationId, "{\"organization\": \"   \"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.organization").isEmpty());
+        expectError(patchApplication(applicationId, "{\"organization\": \"%s\"}".formatted("가".repeat(101))),
+                400, "INVALID_REQUEST");
+    }
+
+    @Test
     void 다른_사용자의_지원은_보이지_않는다() throws Exception {
         long applicationId = submitApplication(APPLICATION);
         awaitApplication(applicationId);
@@ -1014,7 +1028,6 @@ class QuestionApiTest {
         long applicationId = submitApplication("""
                 {"organizationType": "BOOTCAMP", "jobRole": "BACKEND", "questions": [{"text": "문항"}]}""");
         expectError(patchApplication(applicationId, "{}"), 400, "INVALID_REQUEST");
-        expectError(patchApplication(applicationId, "{\"organization\": \"새 이름\"}"), 400, "INVALID_REQUEST");
         // 하나라도 틀리면 아무것도 바꾸지 않는다
         expectError(patchApplication(applicationId, "{\"organizationType\": \"CLUB\", \"jobRole\": \"X\"}"),
                 400, "INVALID_REQUEST");
