@@ -46,6 +46,12 @@ public class ActivityController {
         return service.merge(activityId, new PatchBody(body));
     }
 
+    @PostMapping("/{activityId}/actor")
+    public ActivityService.ActorDecided decideActor(@PathVariable long activityId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        return service.decideActor(activityId, new PatchBody(body));
+    }
+
     @DeleteMapping("/{activityId}/merge-suggestion")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void dismissMergeSuggestion(@PathVariable long activityId) {

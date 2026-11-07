@@ -139,6 +139,18 @@ public class Experience {
     }
 
     /**
+     * 활동 단위로 수행 주체를 정한다(S-76) — 아직 UNKNOWN 일 때만 바꾸고, 바꿨으면 true. 이미 ME · TEAM 으로 정한 값은 덮지 않는다.
+     * editByUser 와 달리 출처 상태 · 외부 AI 확인 표시는 그대로다 — 본문을 고친 게 아니다.
+     */
+    public boolean decideActorIfUnknown(Actor decided) {
+        if (actor != Actor.UNKNOWN) {
+            return false;
+        }
+        actor = decided;
+        return true;
+    }
+
+    /**
      * 외부 AI 가 본문을 고친다 — 본문만 바뀌고 「확인 필요」로 낮춘다. 사용자가 정하기 전엔 초안 · 근거 점검의 근거가 되지 않는다(S-53 · ADR-010).
      * 역량 · 역량 출처 · 수행 주체 · 근거 · 보완은 그대로다.
      */
