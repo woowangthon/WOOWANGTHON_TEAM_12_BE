@@ -3,6 +3,7 @@ package com.woowangthon.backend.activity;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
+import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceService;
 import com.woowangthon.backend.question.RecommendationRepository;
@@ -135,6 +136,38 @@ public class ActivityService {
     @Transactional
     public void dismissMergeSuggestion(long activityId) {
         find(activityId).dismissMergeSuggestion();
+    }
+
+    public record ActorDecided(int changed) {
+    }
+
+    /**
+     * 활동의 수행 주체 한 번에 정하기(계약 「POST /api/activities/{activityId}/actor」 · S-76) — 그 활동의 UNKNOWN 경험만 ME · TEAM 으로.
+     * 출처 상태 · 본문 · 근거는 그대로다. AI 를 부르지 않고 분석 횟수를 세지 않는다.
+     */
+    @Transactional
+    public ActorDecided decideActor(long activityId, PatchBody body) {
+        Actor decided = parseDecidedActor(body.string("actor").map(PatchBody.Field::value).orElse(null));
+        Activity activity = find(activityId);
+        int changed = 0;
+        for (Experience experience : activity.getExperiences()) {
+            if (experience.decideActorIfUnknown(decided)) {
+                changed++;
+            }
+        }
+        activities.flush();
+        return new ActorDecided(changed);
+    }
+
+    // 정하는 값이라 UNKNOWN 은 받지 않는다
+    private static Actor parseDecidedActor(String value) {
+        if (Actor.ME.name().equals(value)) {
+            return Actor.ME;
+        }
+        if (Actor.TEAM.name().equals(value)) {
+            return Actor.TEAM;
+        }
+        throw ApiException.invalidRequest("actor 는 ME · TEAM 중 하나여야 합니다: " + value);
     }
 
     /** 자료 넣기 되돌리기(S-54) — 활동에 경험 · 계기 · 이어짐이 하나도 없으면 지운다. 합치기로 이미 없어졌으면 그냥 넘어간다. */
