@@ -74,6 +74,11 @@ public class Application {
         this.postingUrl = postingUrl;
     }
 
+    /** 지원처 이름을 바꾼다 — null 이면 비운다(S-73). */
+    public void changeOrganization(String organization) {
+        this.organization = organization;
+    }
+
     /** 지원처 종류를 바꾼다 — null 이면 비운다(S-42). */
     public void changeOrganizationType(OrganizationType organizationType) {
         this.organizationType = organizationType;

@@ -77,6 +77,10 @@ public class Source {
         return text;
     }
 
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
+    }
+
     public List<SourceSection> getSections() {
         return List.copyOf(sections);
     }

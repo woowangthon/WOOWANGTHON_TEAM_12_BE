@@ -185,6 +185,33 @@ class AnalysisJobApiTest {
         jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity_link, activity, source_section, source");
     }
 
+    // --- 원문 읽기 (S-74) ---
+
+    @Test
+    void 내_자료의_원문을_읽는다() throws Exception {
+        Source source = savedSource("회고.md");
+        mvc.perform(get("/api/sources/{id}", source.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(source.getId()))
+                .andExpect(jsonPath("$.name").value("회고.md"))
+                .andExpect(jsonPath("$.text").value("내용"))
+                .andExpect(jsonPath("$.createdAt").isString());
+        assertThat(usage()).isZero();
+    }
+
+    @Test
+    void 없는_자료와_남의_자료는_404() throws Exception {
+        expectError(mvc.perform(get("/api/sources/{id}", 999_999)), 404, "SOURCE_NOT_FOUND");
+        Source source = savedSource("회고.md");
+        Long other = jdbc.queryForObject("insert into app_user (name) values ('다른 사용자') returning id", Long.class);
+        try {
+            expectError(TestLogin.mvc(context, other).perform(get("/api/sources/{id}", source.getId())),
+                    404, "SOURCE_NOT_FOUND");
+        } finally {
+            jdbc.update("delete from app_user where id = ?", other);
+        }
+    }
+
     // --- 자료 넣기 → 완료 ---
 
     @Test
