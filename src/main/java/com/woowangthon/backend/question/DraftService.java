@@ -63,10 +63,11 @@ public class DraftService {
     private final ClarificationRepository clarifications;
     private final SupplementRepository supplements;
     private final GuidelineRepository guidelines;
+    private final DraftSentenceRepository sentences;
 
     public DraftService(QuestionRepository questions, DraftRepository drafts, ExperienceRepository experiences,
             SentenceEvidence evidence, UsageLimiter limiter, ClarificationRepository clarifications,
-            SupplementRepository supplements, GuidelineRepository guidelines) {
+            SupplementRepository supplements, GuidelineRepository guidelines, DraftSentenceRepository sentences) {
         this.questions = questions;
         this.drafts = drafts;
         this.experiences = experiences;
@@ -75,6 +76,7 @@ public class DraftService {
         this.clarifications = clarifications;
         this.supplements = supplements;
         this.guidelines = guidelines;
+        this.sentences = sentences;
     }
 
     /**
@@ -84,8 +86,9 @@ public class DraftService {
     public record StartRequest(List<Long> experienceIds, DraftFrame frame, Object useContext) {
     }
 
-    /** note 는 ELABORATED 만 있다. */
-    public record Sentence(DraftSentenceKind kind, String text, List<SentenceEvidence.Ref> evidence, String note) {
+    /** note 는 ELABORATED 만 있다. confirmed 는 카드에서 「맞아요」를 눌렀나(S-79). */
+    public record Sentence(Long id, DraftSentenceKind kind, String text, List<SentenceEvidence.Ref> evidence, String note,
+            boolean confirmed) {
     }
 
     /**
@@ -108,8 +111,8 @@ public class DraftService {
     /**
      * 초안을 시작한다 — 그 문항의 예전 초안을 이것으로 바꾼다. 진행 중(409) · 한도(429)면 예전 것을 그대로 둔다. 문항 행을 잠가 두 번 눌러도
      * 하나만 시작한다. 예전 초안의 되묻기는 지운다 — 그 ID 로는 더 답할 수 없고, 이미 쌓인 보완은 남는다. 답 저장도 같은 문항 행을 잠그므로
-     * 교체와 겹쳐 지운 되묻기로 보완이 생기지 않는다(ClarificationService). 예전 초안의 빠진 사실에 하나라도 답했으면 분석 횟수를 세지
-     * 않는다(S-77).
+     * 교체와 겹쳐 지운 되묻기로 보완이 생기지 않는다(ClarificationService). 예전 초안의 빠진 사실에 하나라도 답했거나, 예전 초안을 시작한 뒤
+     * 그 재료 경험의 주체를 정했으면(S-76) 분석 횟수를 세지 않는다(S-77).
      */
     @Transactional
     public DraftView start(long questionId, StartRequest request) {
@@ -127,7 +130,7 @@ public class DraftService {
             throw new ApiException(HttpStatus.CONFLICT, "DRAFT_IN_PROGRESS",
                     "문항 " + questionId + " 의 초안을 아직 만드는 중입니다");
         }
-        if (!answeredOmitted(draft)) {
+        if (!answeredOmitted(draft) && !actorDecidedSince(draft, question.getUserId())) {
             limiter.consume(question.getUserId());
         }
         if (draft == null) {
@@ -403,8 +406,8 @@ public class DraftService {
         List<Long> chosen = d.getExperienceIds().stream()
                 .filter(id -> current.containsKey(SentenceEvidence.key(EvidenceType.EXPERIENCE, id))).toList();
         List<Sentence> sentences = d.getSentences().stream()
-                .map(s -> new Sentence(s.getKind(), s.getText(), SentenceEvidence.resolve(s.getEvidence(), current),
-                        s.getNote()))
+                .map(s -> new Sentence(s.getId(), s.getKind(), s.getText(),
+                        SentenceEvidence.resolve(s.getEvidence(), current), s.getNote(), s.isConfirmed()))
                 .toList();
         ErrorResponse.Error error = d.getErrorCode() == null ? null
                 : new ErrorResponse.Error(d.getErrorCode(), d.getErrorMessage());
@@ -439,6 +442,30 @@ public class DraftService {
         List<Long> asked = draft.getOmitted().stream().map(DraftOmitted::getClarificationId).filter(Objects::nonNull)
                 .toList();
         return !asked.isEmpty() && !supplements.findByClarificationIdIn(asked).isEmpty();
+    }
+
+    /**
+     * 그 초안을 시작한 뒤 재료 경험의 주체가 UNKNOWN 에서 정해졌나(S-77). 보조 재료는 저장하지 않으므로, 켠 초안은 고른 경험의 활동 전체를 본다
+     * — 주체도 활동 단위로 정한다(S-76).
+     */
+    private boolean actorDecidedSince(Draft draft, long userId) {
+        if (draft == null || draft.getCreatedAt() == null) {
+            return false;
+        }
+        List<Experience> chosen = experiences.findAllOwned(draft.getExperienceIds(), userId);
+        List<Experience> material = !draft.isUseContext() || chosen.isEmpty() ? chosen
+                : experiences.findRecentInActivities(
+                        chosen.stream().map(e -> e.getActivity().getId()).distinct().toList(), userId);
+        return material.stream().map(Experience::getActorDecidedAt)
+                .anyMatch(at -> at != null && at.isAfter(draft.getCreatedAt()));
+    }
+
+    /** 카드의 「맞아요」(S-79) — 다시 눌러도 같다. 없거나 남의 것이거나 다시 만들어 사라진 문장이면 404. */
+    @Transactional
+    public void confirm(long sentenceId) {
+        if (sentences.confirmOwned(sentenceId, CurrentUser.id()) == 0) {
+            throw ApiException.notFound("DRAFT_SENTENCE_NOT_FOUND", "초안 문장 " + sentenceId + " 이(가) 없습니다");
+        }
     }
 
     private static boolean useContext(Object value) {

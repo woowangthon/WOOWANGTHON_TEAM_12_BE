@@ -43,6 +43,10 @@ public class DraftSentence {
     // ELABORATED 만 — 왜 확인이 필요한지 한 줄(S-78). 나머지 · 옛 문장은 null
     private String note;
 
+    // 사용자가 카드에서 「맞아요」를 눌렀나(S-79) — 바꾸는 곳은 DraftSentenceRepository.confirmOwned 뿐
+    @Column(nullable = false)
+    private boolean confirmed;
+
     @ElementCollection
     @CollectionTable(name = "draft_sentence_evidence", joinColumns = @JoinColumn(name = "sentence_id"))
     @OrderColumn(name = "position")
@@ -61,6 +65,10 @@ public class DraftSentence {
         this.evidence.addAll(evidence);
     }
 
+    public Long getId() {
+        return id;
+    }
+
     public DraftSentenceKind getKind() {
         return kind;
     }
@@ -71,6 +79,10 @@ public class DraftSentence {
 
     public String getNote() {
         return note;
+    }
+
+    public boolean isConfirmed() {
+        return confirmed;
     }
 
     public List<Evidence> getEvidence() {
