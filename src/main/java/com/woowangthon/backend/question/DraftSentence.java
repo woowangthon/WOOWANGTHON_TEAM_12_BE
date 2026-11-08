@@ -40,6 +40,9 @@ public class DraftSentence {
     @Column(nullable = false)
     private String text;
 
+    // ELABORATED 만 — 왜 확인이 필요한지 한 줄(S-78). 나머지 · 옛 문장은 null
+    private String note;
+
     @ElementCollection
     @CollectionTable(name = "draft_sentence_evidence", joinColumns = @JoinColumn(name = "sentence_id"))
     @OrderColumn(name = "position")
@@ -48,11 +51,13 @@ public class DraftSentence {
     protected DraftSentence() {
     }
 
-    public DraftSentence(Draft draft, int position, DraftSentenceKind kind, String text, List<Evidence> evidence) {
+    public DraftSentence(Draft draft, int position, DraftSentenceKind kind, String text, String note,
+            List<Evidence> evidence) {
         this.draft = draft;
         this.position = position;
         this.kind = kind;
         this.text = text;
+        this.note = note;
         this.evidence.addAll(evidence);
     }
 
@@ -62,6 +67,10 @@ public class DraftSentence {
 
     public String getText() {
         return text;
+    }
+
+    public String getNote() {
+        return note;
     }
 
     public List<Evidence> getEvidence() {

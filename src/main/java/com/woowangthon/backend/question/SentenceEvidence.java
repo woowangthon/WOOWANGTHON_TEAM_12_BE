@@ -22,7 +22,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class SentenceEvidence {
 
-    public record Ref(EvidenceType type, Long id, Long experienceId, Long activityId, String text) {
+    /** sourceName 은 CITATION 이면 그 발췌가 나온 자료 이름, question 은 SUPPLEMENT 면 그 보완의 질문 — 그 밖엔 null(S-75). */
+    public record Ref(EvidenceType type, Long id, Long experienceId, Long activityId, String text, String sourceName,
+            String question) {
     }
 
     private final ExperienceRepository experiences;
@@ -37,14 +39,16 @@ public class SentenceEvidence {
         for (Experience e : experiences.findAllOfUser(userId)) {
             Long activityId = e.getActivity().getId();
             current.put(key(EvidenceType.EXPERIENCE, e.getId()),
-                    new Ref(EvidenceType.EXPERIENCE, e.getId(), e.getId(), activityId, e.getContent()));
+                    new Ref(EvidenceType.EXPERIENCE, e.getId(), e.getId(), activityId, e.getContent(), null, null));
             for (Citation c : e.getCitations()) {
                 current.put(key(EvidenceType.CITATION, c.getId()),
-                        new Ref(EvidenceType.CITATION, c.getId(), e.getId(), activityId, c.getQuote()));
+                        new Ref(EvidenceType.CITATION, c.getId(), e.getId(), activityId, c.getQuote(),
+                                c.getSource().getName(), null));
             }
             for (Supplement s : e.getSupplements()) {
                 current.put(key(EvidenceType.SUPPLEMENT, s.getId()),
-                        new Ref(EvidenceType.SUPPLEMENT, s.getId(), e.getId(), activityId, s.getAnswer()));
+                        new Ref(EvidenceType.SUPPLEMENT, s.getId(), e.getId(), activityId, s.getAnswer(), null,
+                                s.getQuestion()));
             }
         }
         return current;

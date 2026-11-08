@@ -12,11 +12,12 @@ public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> 
         List<GuidelineResult> guidelines, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record SentenceResult(String kind, String text, List<MatchResponse.EvidenceResult> evidence) {
+    public record SentenceResult(String kind, String text, List<MatchResponse.EvidenceResult> evidence, String note) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record OmittedResult(String text, String question, Long experienceId) {
+    public record OmittedResult(String text, String question, Long experienceId, String placeholder,
+            Integer sentenceIndex) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

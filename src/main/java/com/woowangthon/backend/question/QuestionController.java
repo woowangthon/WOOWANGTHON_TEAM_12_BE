@@ -44,9 +44,9 @@ public class QuestionController {
     }
 
     @PatchMapping("/{questionId}")
-    public QuestionResponses.Detail updateType(@PathVariable long questionId,
+    public QuestionResponses.Detail update(@PathVariable long questionId,
             @RequestBody(required = false) Map<String, Object> body) {
-        return service.updateType(questionId, new PatchBody(body));
+        return service.update(questionId, new PatchBody(body));
     }
 
     @PostMapping("/{questionId}/retry")

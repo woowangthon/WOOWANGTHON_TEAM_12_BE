@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -32,6 +33,10 @@ public class QuestionService {
 
     static final int MAX_ORGANIZATION_LENGTH = 100;
     static final int MAX_TEXT_LENGTH = 5000;
+
+    // question-api.md 「PATCH /api/questions/{questionId}」 targetLength(S-77)
+    private static final int MIN_TARGET_LENGTH = 100;
+    private static final int MAX_TARGET_LENGTH = 5000;
 
     // ai-api.md 「응답 규칙」
     private static final int MAX_REQUIREMENTS = 6;
@@ -108,18 +113,34 @@ public class QuestionService {
         return detail(question);
     }
 
-    /** 문항 유형을 사용자가 고른다(S-41) — 분석 중 · 실패한 문항도 된다. null 로 AI 값에 되돌리기는 없다. */
+    /**
+     * 문항 유형(S-41) · 목표 글자 수(S-77)를 사용자가 고친다 — 보낸 필드만, 둘 중 하나 이상. 분석 중 · 실패한 문항도 된다. 유형은 null 로 AI 값에
+     * 되돌리기가 없고, 목표 글자 수는 null 이면 비운다.
+     */
     @Transactional
-    public QuestionResponses.Detail updateType(long questionId, PatchBody body) {
-        String raw = body.string("questionType").map(PatchBody.Field::value)
-                .orElseThrow(() -> ApiException.invalidRequest("questionType 이 없습니다"));
-        QuestionType type = value(QuestionType.class, raw, "questionType");
-        if (type == null) {
+    public QuestionResponses.Detail update(long questionId, PatchBody body) {
+        Optional<PatchBody.Field<String>> typeField = body.string("questionType");
+        Optional<PatchBody.Field<Long>> lengthField = body.id("targetLength");
+        if (typeField.isEmpty() && lengthField.isEmpty()) {
+            throw ApiException.invalidRequest("questionType · targetLength 중 하나 이상을 보내야 합니다");
+        }
+        QuestionType type = typeField.map(f -> value(QuestionType.class, f.value(), "questionType")).orElse(null);
+        if (typeField.isPresent() && type == null) {
             throw ApiException.invalidRequest("questionType 은 null 일 수 없습니다");
+        }
+        Long length = lengthField.map(PatchBody.Field::value).orElse(null);
+        if (length != null && (length < MIN_TARGET_LENGTH || length > MAX_TARGET_LENGTH)) {
+            throw ApiException.invalidRequest(
+                    "targetLength 는 " + MIN_TARGET_LENGTH + " ~ " + MAX_TARGET_LENGTH + " 사이여야 합니다");
         }
         Question question = questions.findForUpdate(questionId, CurrentUser.id())
                 .orElseThrow(() -> notFound(questionId));
-        question.chooseType(type);
+        if (type != null) {
+            question.chooseType(type);
+        }
+        if (lengthField.isPresent()) {
+            question.setTargetLength(length == null ? null : length.intValue());
+        }
         questions.flush();
         return detail(question);
     }

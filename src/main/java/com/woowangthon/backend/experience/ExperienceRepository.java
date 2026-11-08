@@ -25,7 +25,12 @@ public interface ExperienceRepository extends JpaRepository<Experience, Long> {
             + "order by a.periodStart asc nulls last, a.id asc, e.position asc, e.id asc")
     List<Experience> findAllOfUser(Long userId);
 
-    // 공개 조건 — 고른 경험 중 「확인 필요」가 아닌 것(share-api.md). 순서는 타임라인 · 활동 세부와 같다
+    // 초안의 보조 재료 후보(S-75) — 그 활동들의 경험, 최근에 생긴 것부터
+    @Query("select e from Experience e join fetch e.activity a where a.id in :activityIds and a.userId = :userId "
+            + "order by e.createdAt desc, e.id desc")
+    List<Experience> findRecentInActivities(Collection<Long> activityIds, Long userId);
+
+    // 공개 조건 —고른 경험 중 「확인 필요」가 아닌 것(share-api.md). 순서는 타임라인 · 활동 세부와 같다
     @Query("select e from Experience e join fetch e.activity a where a.userId = :userId and e.shared = true "
             + "and e.sourceStatus <> com.woowangthon.backend.experience.SourceStatus.NEEDS_REVIEW "
             + "order by a.periodStart asc nulls last, a.id asc, e.position asc, e.id asc")
