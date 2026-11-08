@@ -104,7 +104,7 @@ public class DraftService {
     }
 
     public record DraftView(Long questionId, JobStatus status, ErrorResponse.Error error, List<Long> experienceIds,
-            List<Sentence> sentences, List<Omitted> omitted, DraftFrame frame, boolean useContext,
+            List<Sentence> sentences, List<Omitted> omitted, DraftFrame frame, boolean useContext, boolean freeRegenerate,
             List<AppliedGuideline> guidelines, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
     }
 
@@ -130,7 +130,7 @@ public class DraftService {
             throw new ApiException(HttpStatus.CONFLICT, "DRAFT_IN_PROGRESS",
                     "문항 " + questionId + " 의 초안을 아직 만드는 중입니다");
         }
-        if (!answeredOmitted(draft) && !actorDecidedSince(draft, question.getUserId())) {
+        if (!freeRegenerate(draft, question.getUserId())) {
             limiter.consume(question.getUserId());
         }
         if (draft == null) {
@@ -415,7 +415,8 @@ public class DraftService {
                 : d.getGuidelines().stream().map(g -> new AppliedGuideline(g.getGuidelineId(), g.getText(), g.getSource(),
                         g.getApplied(), g.getNote())).toList();
         return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current), d.getFrame(),
-                d.isUseContext(), applied, Times.seoul(d.getCreatedAt()),
+                d.isUseContext(), d.getStatus() != JobStatus.ANALYZING && freeRegenerate(d, userId), applied,
+                Times.seoul(d.getCreatedAt()),
                 d.getUpdatedAt() == null ? null : Times.seoul(d.getUpdatedAt()));
     }
 
@@ -432,6 +433,11 @@ public class DraftService {
                         o.getClarificationId() == null ? null : answered.get(o.getClarificationId()), o.getPlaceholder(),
                         o.getSentenceIndex()))
                 .toList();
+    }
+
+    /** 지금 다시 만들면 분석 횟수를 세지 않는가(S-77) — 시작할 때 세는 판단과 응답의 freeRegenerate 가 같은 코드를 쓴다. */
+    private boolean freeRegenerate(Draft draft, long userId) {
+        return answeredOmitted(draft) || actorDecidedSince(draft, userId);
     }
 
     // 지금 초안의 빠진 사실 중 답해서 보완이 생긴 것이 있나 — 있으면 다시 만들기를 세지 않는다(S-77)
