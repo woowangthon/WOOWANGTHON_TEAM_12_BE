@@ -62,6 +62,10 @@ public class Draft {
     @Column(nullable = false)
     private DraftFrame frame = DraftFrame.NONE;
 
+    // 같은 활동의 다른 경험도 뒷받침 재료로 쓰나(S-75) — 요청 값 그대로, 다시 만들 때 FE 가 골라 둔다
+    @Column(nullable = false)
+    private boolean useContext = true;
+
     // 초안을 시작할 때 켜 둔 지침 — 실패하면 비운다(계약: ANALYZING · FAILED 면 응답은 [])
     @ElementCollection
     @CollectionTable(name = "draft_guideline", joinColumns = @JoinColumn(name = "draft_id"))
@@ -86,13 +90,14 @@ public class Draft {
         this.questionId = questionId;
     }
 
-    /** 고른 경험 · 틀 · 지금 켜 둔 지침으로 새로 만든다 — 예전 결과 · 실패 이유를 지운다. */
-    public void start(List<Long> chosen, DraftFrame newFrame, List<DraftGuideline> enabled) {
+    /** 고른 경험 · 틀 · 보조 재료 쓰기 · 지금 켜 둔 지침으로 새로 만든다 — 예전 결과 · 실패 이유를 지운다. */
+    public void start(List<Long> chosen, DraftFrame newFrame, boolean withContext, List<DraftGuideline> enabled) {
         sentences.clear();
         omitted.clear();
         experienceIds.clear();
         experienceIds.addAll(chosen);
         frame = newFrame;
+        useContext = withContext;
         guidelines.clear();
         guidelines.addAll(enabled);
         legacyOmitted = false;
@@ -159,6 +164,10 @@ public class Draft {
 
     public DraftFrame getFrame() {
         return frame;
+    }
+
+    public boolean isUseContext() {
+        return useContext;
     }
 
     public List<DraftGuideline> getGuidelines() {

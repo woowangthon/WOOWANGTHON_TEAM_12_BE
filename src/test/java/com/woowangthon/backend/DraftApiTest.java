@@ -658,7 +658,9 @@ class DraftApiTest {
         for (String body : bodies) {
             jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID); // 경우가 많아 하루 한도에 닿지 않게
             draftReply = new FakeReply(200, body, 0);
-            start(chat, study).andExpect(status().isAccepted());
+            // 보조 재료를 끈다 — 같은 활동의 stranger 가 「보내지 않은 경험」으로 남게(S-75)
+            postJson("{\"experienceIds\": [%d, %d], \"useContext\": false}".formatted(chat, study))
+                    .andExpect(status().isAccepted());
             String failed = awaitDraft();
             assertThat((String) JsonPath.read(failed, "$.draft.status")).as(body).isEqualTo("FAILED");
             assertThat((String) JsonPath.read(failed, "$.draft.error.code")).as(body).isEqualTo("AI_FAILED");
@@ -672,7 +674,7 @@ class DraftApiTest {
     @Test
     void 서버가_다시_켜지면_만들던_초안은_실패가_된다() {
         Draft draft = new Draft(questionId);
-        draft.start(List.of(chat), DraftFrame.NONE, List.of());
+        draft.start(List.of(chat), DraftFrame.NONE, true, List.of());
         drafts.save(draft);
 
         cleaner.run(null);

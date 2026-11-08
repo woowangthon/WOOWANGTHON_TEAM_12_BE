@@ -27,11 +27,12 @@ public final class QuestionResponses {
     }
 
     public record Summary(Long id, Long applicationId, String organization, String text, QuestionType questionType,
-            QuestionTypeBy questionTypeBy, JobStatus status, OffsetDateTime createdAt) {
+            QuestionTypeBy questionTypeBy, Integer targetLength, JobStatus status, OffsetDateTime createdAt) {
 
         static Summary from(Question q) {
             return new Summary(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(),
-                    q.getQuestionType(), q.getQuestionTypeBy(), q.getStatus(), Times.seoul(q.getCreatedAt()));
+                    q.getQuestionType(), q.getQuestionTypeBy(), q.getTargetLength(), q.getStatus(),
+                    Times.seoul(q.getCreatedAt()));
         }
     }
 
@@ -86,6 +87,7 @@ public final class QuestionResponses {
             String text,
             QuestionType questionType,
             QuestionTypeBy questionTypeBy,
+            Integer targetLength,
             JobStatus status,
             ErrorResponse.Error error,
             List<RequirementResponse> requirements,
@@ -130,7 +132,7 @@ public final class QuestionResponses {
                                     .map(Supplement::getId).findFirst().orElse(null)))
                     .toList();
             return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getQuestionType(),
-                    q.getQuestionTypeBy(), q.getStatus(), error, requirements, recommendations, clarifications, draft, answer,
+                    q.getQuestionTypeBy(), q.getTargetLength(), q.getStatus(), error, requirements, recommendations, clarifications, draft, answer,
                     Times.seoul(q.getCreatedAt()), Times.seoul(q.getUpdatedAt()));
         }
 

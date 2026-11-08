@@ -62,6 +62,9 @@ public class Question {
     @Enumerated(EnumType.STRING)
     private QuestionTypeBy questionTypeBy;
 
+    // 목표 글자 수(S-77) — 사용자가 정한다. 매칭 · 다시 시도와 상관없다
+    private Integer targetLength;
+
     @ElementCollection
     @CollectionTable(name = "question_requirement", joinColumns = @JoinColumn(name = "question_id"))
     @OrderColumn(name = "position")
@@ -141,6 +144,11 @@ public class Question {
         questionTypeBy = QuestionTypeBy.USER;
     }
 
+    /** 목표 글자 수를 정하거나(100 ~ 5000 — 부르는 쪽이 확인한다) null 로 비운다. */
+    public void setTargetLength(Integer length) {
+        targetLength = length;
+    }
+
     // 결과와 함께 AI 가 붙인 유형도 지운다 — 사용자가 고른 유형은 남긴다
     private void clearResults() {
         requirements.clear();
@@ -179,6 +187,10 @@ public class Question {
 
     public QuestionTypeBy getQuestionTypeBy() {
         return questionTypeBy;
+    }
+
+    public Integer getTargetLength() {
+        return targetLength;
     }
 
     public JobStatus getStatus() {
