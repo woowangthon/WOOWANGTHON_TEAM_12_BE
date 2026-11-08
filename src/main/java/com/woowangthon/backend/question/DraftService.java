@@ -8,6 +8,7 @@ import com.woowangthon.backend.ai.MatchRequest;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.ErrorResponse;
+import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
@@ -86,9 +87,9 @@ public class DraftService {
     public record StartRequest(List<Long> experienceIds, DraftFrame frame, Object useContext) {
     }
 
-    /** note 는 ELABORATED 만 있다. confirmed 는 카드에서 「맞아요」를 눌렀나(S-79). */
+    /** note 는 ELABORATED 만 있다. confirmed · removed 는 카드에서 「맞아요」 · 「빼기」를 눌렀나(S-79). */
     public record Sentence(Long id, DraftSentenceKind kind, String text, List<SentenceEvidence.Ref> evidence, String note,
-            boolean confirmed) {
+            boolean confirmed, boolean removed) {
     }
 
     /**
@@ -407,7 +408,7 @@ public class DraftService {
                 .filter(id -> current.containsKey(SentenceEvidence.key(EvidenceType.EXPERIENCE, id))).toList();
         List<Sentence> sentences = d.getSentences().stream()
                 .map(s -> new Sentence(s.getId(), s.getKind(), s.getText(),
-                        SentenceEvidence.resolve(s.getEvidence(), current), s.getNote(), s.isConfirmed()))
+                        SentenceEvidence.resolve(s.getEvidence(), current), s.getNote(), s.isConfirmed(), s.isRemoved()))
                 .toList();
         ErrorResponse.Error error = d.getErrorCode() == null ? null
                 : new ErrorResponse.Error(d.getErrorCode(), d.getErrorMessage());
@@ -470,6 +471,19 @@ public class DraftService {
     @Transactional
     public void confirm(long sentenceId) {
         if (sentences.confirmOwned(sentenceId, CurrentUser.id()) == 0) {
+            throw ApiException.notFound("DRAFT_SENTENCE_NOT_FOUND", "초안 문장 " + sentenceId + " 이(가) 없습니다");
+        }
+    }
+
+    /** 카드의 「빼기」 · 「다시 넣기」(S-79) — 같은 값을 다시 보내도 같다. 없거나 남의 것이거나 다시 만들어 사라진 문장이면 404. */
+    @Transactional
+    public void setRemoved(long sentenceId, PatchBody body) {
+        Boolean removed = body.bool("removed").map(PatchBody.Field::value)
+                .orElseThrow(() -> ApiException.invalidRequest("removed 가 없습니다"));
+        if (removed == null) {
+            throw ApiException.invalidRequest("removed 는 true · false 여야 합니다");
+        }
+        if (sentences.setRemovedOwned(sentenceId, CurrentUser.id(), removed) == 0) {
             throw ApiException.notFound("DRAFT_SENTENCE_NOT_FOUND", "초안 문장 " + sentenceId + " 이(가) 없습니다");
         }
     }
