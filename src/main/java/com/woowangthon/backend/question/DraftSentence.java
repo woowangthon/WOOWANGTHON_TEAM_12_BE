@@ -47,6 +47,10 @@ public class DraftSentence {
     @Column(nullable = false)
     private boolean confirmed;
 
+    // 사용자가 카드에서 「빼기」를 눌렀나(S-79) — 바꾸는 곳은 DraftSentenceRepository.setRemovedOwned 뿐
+    @Column(nullable = false)
+    private boolean removed;
+
     @ElementCollection
     @CollectionTable(name = "draft_sentence_evidence", joinColumns = @JoinColumn(name = "sentence_id"))
     @OrderColumn(name = "position")
@@ -83,6 +87,10 @@ public class DraftSentence {
 
     public boolean isConfirmed() {
         return confirmed;
+    }
+
+    public boolean isRemoved() {
+        return removed;
     }
 
     public List<Evidence> getEvidence() {
