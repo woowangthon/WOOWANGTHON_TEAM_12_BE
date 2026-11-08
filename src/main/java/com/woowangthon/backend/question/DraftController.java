@@ -27,4 +27,11 @@ public class DraftController {
         runner.run(questionId);
         return draft;
     }
+
+    /** question-api.md 「POST /api/draft-sentences/{sentenceId}/confirm」 — 카드의 「맞아요」(S-79). */
+    @PostMapping("/api/draft-sentences/{sentenceId}/confirm")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirm(@PathVariable long sentenceId) {
+        service.confirm(sentenceId);
+    }
 }

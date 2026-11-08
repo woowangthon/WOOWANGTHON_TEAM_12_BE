@@ -3,6 +3,7 @@ package com.woowangthon.backend.question;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.MatchRequest;
 import com.woowangthon.backend.ai.MatchResponse;
+import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
@@ -22,9 +23,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class SentenceEvidence {
 
-    /** sourceName 은 CITATION 이면 그 발췌가 나온 자료 이름, question 은 SUPPLEMENT 면 그 보완의 질문 — 그 밖엔 null(S-75). */
+    /**
+     * sourceName 은 CITATION 이면 그 발췌가 나온 자료 이름, question 은 SUPPLEMENT 면 그 보완의 질문 — 그 밖엔 null(S-75).
+     * actor 는 그 경험의 지금 수행 주체(S-79).
+     */
     public record Ref(EvidenceType type, Long id, Long experienceId, Long activityId, String text, String sourceName,
-            String question) {
+            String question, Actor actor) {
     }
 
     private final ExperienceRepository experiences;
@@ -39,16 +43,17 @@ public class SentenceEvidence {
         for (Experience e : experiences.findAllOfUser(userId)) {
             Long activityId = e.getActivity().getId();
             current.put(key(EvidenceType.EXPERIENCE, e.getId()),
-                    new Ref(EvidenceType.EXPERIENCE, e.getId(), e.getId(), activityId, e.getContent(), null, null));
+                    new Ref(EvidenceType.EXPERIENCE, e.getId(), e.getId(), activityId, e.getContent(), null, null,
+                            e.getActor()));
             for (Citation c : e.getCitations()) {
                 current.put(key(EvidenceType.CITATION, c.getId()),
                         new Ref(EvidenceType.CITATION, c.getId(), e.getId(), activityId, c.getQuote(),
-                                c.getSource().getName(), null));
+                                c.getSource().getName(), null, e.getActor()));
             }
             for (Supplement s : e.getSupplements()) {
                 current.put(key(EvidenceType.SUPPLEMENT, s.getId()),
                         new Ref(EvidenceType.SUPPLEMENT, s.getId(), e.getId(), activityId, s.getAnswer(), null,
-                                s.getQuestion()));
+                                s.getQuestion(), e.getActor()));
             }
         }
         return current;

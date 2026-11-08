@@ -89,6 +89,9 @@ public class Experience {
     @Column(nullable = false)
     private boolean saved;
 
+    // 수행 주체가 UNKNOWN 에서 처음 정해진 시각(S-77) — 그 뒤 다시 만든 초안은 세지 않는다. 한 번 채우면 덮지 않는다
+    private OffsetDateTime actorDecidedAt;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -128,7 +131,7 @@ public class Experience {
             changed = true;
         }
         if (newActor != null && newActor != actor) {
-            actor = newActor;
+            changeActor(newActor);
             changed = true;
         }
         if (changed) {
@@ -146,8 +149,16 @@ public class Experience {
         if (actor != Actor.UNKNOWN) {
             return false;
         }
-        actor = decided;
+        changeActor(decided);
         return true;
+    }
+
+    // UNKNOWN 에서 처음 정한 때만 시각을 남긴다 — UNKNOWN 으로 되돌렸다 다시 정해 무료 다시 만들기를 거듭 받지 않게
+    private void changeActor(Actor newActor) {
+        if (actor == Actor.UNKNOWN && newActor != Actor.UNKNOWN && actorDecidedAt == null) {
+            actorDecidedAt = OffsetDateTime.now();
+        }
+        actor = newActor;
     }
 
     /**
@@ -241,6 +252,10 @@ public class Experience {
 
     private static String[] toNames(List<Competency> values) {
         return values.stream().map(Competency::name).toArray(String[]::new);
+    }
+
+    public OffsetDateTime getActorDecidedAt() {
+        return actorDecidedAt;
     }
 
     public Actor getActor() {
