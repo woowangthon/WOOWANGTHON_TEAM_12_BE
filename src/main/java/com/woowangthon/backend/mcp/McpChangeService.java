@@ -4,6 +4,7 @@ import com.woowangthon.backend.activity.ActivityService;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.CitationRepository;
+import com.woowangthon.backend.experience.CompetenciesBy;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.ExperienceService;
@@ -175,7 +176,10 @@ public class McpChangeService {
     }
 
     private static boolean touchedByUser(Experience experience, List<Long> createdActivities, Set<Long> withChange) {
+        // 웹에서 바꾼 것은 무엇이든 남긴다 — 역량 · 주체만 바꿔서는 USER_ENTERED 가 되지 않는다(S-10 · ETC#249)
         return experience.getSourceStatus() == SourceStatus.USER_ENTERED
+                || experience.getCompetenciesBy() == CompetenciesBy.USER
+                || experience.getActorDecidedAt() != null
                 || !experience.getSupplements().isEmpty()
                 || !createdActivities.contains(experience.getActivity().getId())
                 || withChange.contains(experience.getId());

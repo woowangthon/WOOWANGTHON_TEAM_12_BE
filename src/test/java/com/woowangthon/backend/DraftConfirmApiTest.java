@@ -450,15 +450,42 @@ class DraftConfirmApiTest {
     }
 
     @Test
-    void ME_에서_TEAM_으로_바꾸는_것은_다시_만들기를_공짜로_만들지_않는다() throws Exception {
+    void ME_에서_TEAM_으로_바꾸면_다시_만들기가_공짜이고_정한_시각이_남는다() throws Exception {
+        jdbc.update("update experience set actor = 'ME' where id in (?, ?)", chat, study);
+        int base = used();
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(used()).isEqualTo(base + 1);
+        assertThat(actorDecidedAt(chat)).isNull();
+        assertThat(freeRegenerate()).isFalse();
+
+        patchExperience(chat, "{\"actor\": \"TEAM\"}").andExpect(status().isOk());
+        assertThat(actorOf(chat)).isEqualTo("TEAM");
+        assertThat(actorDecidedAt(chat)).isNotNull();
+        assertThat(freeRegenerate()).isTrue();
+
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(used()).isEqualTo(base + 1);
+    }
+
+    @Test
+    void ME_와_TEAM_을_다시_오가도_다시_만들기를_거듭_공짜로_받지_못한다() throws Exception {
         jdbc.update("update experience set actor = 'ME' where id in (?, ?)", chat, study);
         int base = used();
         start(chat).andExpect(status().isAccepted());
         awaitDraft();
 
         patchExperience(chat, "{\"actor\": \"TEAM\"}").andExpect(status().isOk());
-        assertThat(actorOf(chat)).isEqualTo("TEAM");
-        assertThat(actorDecidedAt(chat)).isNull();
+        Object decided = actorDecidedAt(chat);
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(used()).isEqualTo(base + 1);
+
+        // 다시 만든 뒤 한 번 더 바꿔도 시각은 그대로 — 공짜가 아니다
+        patchExperience(chat, "{\"actor\": \"ME\"}").andExpect(status().isOk());
+        assertThat(actorDecidedAt(chat)).isEqualTo(decided);
+        assertThat(freeRegenerate()).isFalse();
 
         start(chat).andExpect(status().isAccepted());
         awaitDraft();
@@ -547,6 +574,10 @@ class DraftConfirmApiTest {
 
     private String actorOf(long experienceId) {
         return jdbc.queryForObject("select actor from experience where id = ?", String.class, experienceId);
+    }
+
+    private boolean freeRegenerate() throws Exception {
+        return JsonPath.read(getQuestion(), "$.draft.freeRegenerate");
     }
 
     private Object actorDecidedAt(long experienceId) {

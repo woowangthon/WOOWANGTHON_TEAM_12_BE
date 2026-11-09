@@ -203,15 +203,15 @@ class McpChangeApiTest {
     }
 
     @Test
-    void 웹에서_고쳤거나_지운_경험은_CHANGED_AFTER_로_막힌다() throws Exception {
+    void 웹에서_본문을_고쳤거나_지운_경험은_CHANGED_AFTER_로_막힌다() throws Exception {
         Map<String, Object> e = confirmedExperience();
         long id = (Long) e.get("id");
         long change = rewrite(id, (String) e.get("content"), "새 본문", "이유");
         web.perform(patch("/api/experiences/{id}", id).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"actor\": \"TEAM\"}")).andExpect(status().isOk());
+                .content("{\"content\": \"내가 고침\"}")).andExpect(status().isOk());
         settle();
 
-        expectBlocked(0, "CHANGED_AFTER"); // 본문은 같지만 NEEDS_REVIEW 가 아니다
+        expectBlocked(0, "CHANGED_AFTER"); // 본문을 고쳐 NEEDS_REVIEW 가 아니다
         undo(change).andExpect(status().isConflict());
         confirm(change).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("MCP_CHANGE_NOT_CONFIRMABLE"));
@@ -222,7 +222,56 @@ class McpChangeApiTest {
         web.perform(get("/api/mcp/changes")).andExpect(jsonPath("$.changes[0].experience.afterContent").value("새 본문"));
     }
 
+    @Test
+    void 웹에서_주체나_역량만_바꾸면_되돌릴_수_있고_mcpChange_가_남는다() throws Exception {
+        Map<String, Object> e = confirmedExperience();
+        long id = (Long) e.get("id");
+        long change = rewrite(id, (String) e.get("content"), "새 본문", "이유");
+
+        web.perform(patch("/api/experiences/{id}", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"actor\": \"TEAM\"}")).andExpect(status().isOk());
+        settle();
+        expectUndoable(0);
+        assertThat(experienceRow(id)).containsEntry("source_status", "NEEDS_REVIEW")
+                .containsEntry("mcp_change_id", change).containsEntry("mcp_client", "claude-ai");
+
+        web.perform(patch("/api/experiences/{id}", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"competencies\": [\"COLLABORATION\"]}")).andExpect(status().isOk());
+        settle();
+        expectUndoable(0);
+        assertThat(experienceRow(id)).containsEntry("source_status", "NEEDS_REVIEW").containsEntry("mcp_change_id", change);
+
+        // 본문을 고치면 확인 대기가 풀리고 되돌릴 수 없다
+        web.perform(patch("/api/experiences/{id}", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\": \"내가 고침\"}")).andExpect(status().isOk());
+        settle();
+        expectBlocked(0, "CHANGED_AFTER");
+        assertThat(experienceRow(id)).containsEntry("source_status", "USER_ENTERED")
+                .containsEntry("mcp_change_id", null).containsEntry("mcp_client", null);
+    }
+
     // --- 자료 넣기 되돌리기 ---
+
+    @Test
+    void 주체를_정했거나_역량을_고친_경험은_자료_넣기를_되돌려도_남는다() throws Exception {
+        Added added = addCompletedSource(3);
+        List<Long> ids = added.experienceIds();
+        // 0 주체 ME 에서 TEAM · 1 역량만 고침 · 2 그대로
+        web.perform(patch("/api/experiences/{id}", ids.get(0)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"actor\": \"TEAM\"}")).andExpect(status().isOk());
+        web.perform(patch("/api/experiences/{id}", ids.get(1)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"competencies\": [\"COLLABORATION\"]}")).andExpect(status().isOk());
+        settle();
+
+        undo(added.changeId()).andExpect(status().isOk())
+                .andExpect(jsonPath("$.removedExperiences").value(1))
+                .andExpect(jsonPath("$.keptExperiences").value(2));
+
+        settle();
+        assertThat(count("experience where id = ?", ids.get(0))).isEqualTo(1);
+        assertThat(count("experience where id = ?", ids.get(1))).isEqualTo(1);
+        assertThat(count("experience where id = ?", ids.get(2))).isZero();
+    }
 
     @Test
     void 자료_넣기를_되돌리면_경험과_빈_활동을_지우고_원본은_남긴다() throws Exception {
