@@ -25,7 +25,8 @@ public class Guideline {
     @Column(nullable = false)
     private String text;
 
-    @Column(nullable = false)
+    /** 선택 — 없으면 null(빈 문자열로 두지 않는다. BE#138). */
+    @Column
     private String source;
 
     @Column(nullable = false)
@@ -49,12 +50,12 @@ public class Guideline {
         this.enabled = enabled;
     }
 
-    /** null 인 칸은 그대로 둔다 — 값 확인은 GuidelineService 가 먼저 한다. */
-    void edit(String newText, String newSource, Boolean newEnabled) {
+    /** null 인 칸은 그대로 둔다 — 값 확인은 GuidelineService 가 먼저 한다. 출처만 null 이 「지움」이라 sourceGiven 으로 구분한다. */
+    void edit(String newText, boolean sourceGiven, String newSource, Boolean newEnabled) {
         if (newText != null) {
             text = newText;
         }
-        if (newSource != null) {
+        if (sourceGiven) {
             source = newSource;
         }
         if (newEnabled != null) {

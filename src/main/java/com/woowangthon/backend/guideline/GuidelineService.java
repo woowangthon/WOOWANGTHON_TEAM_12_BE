@@ -105,7 +105,7 @@ public class GuidelineService {
             throw new ApiException(HttpStatus.CONTENT_TOO_LARGE, "TEXT_TOO_LONG",
                     "텍스트가 " + MAX_EXTRACT_TEXT_LENGTH + "자를 넘습니다");
         }
-        checkLine("source", request.source(), MAX_SOURCE_LENGTH);
+        String source = optionalLine("source", request.source(), MAX_SOURCE_LENGTH);
 
         long userId = CurrentUser.id();
         tx.executeWithoutResult(status -> limiter.consume(userId));
@@ -113,7 +113,7 @@ public class GuidelineService {
             GuidelinesResponse response = ai.guidelines(new GuidelinesRequest(text));
             List<Candidate> candidates = candidates(response);
             log.info("지침 정리 — 후보 {}개, 모델 {}", candidates.size(), response.model());
-            return new ExtractResult(request.source(), candidates);
+            return new ExtractResult(source, candidates);
         } catch (AiCallException e) {
             log.warn("지침 정리 실패 — {} {}", e.code(), e.getMessage());
             throw EntranceService.toApi(e);
@@ -148,12 +148,13 @@ public class GuidelineService {
         if (lines == null || lines.isEmpty() || lines.size() > MAX_PER_SAVE) {
             throw ApiException.invalidRequest("guidelines 는 1 ~ " + MAX_PER_SAVE + "개여야 합니다");
         }
+        List<Line> checked = new ArrayList<>();
         for (Line line : lines) {
             if (line == null) {
                 throw ApiException.invalidRequest("guidelines 에 빈 값이 있습니다");
             }
-            checkLine("text", line.text(), MAX_TEXT_LENGTH);
-            checkLine("source", line.source(), MAX_SOURCE_LENGTH);
+            checked.add(new Line(checkLine("text", line.text(), MAX_TEXT_LENGTH),
+                    optionalLine("source", line.source(), MAX_SOURCE_LENGTH)));
         }
 
         long userId = CurrentUser.id();
@@ -163,7 +164,7 @@ public class GuidelineService {
         }
         long enabled = guidelines.countByUserIdAndEnabledTrue(userId);
         List<Guideline> created = new ArrayList<>();
-        for (Line line : lines) {
+        for (Line line : checked) {
             boolean on = enabled < MAX_ENABLED;
             created.add(new Guideline(userId, line.text(), line.source(), on));
             enabled += on ? 1 : 0;
@@ -182,7 +183,8 @@ public class GuidelineService {
             throw ApiException.invalidRequest("바꿀 필드가 없습니다");
         }
         String newText = text.map(f -> checkLine("text", f.value(), MAX_TEXT_LENGTH)).orElse(null);
-        String newSource = source.map(f -> checkLine("source", f.value(), MAX_SOURCE_LENGTH)).orElse(null);
+        // 출처는 null · 빈 값이면 지운다 — 그래서 보냈는지(source.isPresent)를 따로 넘긴다
+        String newSource = source.map(f -> optionalLine("source", f.value(), MAX_SOURCE_LENGTH)).orElse(null);
         Boolean newEnabled = enabled.map(f -> {
             if (f.value() == null) {
                 throw ApiException.invalidRequest("enabled 는 true · false 여야 합니다");
@@ -197,7 +199,7 @@ public class GuidelineService {
                 && guidelines.countByUserIdAndEnabledTrue(userId) >= MAX_ENABLED) {
             throw new ApiException(HttpStatus.CONFLICT, "TOO_MANY_ENABLED", "지침은 " + MAX_ENABLED + "개까지 켤 수 있습니다");
         }
-        guideline.edit(newText, newSource, newEnabled);
+        guideline.edit(newText, source.isPresent(), newSource, newEnabled);
         return GuidelineView.from(guidelines.saveAndFlush(guideline));
     }
 
@@ -216,6 +218,14 @@ public class GuidelineService {
             throw ApiException.invalidRequest(name + " 은(는) 줄바꿈 없는 1 ~ " + maxLength + "자여야 합니다");
         }
         return value;
+    }
+
+    /** 선택 칸 — 비었거나 null · 공백뿐이면 null 로 돌린다. 값이 있으면 줄바꿈 없는 1 ~ maxLength자. */
+    private static String optionalLine(String name, String value, int maxLength) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return checkLine(name, value, maxLength);
     }
 
     private static boolean isLine(String value, int maxLength) {

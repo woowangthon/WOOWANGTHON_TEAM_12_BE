@@ -16,7 +16,7 @@ public class DraftGuideline {
     @Column(name = "text", nullable = false)
     private String text;
 
-    @Column(name = "source", nullable = false)
+    @Column(name = "source")
     private String source;
 
     @Column(name = "applied")
