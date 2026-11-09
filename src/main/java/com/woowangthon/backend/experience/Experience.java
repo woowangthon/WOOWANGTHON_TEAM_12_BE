@@ -115,26 +115,25 @@ public class Experience {
     }
 
     /**
-     * 사용자가 고친 값을 넣는다(null 인 인자는 안 보낸 필드 — competencies 를 지우는 건 빈 목록). 실제로 바뀐 값이 하나라도 있으면
-     * 출처 상태를 「내가 입력」으로 바꾼다. 역량이 실제로 바뀌었을 때만 역량 출처를 USER 로 바꾼다. 근거는 건드리지 않는다(S-10).
+     * 사용자가 고친 값을 넣는다(null 인 인자는 안 보낸 필드 — competencies 를 지우는 건 빈 목록). 본문이 실제로 바뀌었을 때만
+     * 출처 상태를 「내가 입력」으로 바꾸고 외부 AI 확인 대기를 푼다 — 주체 · 역량을 정한 것은 본문을 확인한 게 아니다(S-10 · ETC#249).
+     * 역량이 실제로 바뀌었을 때만 역량 출처를 USER 로 바꾼다. 근거는 건드리지 않는다.
      */
     public void editByUser(String newContent, List<Competency> newCompetencies, Actor newActor) {
-        boolean changed = false;
+        boolean contentChanged = false;
         if (newContent != null && !newContent.equals(content)) {
             content = newContent;
-            changed = true;
+            contentChanged = true;
         }
         // 통째로 바꾼다 — 순서가 다르면 바뀐 것
         if (newCompetencies != null && !Arrays.equals(toNames(newCompetencies), competencies)) {
             competencies = toNames(newCompetencies);
             competenciesBy = CompetenciesBy.USER;
-            changed = true;
         }
         if (newActor != null && newActor != actor) {
             changeActor(newActor);
-            changed = true;
         }
-        if (changed) {
+        if (contentChanged) {
             sourceStatus = SourceStatus.USER_ENTERED;
             mcpChangeId = null;
             mcpClient = null;
@@ -153,9 +152,10 @@ public class Experience {
         return true;
     }
 
-    // UNKNOWN 에서 처음 정한 때만 시각을 남긴다 — UNKNOWN 으로 되돌렸다 다시 정해 무료 다시 만들기를 거듭 받지 않게
+    // 처음 정하거나 바꾼 때만 시각을 남긴다(ME↔TEAM 포함, S-77) — 바꿨다 되돌려 무료 다시 만들기를 거듭 받지 않게.
+    // 외부 AI 되돌리기의 「사용자가 손댄 경험」에도 쓴다
     private void changeActor(Actor newActor) {
-        if (actor == Actor.UNKNOWN && newActor != Actor.UNKNOWN && actorDecidedAt == null) {
+        if (newActor != actor && newActor != Actor.UNKNOWN && actorDecidedAt == null) {
             actorDecidedAt = OffsetDateTime.now();
         }
         actor = newActor;

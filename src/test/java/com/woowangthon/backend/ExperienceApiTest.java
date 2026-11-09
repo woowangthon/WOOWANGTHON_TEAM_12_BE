@@ -247,8 +247,9 @@ class ExperienceApiTest {
     }
 
     @Test
-    void 역량은_빈_배열로_지울_수_있다() throws Exception {
+    void 역량을_빈_배열로_지워도_출처_상태는_그대로고_역량_출처만_USER_가_된다() throws Exception {
         long experienceId = firstExperienceId(appId, 1);
+        String statusBefore = statusOf(experienceId);
 
         patchJson("/api/experiences/" + experienceId, """
                 {"competencies": []}
@@ -256,11 +257,11 @@ class ExperienceApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.competencies.length()").value(0))
                 .andExpect(jsonPath("$.competenciesBy").value("USER"))
-                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
+                .andExpect(jsonPath("$.sourceStatus").value(statusBefore));
     }
 
     @Test
-    void 역량은_통째로_바뀌고_순서만_달라도_바뀐_것이다() throws Exception {
+    void 역량은_통째로_바뀌고_순서만_달라도_역량_출처가_USER_가_되며_출처_상태는_그대로다() throws Exception {
         long experienceId = firstExperienceId(appId, 0);
 
         patchJson("/api/experiences/" + experienceId, """
@@ -270,7 +271,7 @@ class ExperienceApiTest {
                 .andExpect(jsonPath("$.competencies[0]").value("IMPLEMENTATION"))
                 .andExpect(jsonPath("$.competencies[1]").value("PROBLEM_SOLVING"))
                 .andExpect(jsonPath("$.competenciesBy").value("USER"))
-                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
+                .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"));
 
         mvc.perform(get("/api/activities/{id}", appId))
                 .andExpect(jsonPath("$.experiences[0].competencies[0]").value("IMPLEMENTATION"))
@@ -281,6 +282,48 @@ class ExperienceApiTest {
                 {"content": "채팅 API 의 재연결 문제를 고쳤다"}
                 """)
                 .andExpect(jsonPath("$.competenciesBy").value("USER"));
+    }
+
+    @Test
+    void 주체만_바꾸면_SOURCE_CONFIRMED_와_NEEDS_REVIEW_가_그대로다() throws Exception {
+        long confirmed = firstExperienceId(appId, 0);
+        long review = firstExperienceId(appId, 3);
+
+        patchJson("/api/experiences/" + confirmed, "{\"actor\": \"TEAM\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actor").value("TEAM"))
+                .andExpect(jsonPath("$.sourceStatus").value("SOURCE_CONFIRMED"))
+                .andExpect(jsonPath("$.competenciesBy").value("AI"));
+        patchJson("/api/experiences/" + review, "{\"actor\": \"TEAM\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actor").value("TEAM"))
+                .andExpect(jsonPath("$.sourceStatus").value("NEEDS_REVIEW"));
+    }
+
+    @Test
+    void 본문을_바꾸면_USER_ENTERED_이고_본문과_주체를_함께_바꿔도_같다() throws Exception {
+        long first = firstExperienceId(appId, 0);
+        long second = firstExperienceId(appId, 3);
+
+        patchJson("/api/experiences/" + first, "{\"content\": \"본문만 고침\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
+        patchJson("/api/experiences/" + second, "{\"content\": \"본문과 주체를 고침\", \"actor\": \"TEAM\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actor").value("TEAM"))
+                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"));
+    }
+
+    @Test
+    void NEEDS_REVIEW_경험은_주체나_역량을_바꿔도_풀리지_않는다() throws Exception {
+        long experienceId = firstExperienceId(appId, 3);
+
+        patchJson("/api/experiences/" + experienceId, "{\"actor\": \"TEAM\"}")
+                .andExpect(jsonPath("$.sourceStatus").value("NEEDS_REVIEW"));
+        patchJson("/api/experiences/" + experienceId, "{\"competencies\": [\"COLLABORATION\"]}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.competenciesBy").value("USER"))
+                .andExpect(jsonPath("$.sourceStatus").value("NEEDS_REVIEW"));
     }
 
     @Test
@@ -828,6 +871,10 @@ class ExperienceApiTest {
     }
 
     // --- 도움 ---
+
+    private String statusOf(long experienceId) {
+        return jdbc.queryForObject("select source_status from experience where id = ?", String.class, experienceId);
+    }
 
     private ResultActions patchJson(String url, String json) throws Exception {
         return mvc.perform(patch(url).contentType(MediaType.APPLICATION_JSON).content(json));
