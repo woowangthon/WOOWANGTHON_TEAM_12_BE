@@ -3,6 +3,7 @@ package com.woowangthon.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -187,8 +188,6 @@ class GuidelineApiTest {
     @Test
     void 정리_요청_오류는_세지_않는다() throws Exception {
         expectError(extract("{\"source\": \"멘토\"}"), 400, "INVALID_REQUEST");
-        expectError(extract("{\"text\": \"글\"}"), 400, "INVALID_REQUEST");
-        expectError(extract("{\"text\": \"글\", \"source\": \" \"}"), 400, "INVALID_REQUEST");
         expectError(extract("{\"text\": \"글\", \"source\": \"두\\n줄\"}"), 400, "INVALID_REQUEST");
         expectError(extract("{\"text\": \"글\", \"source\": \"" + "가".repeat(101) + "\"}"), 400, "INVALID_REQUEST");
         expectError(extract("{\"text\": \"  \", \"source\": \"멘토\"}"), 400, "EMPTY_TEXT");
@@ -196,6 +195,16 @@ class GuidelineApiTest {
 
         assertThat(used()).isZero();
         assertThat(RECEIVED).isEmpty();
+    }
+
+    @Test
+    void 정리는_출처가_없거나_비어도_null_로_돌려준다() throws Exception {
+        extract("{\"text\": \"결론부터 써라\"}").andExpect(status().isOk()).andExpect(jsonPath("$.source").value(nullValue()))
+                .andExpect(jsonPath("$.candidates.length()").value(2));
+        extract("{\"text\": \"결론부터 써라\", \"source\": null}").andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value(nullValue()));
+        extract("{\"text\": \"결론부터 써라\", \"source\": \"  \"}").andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value(nullValue()));
     }
 
     @Test
@@ -255,12 +264,27 @@ class GuidelineApiTest {
     }
 
     @Test
+    void 출처_없이도_저장한다_빈_값은_null_이다() throws Exception {
+        save("{\"guidelines\": [{\"text\": \"빼고\"}, {\"text\": \"null\", \"source\": null}, "
+                + "{\"text\": \"빈 문자열\", \"source\": \"\"}, {\"text\": \"공백\", \"source\": \"   \"}, "
+                + "{\"text\": \"있음\", \"source\": \"멘토\"}]}").andExpect(status().isCreated())
+                .andExpect(jsonPath("$.guidelines[0].source").value(nullValue()))
+                .andExpect(jsonPath("$.guidelines[1].source").value(nullValue()))
+                .andExpect(jsonPath("$.guidelines[2].source").value(nullValue()))
+                .andExpect(jsonPath("$.guidelines[3].source").value(nullValue()))
+                .andExpect(jsonPath("$.guidelines[4].source").value("멘토"));
+
+        assertThat(jdbc.queryForObject("select count(*)::int from guideline where source is null", Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject("select count(*)::int from guideline where source = ''", Integer.class)).isZero();
+        mvc.perform(get("/api/guidelines")).andExpect(jsonPath("$.guidelines[0].source").value(nullValue()));
+    }
+
+    @Test
     void 저장_요청_오류() throws Exception {
         expectError(save("{}"), 400, "INVALID_REQUEST");
         expectError(save("{\"guidelines\": []}"), 400, "INVALID_REQUEST");
         expectError(save("{\"guidelines\": [null]}"), 400, "INVALID_REQUEST");
         expectError(save(lines(11)), 400, "INVALID_REQUEST");
-        expectError(save("{\"guidelines\": [{\"text\": \"글\"}]}"), 400, "INVALID_REQUEST");
         expectError(save("{\"guidelines\": [{\"source\": \"출처\"}]}"), 400, "INVALID_REQUEST");
         expectError(save(line(" ", "출처")), 400, "INVALID_REQUEST");
         expectError(save(line("두\\n줄", "출처")), 400, "INVALID_REQUEST");
@@ -319,9 +343,25 @@ class GuidelineApiTest {
         expectError(update(id, "{\"text\": \" \"}"), 400, "INVALID_REQUEST");
         expectError(update(id, "{\"text\": \"" + "가".repeat(201) + "\"}"), 400, "INVALID_REQUEST");
         expectError(update(id, "{\"source\": \"두\\n줄\"}"), 400, "INVALID_REQUEST");
+        expectError(update(id, "{\"source\": \"" + "가".repeat(101) + "\"}"), 400, "INVALID_REQUEST");
         expectError(update(id, "{\"enabled\": null}"), 400, "INVALID_REQUEST");
         expectError(update(id, "{\"enabled\": \"켜기\"}"), 400, "INVALID_REQUEST");
         expectError(update(id + 1000, "{\"enabled\": false}"), 404, "GUIDELINE_NOT_FOUND");
+    }
+
+    @Test
+    void 고칠_때_출처를_null_이나_빈_값으로_보내면_지운다() throws Exception {
+        long id = firstId(save(lines(1)));
+
+        update(id, "{\"source\": null}").andExpect(status().isOk()).andExpect(jsonPath("$.source").value(nullValue()))
+                .andExpect(jsonPath("$.text").value("지침 0"));
+        update(id, "{\"source\": \"새 출처\"}").andExpect(status().isOk()).andExpect(jsonPath("$.source").value("새 출처"));
+        update(id, "{\"source\": \"\"}").andExpect(status().isOk()).andExpect(jsonPath("$.source").value(nullValue()));
+        update(id, "{\"source\": \"새 출처\"}").andExpect(status().isOk());
+        update(id, "{\"source\": \"  \"}").andExpect(status().isOk()).andExpect(jsonPath("$.source").value(nullValue()));
+        // 출처 없는 지침의 다른 칸을 고쳐도 출처는 그대로 비어 있다
+        update(id, "{\"enabled\": false}").andExpect(status().isOk()).andExpect(jsonPath("$.source").value(nullValue()));
+        assertThat(jdbc.queryForObject("select source from guideline where id = ?", String.class, id)).isNull();
     }
 
     // --- 지우기 · 사용자 ---

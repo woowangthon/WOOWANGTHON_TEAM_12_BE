@@ -687,6 +687,25 @@ class DraftApiTest {
     // --- 구성 틀 · 작성 지침 (S-49 · S-50) ---
 
     @Test
+    void 출처_없는_지침도_초안에_실리고_출처는_null_이다() throws Exception {
+        String body = mvc.perform(post("/api/guidelines").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"guidelines\": [{\"text\": \"출처 없는 지침\"}]}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long id = JsonPath.<List<Number>>read(body, "$.guidelines[*].id").getFirst().longValue();
+        draftReply = new FakeReply(200, withGuidelines("[{ \"id\": %d, \"applied\": true, \"note\": null }]".formatted(id)), 0);
+
+        postJson("{\"experienceIds\": [" + chat + ", " + study + "]}").andExpect(status().isAccepted());
+
+        String done = awaitDraft();
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.guidelines.length()").value(1))
+                .andExpect(jsonPath("$.draft.guidelines[0].text").value("출처 없는 지침"))
+                .andExpect(jsonPath("$.draft.guidelines[0].source").value(nullValue()))
+                .andExpect(jsonPath("$.draft.guidelines[0].applied").value(true));
+    }
+
+    @Test
     void 틀과_켜_둔_지침을_싣고_반영_여부를_초안에_남긴다() throws Exception {
         List<Long> ids = saveGuidelines("첫 문장에 결과를 쓴다", "결과는 꼭 수치로 쓴다", "꺼 둔 지침");
         mvc.perform(patch("/api/guidelines/{id}", ids.get(2)).contentType(MediaType.APPLICATION_JSON)
