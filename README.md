@@ -50,7 +50,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 
 | 메서드 · 경로 | 하는 일 |
 | --- | --- |
-| `POST /api/sources` | 자료 넣기 — 원본 저장 · 분석 작업 시작(202, 분석은 뒤에서) |
+| `POST /api/sources` | 자료 넣기 — 원본 저장 · 분석 작업 시작(202, 분석은 뒤에서). 같은 글자의 원본이 이미 있으면 분석 전에 409 `SOURCE_DUPLICATE`(S-69 — `activityId` 없을 때만, `allowDuplicate: true` 면 건너뜀) |
 | `GET /api/jobs/{id}` | 분석 작업 상태: `ANALYZING` → `COMPLETED` / `FAILED`(이유) |
 | `POST /api/jobs/{id}/retry` | 실패한 작업 다시 시도 |
 | `GET /api/activities` | 활동 목록 — 활동마다 분류(`category` · `categoryBy`, S-57). 분석이 붙이면 AI 해석, 미분류면 `null`. 정리용이라 MCP · AI 요청엔 싣지 않는다 |

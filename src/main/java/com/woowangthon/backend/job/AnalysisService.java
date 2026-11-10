@@ -10,6 +10,8 @@ import com.woowangthon.backend.ai.ExtractRequest;
 import com.woowangthon.backend.ai.ExtractResponse;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
+import com.woowangthon.backend.common.ErrorResponse;
+import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Citation;
 import com.woowangthon.backend.experience.CompetenciesBy;
@@ -20,6 +22,7 @@ import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.source.SectionKind;
 import com.woowangthon.backend.source.Source;
+import com.woowangthon.backend.source.SourceHash;
 import com.woowangthon.backend.source.SourceSection;
 import com.woowangthon.backend.source.SourceKind;
 import com.woowangthon.backend.source.SourceRepository;
@@ -77,8 +80,9 @@ public class AnalysisService {
         this.maxTextLength = maxTextLength;
     }
 
+    // allowDuplicate 는 하나씩 넣을 때만 본다(S-69) — 묶음 · 자료 더하기 · MCP 는 같은 자료인지 견주지 않는다
     public record SourceRequest(String kind, String name, String text, List<SectionRequest> sections,
-            Long activityId) {
+            Long activityId, Boolean allowDuplicate) {
     }
 
     public record BatchRequest(List<SourceRequest> sources) {
@@ -99,6 +103,10 @@ public class AnalysisService {
         Long target = request.activityId();
         if (target != null && activities.findByIdAndUserId(target, userId).isEmpty()) {
             throw ApiException.notFound("ACTIVITY_NOT_FOUND", "활동 " + target + " 이(가) 없습니다");
+        }
+        // 400 · 404 · 413 다음, 429 앞 — 오늘 횟수를 다 썼어도 같은 자료면 409 가 먼저다(S-69)
+        if (target == null && !Boolean.TRUE.equals(request.allowDuplicate())) {
+            rejectDuplicate(userId, checked.text());
         }
         limiter.consume(userId);
 
@@ -129,6 +137,15 @@ public class AnalysisService {
             items.add(saved(items.isEmpty() ? new AnalysisJob(userId, source) : AnalysisJob.queued(userId, source)));
         }
         return new JobResponses.Batch(items);
+    }
+
+    private void rejectDuplicate(long userId, String text) {
+        sources.findFirstByUserIdAndContentHashOrderByCreatedAtDescIdDesc(userId, SourceHash.of(text))
+                .ifPresent(found -> {
+                    throw new ApiException(HttpStatus.CONFLICT, "SOURCE_DUPLICATE", "이미 넣은 자료입니다",
+                            new ErrorResponse.SourceRef(found.getId(), found.getName(),
+                                    Times.seoul(found.getCreatedAt())));
+                });
     }
 
     // 원소 오류는 코드 그대로, message 에 몇째(1부터) · 파일 이름을 담는다

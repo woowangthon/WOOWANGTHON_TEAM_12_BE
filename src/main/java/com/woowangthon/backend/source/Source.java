@@ -40,6 +40,10 @@ public class Source {
     @Column(nullable = false)
     private String text;
 
+    // 받은 글자의 해시(S-69) — 같은 자료 알아보기에만 쓴다. 마이그레이션 전 원본은 null 일 수 있다
+    @Column(length = 64)
+    private String contentHash;
+
     // .pdf · .pptx 만 — 쪽 · 슬라이드별 줄 구간(S-39). 그 밖엔 비었다
     @ElementCollection
     @CollectionTable(name = "source_section", joinColumns = @JoinColumn(name = "source_id"))
@@ -62,6 +66,7 @@ public class Source {
         this.kind = kind;
         this.name = name;
         this.text = text;
+        this.contentHash = SourceHash.of(text);
         this.sections = new ArrayList<>(sections);
     }
 

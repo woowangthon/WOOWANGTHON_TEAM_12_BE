@@ -7,11 +7,18 @@ public class ApiException extends RuntimeException {
 
     private final HttpStatus status;
     private final String code;
+    // 409 SOURCE_DUPLICATE 가 이미 있는 원본을 알려 줄 때만(S-69)
+    private final ErrorResponse.SourceRef source;
 
     public ApiException(HttpStatus status, String code, String message) {
+        this(status, code, message, null);
+    }
+
+    public ApiException(HttpStatus status, String code, String message, ErrorResponse.SourceRef source) {
         super(message);
         this.status = status;
         this.code = code;
+        this.source = source;
     }
 
     public static ApiException invalidRequest(String message) {
@@ -28,5 +35,9 @@ public class ApiException extends RuntimeException {
 
     public String code() {
         return code;
+    }
+
+    public ErrorResponse.SourceRef source() {
+        return source;
     }
 }

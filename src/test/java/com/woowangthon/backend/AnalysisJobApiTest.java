@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import com.sun.net.httpserver.HttpServer;
+import com.woowangthon.backend.account.AppUser;
+import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.AiClient;
 import com.woowangthon.backend.ai.ExtractRequest;
@@ -164,6 +166,9 @@ class AnalysisJobApiTest {
 
     @Autowired
     SourceRepository sources;
+
+    @Autowired
+    AppUserRepository users;
 
     @Autowired
     InterruptedJobCleaner cleaner;
@@ -938,11 +943,133 @@ class AnalysisJobApiTest {
         awaitAllDone();
     }
 
+    // --- 같은 자료 알아보기 (S-69) ---
+
+    private static String text(String text) {
+        return JsonPath.parse(Map.of("kind", "TEXT", "text", text)).jsonString();
+    }
+
+    private static String text(String text, boolean allowDuplicate) {
+        return JsonPath.parse(Map.of("kind", "TEXT", "text", text, "allowDuplicate", allowDuplicate)).jsonString();
+    }
+
+    @Test
+    void 같은_글자를_다시_넣으면_분석_전에_409_이고_저장도_횟수도_없다() throws Exception {
+        String first = postSource(text("# 회고\n내가 만들었다")).andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString();
+        long firstSourceId = ((Number) JsonPath.read(first, "$.sourceId")).longValue();
+        awaitDone(((Number) JsonPath.read(first, "$.jobId")).longValue());
+        int received = RECEIVED.size();
+
+        // 이름 · 종류 · 줄바꿈 종류 · 앞뒤 공백이 달라도 같은 자료 — 파일로 넣은 글을 붙여 넣어도 알아본다
+        String again = "  \r\n# 회고\r\n내가 만들었다\r\n\r\n ";
+        postSource(JsonPath.parse(Map.of("kind", "FILE", "name", "다른이름.md", "text", again)).jsonString())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("SOURCE_DUPLICATE"))
+                .andExpect(jsonPath("$.error.message").isString())
+                .andExpect(jsonPath("$.error.source.id").value(firstSourceId))
+                .andExpect(jsonPath("$.error.source.name").value(sources.findById(firstSourceId).orElseThrow().getName()))
+                .andExpect(jsonPath("$.error.source.createdAt").value(org.hamcrest.Matchers.endsWith("+09:00")))
+                .andExpect(jsonPath("$.error.source.text").doesNotExist())
+                .andExpect(jsonPath("$.error.source.contentHash").doesNotExist());
+
+        assertThat(sources.count()).isEqualTo(1);
+        assertThat(usage()).isEqualTo(1);
+        assertThat(RECEIVED).hasSize(received); // AI 를 부르지 않는다
+        assertThat(jobs.count()).isEqualTo(1);
+    }
+
+    @Test
+    void allowDuplicate_true_면_보통처럼_넣고_같은_원본이_여럿이면_가장_최근_것을_알려_준다() throws Exception {
+        awaitDone(submit(text("같은 글")));
+        String second = postSource(text("같은 글", true)).andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString();
+        awaitDone(((Number) JsonPath.read(second, "$.jobId")).longValue());
+        assertThat(sources.count()).isEqualTo(2);
+        assertThat(usage()).isEqualTo(2);
+
+        postSource(text("같은 글", false)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.source.id").value((Number) JsonPath.read(second, "$.sourceId")));
+        // null 은 false 와 같다
+        postSource("{\"kind\": \"TEXT\", \"text\": \"같은 글\", \"allowDuplicate\": null}")
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void 글자가_조금이라도_다르면_다른_자료다() throws Exception {
+        awaitDone(submit(text("가운데  공백")));
+        awaitDone(submit(text("가운데 공백")));
+        awaitDone(submit(text("가운데 공백.")));
+        assertThat(sources.count()).isEqualTo(3);
+    }
+
+    @Test
+    void 오늘_횟수를_다_썼어도_같은_자료면_429_보다_409_가_먼저다() throws Exception {
+        awaitDone(submit(text("횟수 자료")));
+        jdbc.update("update app_user set daily_analysis_limit = 1 where id = ?", TestLogin.USER_ID);
+
+        expectError(postSource(text("횟수 자료")), 409, "SOURCE_DUPLICATE");
+        expectError(postSource(text("새 자료")), 429, "DAILY_LIMIT_EXCEEDED");
+        assertThat(usage()).isEqualTo(1);
+    }
+
+    @Test
+    void 잘못된_요청은_409_보다_먼저다() throws Exception {
+        awaitDone(submit(text("겹치는 검사")));
+
+        expectError(postSource(JsonPath.parse(Map.of("kind", "FILE", "name", "a.exe", "text", "겹치는 검사")).jsonString()),
+                400, "UNSUPPORTED_FILE_TYPE");
+        expectError(postSource(text("   ")), 400, "EMPTY_TEXT");
+        expectError(postSource(JsonPath.parse(Map.of("kind", "TEXT", "text", "가".repeat(50_001))).jsonString()), 413,
+                "TEXT_TOO_LONG");
+        assertThat(sources.count()).isEqualTo(1);
+    }
+
+    @Test
+    void 자료_더하기_묶음_MCP_는_견주지_않는다() throws Exception {
+        long target = ((Number) JsonPath.read(awaitDone(submitText()), "$.activityIds[0]")).longValue();
+
+        // 자료 더하기 — 같은 글자여도 넣는다
+        reply = new FakeReply(200, NOTHING_MATCHES, 0);
+        awaitDone(submit("{\"kind\": \"TEXT\", \"text\": \"바꿔요 회고\", \"activityId\": " + target + "}"));
+
+        // 묶음
+        String batched = postBatch(JsonPath.parse(Map.of("sources", List.of(
+                Map.of("kind", "FILE", "name", "a.md", "text", "바꿔요 회고")))).jsonString())
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        awaitDone(jobId(batched, 0));
+        assertThat(sources.count()).isEqualTo(3);
+    }
+
+    @Test
+    void 다른_사용자의_같은_글자와_해시가_없는_옛_원본은_걸리지_않는다() throws Exception {
+        long otherUser = users.saveAndFlush(new AppUser("dup-" + System.nanoTime(), "hash", null)).getId();
+        sources.save(new Source(otherUser, SourceKind.TEXT, "남의 것", "겹치는 글"));
+        Long oldId = jdbc.queryForObject("insert into source (user_id, kind, name, text) "
+                + "values (?, 'TEXT', '옛 원본', '옛 글') returning id", Long.class, TestLogin.USER_ID);
+
+        awaitDone(submit(text("겹치는 글")));
+        awaitDone(submit(text("옛 글")));
+
+        assertThat(oldId).isNotNull();
+        assertThat(sources.count()).isEqualTo(4);
+    }
+
+    @Test
+    void 마이그레이션이_옛_원본에_채우는_해시와_자바의_해시가_같다() {
+        for (String text : List.of(SOURCE_TEXT, "한글 \r 줄바꿈\r\n섞임　", "\t앞뒤 공백\n")) {
+            String sql = jdbc.queryForObject("select encode(sha256(convert_to(btrim(replace(replace(?, E'\r\n', E'\n'), "
+                    + "E'\r', E'\n'), E' \t\n\u000B\u000C\u3000'), 'UTF8')), 'hex')", String.class, text);
+            assertThat(com.woowangthon.backend.source.SourceHash.of(text)).isEqualTo(sql);
+        }
+    }
+
     // --- 도움 ---
 
+    // 같은 글을 여러 번 넣는 테스트가 많아 「그래도 넣기」로 보낸다 — 같은 자료 알아보기(S-69)는 아래 전용 테스트가 본다
     private long submitText() throws Exception {
         return submit("""
-                {"kind": "TEXT", "name": null, "text": "바꿔요 회고"}""");
+                {"kind": "TEXT", "name": null, "text": "바꿔요 회고", "allowDuplicate": true}""");
     }
 
     private long submit(String json) throws Exception {
