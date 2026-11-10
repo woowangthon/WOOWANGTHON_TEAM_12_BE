@@ -594,6 +594,11 @@ class DraftMaterialApiTest {
 
         assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
         assertThat(((Number) JsonPath.read(done, "$.draft.omitted[0].experienceId")).longValue()).isEqualTo(ctx);
+        // 추천에 없는 보조 재료 경험이라 FE 가 활동 · 경험 문장을 이 값으로 그린다(ETC#261)
+        assertThat(((Number) JsonPath.read(done, "$.draft.omitted[0].activityId")).longValue()).isEqualTo(actA);
+        assertThat((String) JsonPath.read(done, "$.draft.omitted[0].activityName")).isEqualTo("바꿔요 — 캠퍼스 중고거래 앱");
+        assertThat((String) JsonPath.read(done, "$.draft.omitted[0].experienceContent")).isEqualTo("보조 경험");
+        assertThat((Object) JsonPath.read(done, "$.draft.omitted[0].supplement")).isNull();
         long asked = ((Number) JsonPath.read(done, "$.draft.omitted[0].clarificationId")).longValue();
         assertThat(jdbc.queryForObject("select count(*) from clarification where experience_id = ?", Integer.class, ctx)).isEqualTo(1);
 
@@ -604,7 +609,10 @@ class DraftMaterialApiTest {
                 .andExpect(jsonPath("$.supplement.question").value(ASK));
         assertThat(jdbc.queryForObject("select count(*) from supplement where experience_id = ?", Integer.class, ctx)).isEqualTo(1);
         mvc.perform(get("/api/questions/{id}", questionId))
-                .andExpect(jsonPath("$.draft.omitted[0].supplementId").isNumber());
+                .andExpect(jsonPath("$.draft.omitted[0].supplementId").isNumber())
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.answer").value("두 기기로 확인했다"))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.question").value(ASK))
+                .andExpect(jsonPath("$.draft.omitted[0].experienceContent").value("보조 경험"));
     }
 
     // --- 분석 횟수(S-77) ---

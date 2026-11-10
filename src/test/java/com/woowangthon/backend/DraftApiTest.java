@@ -376,12 +376,22 @@ class DraftApiTest {
                 .andExpect(jsonPath("$.draft.omitted[0].experienceId").value(chat))
                 .andExpect(jsonPath("$.draft.omitted[0].clarificationId").isNumber())
                 .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(nullValue()))
-                // 경험에 붙지 않는 빈칸 — text 만, 나머지 네 칸은 null 로 싣는다
+                // 경험에 붙은 빈칸 — 그 활동 · 경험 문장을 지금 값으로, 안 답했으니 supplement 는 null(ETC#261)
+                .andExpect(jsonPath("$.draft.omitted[0].activityId").value(appId))
+                .andExpect(jsonPath("$.draft.omitted[0].activityName").value("바꿔요 — 캠퍼스 중고거래 앱"))
+                .andExpect(jsonPath("$.draft.omitted[0].experienceContent")
+                        .value("채팅 메시지가 늦게 도착하는 문제를 폴링에서 WebSocket 으로 바꿔 해결했다"))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement").value(nullValue()))
+                // 경험에 붙지 않는 빈칸 — text 만, 나머지는 null 로 싣는다
                 .andExpect(jsonPath("$.draft.omitted[1].text").value("Java · Spring 을 쓴 경험"))
                 .andExpect(jsonPath("$.draft.omitted[1].question").value(nullValue()))
                 .andExpect(jsonPath("$.draft.omitted[1].experienceId").value(nullValue()))
                 .andExpect(jsonPath("$.draft.omitted[1].clarificationId").value(nullValue()))
                 .andExpect(jsonPath("$.draft.omitted[1].supplementId").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].activityId").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].activityName").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].experienceContent").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[1].supplement").value(nullValue()))
                 // 초안의 되묻기는 추천의 되묻기에 섞이지 않는다
                 .andExpect(jsonPath("$.clarifications.length()").value(0));
         assertThat(jdbc.queryForObject("select count(*) from clarification", Integer.class)).isEqualTo(1);
@@ -520,6 +530,12 @@ class DraftApiTest {
         mvc.perform(get("/api/questions/{id}", questionId))
                 .andExpect(jsonPath("$.draft.omitted[0].clarificationId").value(asked))
                 .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(answered))
+                // 답한 보완은 Supplement 모양 그대로 — 질문 · 답 · 지원 문항, 외부 AI 를 거치지 않았으니 mcpChange 는 null
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.id").value(answered))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.question").value(ASK))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.answer").value("두 기기로 메시지를 보내고 양쪽 화면에 도착하는지 확인했다"))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.questionId").value(questionId))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.mcpChange").value(nullValue()))
                 .andExpect(jsonPath("$.draft.sentences.length()").value(3));
         mvc.perform(get("/api/activities/{id}", appId))
                 .andExpect(jsonPath("$.experiences[?(@.id == %d)].supplements[*].id".formatted(chat)).value(
@@ -530,7 +546,9 @@ class DraftApiTest {
         // 보완을 지우면 다시 답할 수 있게 null 로 돌아간다
         jdbc.update("delete from supplement where id = ?", answered);
         mvc.perform(get("/api/questions/{id}", questionId))
-                .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(nullValue()));
+                .andExpect(jsonPath("$.draft.omitted[0].supplementId").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[0].supplement").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[0].activityName").value("바꿔요 — 캠퍼스 중고거래 앱"));
         answered = ((Number) JsonPath.read(mvc.perform(post("/api/clarifications/{id}/answer", asked)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"answer\": \"두 기기로 확인했다\"}"))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), "$.supplement.id"))
