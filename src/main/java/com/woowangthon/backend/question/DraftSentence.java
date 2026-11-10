@@ -43,6 +43,9 @@ public class DraftSentence {
     // ELABORATED 만 — 왜 확인이 필요한지 한 줄(S-78). 나머지 · 옛 문장은 null
     private String note;
 
+    // SUPPOSED 만 — 수치 · 수상 · 직책 · 고유명사가 들어간 가정이면 true(한 단계 진하게). 나머지 · 옛 문장은 null
+    private Boolean specific;
+
     // 사용자가 카드에서 「맞아요」를 눌렀나(S-79) — 바꾸는 곳은 DraftSentenceRepository.confirmOwned 뿐
     @Column(nullable = false)
     private boolean confirmed;
@@ -60,12 +63,13 @@ public class DraftSentence {
     }
 
     public DraftSentence(Draft draft, int position, DraftSentenceKind kind, String text, String note,
-            List<Evidence> evidence) {
+            Boolean specific, List<Evidence> evidence) {
         this.draft = draft;
         this.position = position;
         this.kind = kind;
         this.text = text;
         this.note = note;
+        this.specific = specific;
         this.evidence.addAll(evidence);
     }
 
@@ -83,6 +87,10 @@ public class DraftSentence {
 
     public String getNote() {
         return note;
+    }
+
+    public Boolean getSpecific() {
+        return specific;
     }
 
     public boolean isConfirmed() {

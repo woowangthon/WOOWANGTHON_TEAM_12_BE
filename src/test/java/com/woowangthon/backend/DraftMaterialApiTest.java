@@ -504,6 +504,105 @@ class DraftMaterialApiTest {
         assertNothingSaved();
     }
 
+    // --- AI 응답: AI 가정(SUPPOSED · ADR-014) ---
+
+    @Test
+    void AI_가정_문장은_specific_을_저장하고_짝_omitted_에도_되묻기_ID_가_붙는다() throws Exception {
+        draftReply = new FakeReply(200, reply("""
+                {"kind": "FACT", "text": "사실", "evidence": [{"type": "CITATION", "id": %d}]},
+                {"kind": "SUPPOSED", "text": "원인을 확인했습니다.", "evidence": [], "specific": false},
+                {"kind": "SUPPOSED", "text": "응답 시간을 3초에서 1초로 줄였습니다.", "evidence": [{"type": "CITATION", "id": %d}], "specific": true},
+                {"kind": "SUPPOSED", "text": "배운 점이 있었습니다.", "evidence": [], "specific": false}
+                """.formatted(chatCitation, chatCitation), """
+                {"text": "확인한 방법", "question": "%s", "experienceId": %d, "placeholder": null, "sentenceIndex": 1},
+                {"text": "줄인 결과", "question": "%s", "experienceId": %d, "placeholder": null, "sentenceIndex": 2},
+                {"text": "배운 점", "question": null, "experienceId": null, "placeholder": null, "sentenceIndex": 3}
+                """.formatted(ASK, chat, ASK, chat)), 0);
+
+        start(chat).andExpect(status().isAccepted());
+        String done = awaitDraft();
+
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat((List<String>) JsonPath.read(done, "$.draft.sentences[*].kind"))
+                .containsExactly("FACT", "SUPPOSED", "SUPPOSED", "SUPPOSED");
+        assertThat((Object) JsonPath.read(done, "$.draft.sentences[0].specific")).isNull();
+        assertThat((Boolean) JsonPath.read(done, "$.draft.sentences[1].specific")).isFalse();
+        assertThat((Boolean) JsonPath.read(done, "$.draft.sentences[2].specific")).isTrue();
+        assertThat((List<?>) JsonPath.read(done, "$.draft.sentences[1].evidence")).isEmpty();
+        assertThat((List<?>) JsonPath.read(done, "$.draft.sentences[2].evidence")).hasSize(1);
+        // 짝 — 자리 표시는 null · 문장 순번만. 경험이 있으면 되묻기 ID 가 붙고 없으면 null
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.omitted.length()").value(3))
+                .andExpect(jsonPath("$.draft.omitted[0].placeholder").value(nullValue()))
+                .andExpect(jsonPath("$.draft.omitted[0].sentenceIndex").value(1))
+                .andExpect(jsonPath("$.draft.omitted[0].clarificationId").isNumber())
+                .andExpect(jsonPath("$.draft.omitted[1].sentenceIndex").value(2))
+                .andExpect(jsonPath("$.draft.omitted[1].clarificationId").isNumber())
+                .andExpect(jsonPath("$.draft.omitted[2].sentenceIndex").value(3))
+                .andExpect(jsonPath("$.draft.omitted[2].clarificationId").value(nullValue()))
+                .andExpect(jsonPath("$.draft.sentences[2].specific").value(true));
+
+        // 짝의 되묻기 ID 로 기존 답 경로에 답하면 그 경험의 보완이 쌓인다
+        long asked = ((Number) JsonPath.read(done, "$.draft.omitted[0].clarificationId")).longValue();
+        mvc.perform(post("/api/clarifications/{id}/answer", asked).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"answer\": \"두 기기로 확인했다\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.experienceId").value(chat));
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.draft.omitted[0].supplementId").isNumber())
+                .andExpect(jsonPath("$.draft.omitted[0].supplement.answer").value("두 기기로 확인했다"));
+    }
+
+    @Test
+    void omitted_는_10개까지_받는다() throws Exception {
+        draftReply = new FakeReply(200, reply(okSentence(chatCitation),
+                String.join(",", java.util.Collections.nCopies(10, gap("\"placeholder\": null, \"sentenceIndex\": null")))), 0);
+
+        start(chat).andExpect(status().isAccepted());
+        String done = awaitDraft();
+
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat((List<?>) JsonPath.read(done, "$.draft.omitted")).hasSize(10);
+    }
+
+    @Test
+    void 옛_초안의_문장은_specific_이_null_이다() throws Exception {
+        draftReply = new FakeReply(200, reply(okSentence(chatCitation), ""), 0);
+
+        start(chat).andExpect(status().isAccepted());
+        String done = awaitDraft();
+
+        assertThat((Object) JsonPath.read(done, "$.draft.sentences[0].specific")).isNull();
+    }
+
+    @Test
+    void AI_가정_규칙을_어기면_아무것도_저장하지_않고_실패() throws Exception {
+        String fact = okSentence(chatCitation);
+        String supposed = "{\"kind\": \"SUPPOSED\", \"text\": \"가정\", \"evidence\": [], \"specific\": false}";
+        String pair = "{\"text\": \"장면\", \"question\": null, \"experienceId\": null, \"placeholder\": null, \"sentenceIndex\": %d}";
+        List<String> bodies = List.of(
+                // specific 이 없음 · 불리언이 아님 · SUPPOSED 가 아닌데 있음
+                body(fact + "," + supposed.replace(", \"specific\": false", ""), pair.formatted(1)),
+                body(fact + "," + supposed.replace("false", "null"), pair.formatted(1)),
+                body(fact.substring(0, fact.length() - 1) + ", \"specific\": false}", ""),
+                // 짝이 없음 · 둘 · 순번이 SUPPOSED 가 아닌 문장이나 범위 밖
+                body(fact + "," + supposed, ""),
+                body(fact + "," + supposed, pair.formatted(1) + "," + pair.formatted(1)),
+                body(fact + "," + supposed, pair.formatted(0)),
+                body(fact + "," + supposed, pair.formatted(2)),
+                body(fact + "," + supposed, pair.formatted(-1)),
+                // 자리 표시만 있고 순번이 없음은 기존 규칙
+                body(fact + "," + supposed, pair.formatted(1) + ",{\"text\": \"빈칸\", \"question\": null, \"experienceId\": null, \"placeholder\": \"[결과]\", \"sentenceIndex\": null}"),
+                // 전부 가정인 초안
+                body(supposed, pair.formatted(0)),
+                // omitted 10개 넘음
+                body(fact, String.join(",", java.util.Collections.nCopies(11, gap("\"placeholder\": null, \"sentenceIndex\": null")))));
+        for (String body : bodies) {
+            expectInvalid(body);
+        }
+        assertNothingSaved();
+    }
+
     // --- 보조 재료 경험의 근거 · 빈칸 ---
 
     @Test
