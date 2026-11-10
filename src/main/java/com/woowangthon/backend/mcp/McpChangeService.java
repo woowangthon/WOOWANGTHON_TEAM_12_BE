@@ -16,6 +16,10 @@ import com.woowangthon.backend.job.AnalysisJob;
 import com.woowangthon.backend.job.AnalysisJobRepository;
 import com.woowangthon.backend.mcp.McpChangeResponses.UndoBlockedReason;
 import com.woowangthon.backend.question.ApplicationService;
+import com.woowangthon.backend.revision.ExperienceSnapshot;
+import com.woowangthon.backend.revision.RevisionKind;
+import com.woowangthon.backend.revision.RevisionOrigin;
+import com.woowangthon.backend.revision.RevisionRecorder;
 import com.woowangthon.backend.source.SourceRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -45,11 +49,13 @@ public class McpChangeService {
     private final ApplicationService applications;
     private final SupplementRepository supplements;
     private final SupplementService supplementService;
+    private final RevisionRecorder recorder;
 
     public McpChangeService(McpChangeRepository changes, ExperienceRepository experiences,
             ExperienceService experienceService, ActivityService activityService, CitationRepository citations,
             AnalysisJobRepository jobs, SourceRepository sources, ApplicationService applications,
-            SupplementRepository supplements, SupplementService supplementService) {
+            SupplementRepository supplements, SupplementService supplementService, RevisionRecorder recorder) {
+        this.recorder = recorder;
         this.changes = changes;
         this.experiences = experiences;
         this.experienceService = experienceService;
@@ -110,7 +116,12 @@ public class McpChangeService {
                     "변경 " + changeId + " 은(는) 맞아요를 누를 수 없습니다");
         }
         if (change.getType() == McpChangeType.UPDATE_EXPERIENCE) {
-            targets.experiences().get(change.getExperienceId()).confirmExternalAiRewrite();
+            Experience experience = targets.experiences().get(change.getExperienceId());
+            ExperienceSnapshot before = ExperienceSnapshot.of(experience);
+            experience.confirmExternalAiRewrite();
+            // 맞아요는 출처 상태가 바뀐 기록이다(S-80)
+            recorder.experience(experience, before, RevisionKind.EDIT, RevisionOrigin.userOnChange(change.getId()),
+                    null);
         } else {
             targets.supplements().get(change.getSupplementId()).confirmExternalAiAnswer();
         }
@@ -140,8 +151,11 @@ public class McpChangeService {
                         change.getExperienceId(), McpChangeType.UPDATE_EXPERIENCE, McpChangeStatus.APPLIED, change.getId())
                 .filter(earlier -> Objects.equals(earlier.getAfterContent(), change.getBeforeContent()))
                 .orElse(null);
+        ExperienceSnapshot before = ExperienceSnapshot.of(experience);
         experience.undoExternalAiRewrite(change.getBeforeContent(), change.getBeforeSourceStatus(),
                 pending == null ? null : pending.getId(), pending == null ? null : pending.getClient());
+        // 수정 이력에도 사용자가 한 고치기로 남긴다(S-80)
+        recorder.experience(experience, before, RevisionKind.EDIT, RevisionOrigin.userOnChange(change.getId()), null);
         return new Removed(0, 0);
     }
 

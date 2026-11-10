@@ -20,6 +20,10 @@ public interface ExperienceRepository extends JpaRepository<Experience, Long> {
     @Query("select e from Experience e join fetch e.activity a where e.id in :ids and a.userId = :userId")
     List<Experience> findAllOwned(Collection<Long> ids, Long userId);
 
+    // 수정 이력 목록에서 지금도 있는 경험만(S-80)
+    @Query("select e.id from Experience e where e.id in :ids and e.activity.userId = :userId")
+    List<Long> findOwnedIds(Collection<Long> ids, Long userId);
+
     // 사용자의 경험 전부 — 타임라인 순서(활동 start 오름차순, null 은 뒤) · 활동 안 순서
     @Query("select e from Experience e join fetch e.activity a where a.userId = :userId "
             + "order by a.periodStart asc nulls last, a.id asc, e.position asc, e.id asc")

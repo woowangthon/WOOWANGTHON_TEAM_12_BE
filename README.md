@@ -82,6 +82,10 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `GET /api/questions/{id}/similar-answers` | 비슷한 확정 답변(S-43) — 문항 유형 → 직무 → 지원처 종류가 같은 순서로 예전에 확정한 답 최대 5개. 참고용(근거 아님) · AI 안 부름 · 분석 횟수 안 씀 |
 | `PATCH /api/supplements/{id}` | 보완 고치기 — 답만 바꿈. 질문 · 경험 본문 · 근거 · 출처 상태는 그대로 |
 | `DELETE /api/supplements/{id}` | 보완 지우기(204) — 경험 · 다음 문항의 AI 후보 · 끝난 추천의 `evidence` 에서 빠지고, 그 되묻기에 다시 답할 수 있다 |
+| `GET /api/revisions` | 수정 이력(S-80) — 경험 · 활동 · 답의 전 · 후 스냅샷, 새것 먼저. `targetType`+`targetId` 를 주면 그 항목만, 없으면 전체(「최근 수정」). `cursor` · `limit`(1 ~ 50, 기본 20). 지우지 않고 모두 남는다 · AI 안 부름 · 분석 횟수 안 씀. 웹에서만 — MCP 에는 이력 도구가 없다 |
+| `POST /api/revisions/{id}/restore` | 이 수정 **전** 값으로 되돌리고 `RESTORE` 기록을 더한다. 경험은 출처 상태까지 그때 값, 답은 확정 답을 바꾸지 않고 임시 글로 들어온다. 이미 그 값이면 409 `NOTHING_TO_RESTORE`, 지운 항목이면 409 `REVISION_TARGET_DELETED` |
+
+수정 이력은 고치는 요청과 같은 트랜잭션에서 남는다 — 경험 고치기(웹 · 외부 AI `update_experience` · 변경 기록의 되돌리기 · 맞아요) · 활동 이름 · 기간 · 답 「다 썼어요」 · 초안으로 덮어쓰기(`PUT …/answer-draft` 에 `fromDraft: true`). 자동 저장 · 값이 안 바뀐 저장은 남기지 않는다.
 
 분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
 
