@@ -6,6 +6,13 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.question.Question;
+import com.woowangthon.backend.revision.ExperienceSnapshot;
+import com.woowangthon.backend.revision.Restored;
+import com.woowangthon.backend.revision.Revision;
+import com.woowangthon.backend.revision.RevisionErrors;
+import com.woowangthon.backend.revision.RevisionKind;
+import com.woowangthon.backend.revision.RevisionOrigin;
+import com.woowangthon.backend.revision.RevisionRecorder;
 import java.util.List;
 import org.hibernate.Hibernate;
 import org.springframework.http.HttpStatus;
@@ -19,13 +26,15 @@ public class ExperienceService {
     private final CitationRepository citations;
     private final SupplementRepository supplements;
     private final ActivityRepository activities;
+    private final RevisionRecorder recorder;
 
     public ExperienceService(ExperienceRepository experiences, CitationRepository citations,
-            SupplementRepository supplements, ActivityRepository activities) {
+            SupplementRepository supplements, ActivityRepository activities, RevisionRecorder recorder) {
         this.experiences = experiences;
         this.citations = citations;
         this.supplements = supplements;
         this.activities = activities;
+        this.recorder = recorder;
     }
 
     /** 보낸 필드만 바꾼다. 값이 실제로 바뀌면 USER_ENTERED, 근거는 그대로(계약 「PATCH /api/experiences」 · S-10). */
@@ -46,9 +55,32 @@ public class ExperienceService {
 
         Actor actor = body.string("actor").map(field -> parseActor(field.value())).orElse(null);
 
+        ExperienceSnapshot before = ExperienceSnapshot.of(experience);
         experience.editByUser(content, competencies, actor);
         experiences.flush();
+        // 스냅샷이 하나도 안 바뀌었으면 남기지 않는다(S-80)
+        recorder.experience(experience, before, RevisionKind.EDIT, RevisionOrigin.USER, null);
         return ExperienceResponse.from(experience);
+    }
+
+    /**
+     * 수정 이력의 되돌리기(S-80) — 그 수정 전 스냅샷으로 통째로 쓰고 RESTORE 기록을 더한다. 행을 잠가 외부 AI 고치기와 겹치지 않게 한다.
+     * 이미 그 값이면 409, 지운 경험이면 409(복구는 범위 밖).
+     */
+    @Transactional
+    public Restored<ExperienceResponse> restore(long experienceId, ExperienceSnapshot target, long revisionId) {
+        Experience experience = experiences.findOwnedForUpdate(experienceId, CurrentUser.id())
+                .orElseThrow(RevisionErrors::targetDeleted);
+        ExperienceSnapshot before = ExperienceSnapshot.of(experience);
+        if (before.equals(target)) {
+            throw RevisionErrors.nothingToRestore();
+        }
+        experience.restoreSnapshot(target.content(), target.actor(), target.competencies(), target.competenciesBy(),
+                target.sourceStatus());
+        experiences.flush();
+        Revision revision = recorder.experience(experience, before, RevisionKind.RESTORE, RevisionOrigin.USER,
+                revisionId);
+        return new Restored<>(ExperienceResponse.from(experience), revision);
     }
 
     /**

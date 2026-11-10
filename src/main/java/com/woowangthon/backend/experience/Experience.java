@@ -184,6 +184,24 @@ public class Experience {
         mcpClient = pendingClient;
     }
 
+    /**
+     * 수정 이력에서 되돌린다(S-80) — 스냅샷 다섯 필드를 통째로 그때 값으로. 출처 상태도 그때 값이라 USER_ENTERED 로 바꾸지 않는다.
+     * 정하지 않은 외부 AI 변경은 사용자가 손댄 것이 되어 mcpChange 가 비고, 주체를 정한 시각은 웹 고치기와 같이 처음 한 번만 남는다.
+     * 근거 · 보완 · 활동 소속은 그대로다.
+     */
+    public void restoreSnapshot(String newContent, Actor newActor, List<Competency> newCompetencies,
+            CompetenciesBy newCompetenciesBy, SourceStatus newSourceStatus) {
+        content = newContent;
+        competencies = toNames(newCompetencies);
+        competenciesBy = newCompetenciesBy;
+        sourceStatus = newSourceStatus;
+        if (newActor != actor) {
+            changeActor(newActor);
+        }
+        mcpChangeId = null;
+        mcpClient = null;
+    }
+
     /** 맞아요 — 외부 AI 가 고친 본문을 사용자가 자기 말로 받는다(S-53). 역량 출처는 그대로다. */
     public void confirmExternalAiRewrite() {
         sourceStatus = SourceStatus.USER_ENTERED;

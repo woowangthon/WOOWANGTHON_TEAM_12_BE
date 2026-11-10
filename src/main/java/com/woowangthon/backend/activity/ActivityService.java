@@ -7,6 +7,14 @@ import com.woowangthon.backend.experience.Actor;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceService;
 import com.woowangthon.backend.question.RecommendationRepository;
+import com.woowangthon.backend.revision.ActivitySnapshot;
+import com.woowangthon.backend.revision.ExperienceSnapshot;
+import com.woowangthon.backend.revision.Restored;
+import com.woowangthon.backend.revision.Revision;
+import com.woowangthon.backend.revision.RevisionErrors;
+import com.woowangthon.backend.revision.RevisionKind;
+import com.woowangthon.backend.revision.RevisionOrigin;
+import com.woowangthon.backend.revision.RevisionRecorder;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -25,14 +33,40 @@ public class ActivityService {
     private final RecommendationRepository recommendations;
     private final ActivityLinkService links;
     private final ActivityLinkRepository linkRows;
+    private final RevisionRecorder recorder;
 
     public ActivityService(ActivityRepository activities, ExperienceService experiences,
-            RecommendationRepository recommendations, ActivityLinkService links, ActivityLinkRepository linkRows) {
+            RecommendationRepository recommendations, ActivityLinkService links, ActivityLinkRepository linkRows,
+            RevisionRecorder recorder) {
         this.activities = activities;
         this.experiences = experiences;
         this.recommendations = recommendations;
         this.links = links;
         this.linkRows = linkRows;
+        this.recorder = recorder;
+    }
+
+    /** 수정 이력 되돌리기 응답의 활동 — { id, name, period }. */
+    public record ActivityBrief(Long id, String name, Period period) {
+    }
+
+    /**
+     * 수정 이력의 되돌리기(S-80) — 이름 · 기간만 그 수정 전 값으로 돌리고 RESTORE 기록을 더한다. 분류 · 계기 · 이어짐은 그대로다.
+     * 이미 그 값이면 409, 지운 활동이면 409(복구는 범위 밖).
+     */
+    @Transactional
+    public Restored<ActivityBrief> restore(long activityId, ActivitySnapshot target, long revisionId) {
+        Activity activity = activities.findOwnedForUpdate(activityId, CurrentUser.id())
+                .orElseThrow(RevisionErrors::targetDeleted);
+        ActivitySnapshot before = ActivitySnapshot.of(activity);
+        if (before.equals(target)) {
+            throw RevisionErrors.nothingToRestore();
+        }
+        activity.rename(target.name());
+        activity.changePeriod(target.period());
+        activities.flush();
+        Revision revision = recorder.activity(activity, before, RevisionKind.RESTORE, RevisionOrigin.USER, revisionId);
+        return new Restored<>(new ActivityBrief(activity.getId(), activity.getName(), activity.getPeriod()), revision);
     }
 
     @Transactional(readOnly = true)
@@ -67,6 +101,7 @@ public class ActivityService {
     @Transactional
     public ActivityResponses.Summary update(long activityId, PatchBody body) {
         Activity activity = find(activityId);
+        ActivitySnapshot before = ActivitySnapshot.of(activity);
 
         body.string("name").ifPresent(name -> {
             if (name.value() == null || name.value().isBlank()) {
@@ -93,6 +128,8 @@ public class ActivityService {
         body.string("category").ifPresent(category -> activity.chooseCategory(parseCategory(category.value())));
 
         activities.flush();
+        // 이름 · 기간이 바뀌었을 때만 남는다 — 계기 · 분류만 고친 저장은 스냅샷이 같다(S-80)
+        recorder.activity(activity, before, RevisionKind.EDIT, RevisionOrigin.USER, null);
         return ActivityResponses.Summary.from(activity, suggestedFrom(activity, this::sameUser));
     }
 
@@ -151,8 +188,11 @@ public class ActivityService {
         Activity activity = find(activityId);
         int changed = 0;
         for (Experience experience : activity.getExperiences()) {
+            ExperienceSnapshot before = ExperienceSnapshot.of(experience);
             if (experience.decideActorIfUnknown(decided)) {
                 changed++;
+                // 바뀐 경험마다 한 건(S-80)
+                recorder.experience(experience, before, RevisionKind.EDIT, RevisionOrigin.USER, null);
             }
         }
         activities.flush();

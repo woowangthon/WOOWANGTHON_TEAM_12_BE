@@ -13,6 +13,10 @@ import com.woowangthon.backend.question.ApplicationRepository;
 import com.woowangthon.backend.question.ApplicationService;
 import com.woowangthon.backend.question.ClarificationService;
 import com.woowangthon.backend.question.QuestionResponses;
+import com.woowangthon.backend.revision.ExperienceSnapshot;
+import com.woowangthon.backend.revision.RevisionKind;
+import com.woowangthon.backend.revision.RevisionOrigin;
+import com.woowangthon.backend.revision.RevisionRecorder;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -38,12 +42,14 @@ public class McpWriteService {
     private final ApplicationRepository applicationRows;
     private final ClarificationService clarifications;
     private final SupplementRepository supplements;
+    private final RevisionRecorder recorder;
     private final int dailyWriteLimit;
 
     public McpWriteService(AnalysisService analyses, ExperienceRepository experiences, McpChangeRepository changes,
             ApplicationService applications, ApplicationRepository applicationRows,
-            ClarificationService clarifications, SupplementRepository supplements,
+            ClarificationService clarifications, SupplementRepository supplements, RevisionRecorder recorder,
             @Value("${app.mcp.daily-write-limit}") int dailyWriteLimit) {
+        this.recorder = recorder;
         this.analyses = analyses;
         this.experiences = experiences;
         this.changes = changes;
@@ -95,7 +101,11 @@ public class McpWriteService {
             throw new McpToolException("STALE_CONTENT", "경험 본문이 그새 바뀌었습니다 — 다시 읽고 부르세요");
         }
         McpChange change = changes.save(McpChange.updateExperience(userId, client, experience, content, reason));
+        ExperienceSnapshot before = ExperienceSnapshot.of(experience);
         experience.rewriteByExternalAi(content, change.getId(), client);
+        // 수정 이력에도 한 줄(S-80) — 변경 기록과 같은 트랜잭션
+        recorder.experience(experience, before, RevisionKind.EDIT, RevisionOrigin.externalAi(client, change.getId()),
+                null);
         return new UpdatedExperience(change.getId(), experience.getId(), experience.getSourceStatus());
     }
 

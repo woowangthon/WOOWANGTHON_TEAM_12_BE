@@ -18,6 +18,9 @@ import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.ExperienceResponse;
 import com.woowangthon.backend.experience.ExperienceService;
 import com.woowangthon.backend.job.JobStatus;
+import com.woowangthon.backend.revision.RevisionKind;
+import com.woowangthon.backend.revision.RevisionOrigin;
+import com.woowangthon.backend.revision.RevisionRecorder;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -52,10 +55,13 @@ public class AnswerService {
     private final ExperienceService experienceService;
     private final UsageLimiter limiter;
     private final AnswerDraftService answerDrafts;
+    private final RevisionRecorder recorder;
 
     public AnswerService(QuestionRepository questions, AnswerRepository answers, NewFactCandidateRepository candidates,
             DraftRepository drafts, ExperienceRepository experiences, ActivityRepository activities,
-            ExperienceService experienceService, UsageLimiter limiter, AnswerDraftService answerDrafts) {
+            ExperienceService experienceService, UsageLimiter limiter, AnswerDraftService answerDrafts,
+            RevisionRecorder recorder) {
+        this.recorder = recorder;
         this.questions = questions;
         this.answers = answers;
         this.candidates = candidates;
@@ -102,11 +108,14 @@ public class AnswerService {
             answerDrafts.discard(questionId);
             return new Result(view(answer, question.getUserId()));
         }
+        // 수정 이력(S-80) — before 는 직전 확정 답(처음이면 ""). 같은 글 확정은 위에서 이미 돌려보냈다
+        String previous = answer == null ? "" : answer.getText();
         if (answer == null) {
             answer = new Answer(questionId);
         }
         answer.confirm(text);
         answers.saveAndFlush(answer);
+        recorder.answer(question, previous, text, RevisionKind.CONFIRM, RevisionOrigin.USER, null);
         // 확정하면 쓰는 중인 임시 글은 지운다(S-72)
         answerDrafts.discard(questionId);
         return new Result(view(answer, question.getUserId()));

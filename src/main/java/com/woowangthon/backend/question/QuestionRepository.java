@@ -2,6 +2,7 @@ package com.woowangthon.backend.question;
 
 import com.woowangthon.backend.job.JobStatus;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,6 +12,10 @@ import org.springframework.data.jpa.repository.Query;
 public interface QuestionRepository extends JpaRepository<Question, Long> {
 
     Optional<Question> findByIdAndUserId(Long id, Long userId);
+
+    // 수정 이력 목록에서 지금도 있는 문항만(S-80)
+    @Query("select q.id from Question q where q.id in :ids and q.userId = :userId")
+    List<Long> findOwnedIds(Collection<Long> ids, Long userId);
 
     // 최근에 넣은 것부터(계약 「GET /api/questions」)
     List<Question> findByUserIdOrderByCreatedAtDescIdDesc(Long userId);
