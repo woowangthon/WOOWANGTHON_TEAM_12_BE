@@ -289,8 +289,8 @@ class AnswerApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.origin.questionId").value(questionId));
 
-        // 다시 확정 — 후보는 사라지고 만든 경험은 남는다
-        confirm(TEXT).andExpect(status().isOk()).andExpect(jsonPath("$.answer.newFacts").value(nullValue()));
+        // 글을 고쳐 다시 확정 — 후보는 사라지고 만든 경험은 남는다
+        confirm(TEXT + " ").andExpect(status().isOk()).andExpect(jsonPath("$.answer.newFacts").value(nullValue()));
         expectError(save(saveId, "{\"activityId\": " + appId + ", \"content\": \"또\", \"actor\": \"ME\"}"), 404,
                 "NEW_FACT_NOT_FOUND");
         assertThat(experiences.existsById(saved)).isTrue();
@@ -304,6 +304,45 @@ class AnswerApiTest {
         assertThat((List<Integer>) JsonPath.read(RECEIVED.getFirst(), "$.experiences[*].id"))
                 .containsExactlyInAnyOrder((int) chat, (int) saved);
         assertThat(used()).isEqualTo(2);
+    }
+
+    @Test
+    void 같은_글로_다시_확정하면_아무것도_바꾸지_않는다() throws Exception {
+        confirm(TEXT).andExpect(status().isOk());
+        find().andExpect(status().isAccepted());
+        String done = awaitDone();
+        List<Integer> ids = JsonPath.read(done, "$.answer.newFacts.candidates[*].id");
+        long saveId = ids.get(0);
+        long dismissId = ids.get(1);
+        mvc.perform(post("/api/new-fact-candidates/{id}/dismiss", dismissId)).andExpect(status().isNoContent());
+        String before = detail().andReturn().getResponse().getContentAsString();
+        mvc.perform(put("/api/questions/{id}/answer-draft", questionId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\": \"쓰는 중\"}")).andExpect(status().isOk());
+
+        // 다른 탭에서 같은 글로 「다 썼어요」 — 확정 시각 · 찾기 결과 · PENDING 후보 그대로, 분석 횟수 그대로, 임시 글만 지운다
+        String again = confirm(TEXT).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat((Object) JsonPath.read(again, "$.answer")).isEqualTo(JsonPath.read(before, "$.answer"));
+        assertThat((String) JsonPath.read(again, "$.answer.newFacts.candidates[0].status")).isEqualTo("PENDING");
+        assertThat((String) JsonPath.read(again, "$.answer.newFacts.candidates[1].status")).isEqualTo("DISMISSED");
+        detail().andExpect(jsonPath("$.answerDraft").value(nullValue()));
+        assertThat(used()).isEqualTo(1);
+        assertThat(RECEIVED).hasSize(1);
+        save(saveId, "{\"activityId\": " + appId + ", \"content\": \"확인했다\", \"actor\": \"ME\"}")
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void 이미_찾은_글이면_다시_찾지_않고_지금_답을_200_으로_돌려준다() throws Exception {
+        confirm(TEXT).andExpect(status().isOk());
+        find().andExpect(status().isAccepted());
+        String done = awaitDone();
+
+        String again = find().andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat((Object) JsonPath.read(again, "$.answer")).isEqualTo(JsonPath.read(done, "$.answer"));
+        assertThat((String) JsonPath.read(again, "$.answer.newFacts.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(again, "$.answer.newFacts.candidates[0].status")).isEqualTo("PENDING");
+        assertThat(used()).isEqualTo(1);
+        assertThat(RECEIVED).hasSize(1);
     }
 
     @Test
