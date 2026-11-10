@@ -3,6 +3,7 @@ package com.woowangthon.backend.question;
 import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
+import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.MatchRequest;
 import com.woowangthon.backend.ai.NewFactsRequest;
@@ -239,15 +240,46 @@ public class AnswerService {
     @Transactional
     public ExperienceResponse save(long candidateId, PatchBody body) {
         Long activityId = body.id("activityId").map(PatchBody.Field::value).orElse(null);
-        if (activityId == null) {
-            throw ApiException.invalidRequest("activityId 가 없습니다");
+        PatchBody newActivity = body.object("newActivity").map(PatchBody.Field::value).orElse(null);
+        if ((activityId == null) == (newActivity == null)) {
+            throw ApiException.invalidRequest("activityId 와 newActivity 중 하나만 보내야 합니다");
         }
+        Activity created = newActivity == null ? null : newActivity(newActivity);
         NewFactCandidate candidate = lockPending(candidateId);
+        if (created != null) {
+            // 경험 저장이 실패하면 같은 트랜잭션이라 이 활동도 남지 않는다(ETC#260 — 빈 활동을 남기지 않는다)
+            activityId = activities.saveAndFlush(created).getId();
+        }
         Question question = questions.findById(candidate.getAnswer().getQuestionId()).orElseThrow();
         Experience experience = experienceService.create(activityId, body, question);
         candidate.getAnswer().saveCandidate(candidate, experience.getId());
         answers.flush();
         return ExperienceResponse.from(experience);
+    }
+
+    /**
+     * 후보 카드에서 만드는 새 활동(question-api.md 「newActivity」) — 이름 · 기간만 받는다. 분류 · 계기 · 같은 활동 제안은 비운다.
+     * 기간 검사는 「활동 수정」과 같다(Period.validated). 같은 이름 활동이 있어도 막지 않는다 — 합치기는 사용자(S-13).
+     */
+    private static Activity newActivity(PatchBody body) {
+        String name = body.string("name").map(PatchBody.Field::value).map(String::strip).orElse(null);
+        if (name == null || name.isEmpty()) {
+            throw ApiException.invalidRequest("newActivity.name 이 비었습니다");
+        }
+        Period period = body.object("period").map(field -> {
+            PatchBody p = field.value();
+            if (p == null) {
+                throw ApiException.invalidRequest("newActivity.period 는 start · end · ongoing 을 담은 객체여야 합니다");
+            }
+            Boolean ongoing = p.bool("ongoing").map(PatchBody.Field::value).orElse(null);
+            if (ongoing == null) {
+                throw ApiException.invalidRequest("newActivity.period.ongoing 이 없습니다");
+            }
+            String start = p.string("start").map(PatchBody.Field::value).orElse(null);
+            String end = p.string("end").map(PatchBody.Field::value).orElse(null);
+            return Period.validated(start, end, ongoing);
+        }).orElse(new Period(null, null, false));
+        return new Activity(CurrentUser.id(), name, period);
     }
 
     /** 저장 안 함 — 그 문장은 이 문항의 다음 찾기부터 빠진다(글자가 같을 때만). */

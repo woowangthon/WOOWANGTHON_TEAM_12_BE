@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import com.sun.net.httpserver.HttpServer;
+import com.woowangthon.backend.account.AppUser;
+import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.activity.Period;
@@ -114,6 +116,9 @@ class AnswerApiTest {
 
     @Autowired
     SourceRepository sources;
+
+    @Autowired
+    AppUserRepository users;
 
     @Autowired
     ActivityRepository activities;
@@ -490,7 +495,102 @@ class AnswerApiTest {
         detail().andExpect(jsonPath("$.answer.newFacts.candidates[0].status").value("PENDING"));
     }
 
+    // --- 새 활동으로 저장(ETC#260 · BE#158) ---
+
+    @Test
+    void 새_활동을_만들어_저장한다() throws Exception {
+        List<Long> ids = candidateIds();
+
+        String created = save(ids.get(0), "{\"newActivity\": {\"name\": \"  결제 서버 운영 \", \"period\": "
+                + "{\"start\": \"2024\", \"end\": null, \"ongoing\": true}}, \"content\": \"1000건의 트랜잭션을 처리하는 서버를 운영했다\", "
+                + "\"actor\": \"ME\", \"competencies\": []}")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.content").value("1000건의 트랜잭션을 처리하는 서버를 운영했다"))
+                .andExpect(jsonPath("$.sourceStatus").value("USER_ENTERED"))
+                .andExpect(jsonPath("$.competenciesBy").value("USER"))
+                .andExpect(jsonPath("$.origin.questionId").value(questionId))
+                .andReturn().getResponse().getContentAsString();
+        long activityId = ((Number) JsonPath.read(created, "$.activityId")).longValue();
+        long experienceId = ((Number) JsonPath.read(created, "$.id")).longValue();
+        assertThat(activityId).isNotIn(appId, studyId);
+
+        // 보통 활동과 같다 — 이름은 앞뒤 공백을 걷고, 분류 · 계기 · 같은 활동 제안은 비어 있다
+        mvc.perform(get("/api/activities/{id}", activityId)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("결제 서버 운영"))
+                .andExpect(jsonPath("$.period.start").value("2024"))
+                .andExpect(jsonPath("$.period.end").value(nullValue()))
+                .andExpect(jsonPath("$.period.ongoing").value(true))
+                .andExpect(jsonPath("$.category").value(nullValue()))
+                .andExpect(jsonPath("$.categoryBy").value(nullValue()))
+                .andExpect(jsonPath("$.note").value(nullValue()))
+                .andExpect(jsonPath("$.mergeSuggestion").value(nullValue()))
+                .andExpect(jsonPath("$.experiences.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].id").value(experienceId));
+        detail().andExpect(jsonPath("$.answer.newFacts.candidates[0].status").value("SAVED"))
+                .andExpect(jsonPath("$.answer.newFacts.candidates[0].experienceId").value(experienceId));
+
+        // 기간을 빼면 기간 모름 · 같은 이름이 있어도 새로 만든다(합치기는 사용자)
+        String second = save(ids.get(1), "{\"newActivity\": {\"name\": \"결제 서버 운영\"}, \"content\": \"요청을 줄였다\", "
+                + "\"actor\": \"TEAM\"}")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long secondActivity = ((Number) JsonPath.read(second, "$.activityId")).longValue();
+        assertThat(secondActivity).isNotEqualTo(activityId);
+        mvc.perform(get("/api/activities/{id}", secondActivity)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.period.start").value(nullValue()))
+                .andExpect(jsonPath("$.period.end").value(nullValue()))
+                .andExpect(jsonPath("$.period.ongoing").value(false));
+        assertThat(activities.count()).isEqualTo(4);
+    }
+
+    @Test
+    void 새_활동_저장_오류는_활동도_경험도_남기지_않는다() throws Exception {
+        long id = candidateIds().get(0);
+        String tail = ", \"content\": \"했다\", \"actor\": \"ME\"}";
+
+        // activityId · newActivity 는 정확히 하나
+        expectError(save(id, "{\"activityId\": " + appId + ", \"newActivity\": {\"name\": \"새 활동\"}" + tail), 400,
+                "INVALID_REQUEST");
+        expectError(save(id, "{\"newActivity\": null" + tail), 400, "INVALID_REQUEST");
+        // 이름
+        expectError(save(id, "{\"newActivity\": {\"name\": \"   \"}" + tail), 400, "INVALID_REQUEST");
+        expectError(save(id, "{\"newActivity\": {}" + tail), 400, "INVALID_REQUEST");
+        expectError(save(id, "{\"newActivity\": {\"name\": 3}" + tail), 400, "INVALID_REQUEST");
+        // 기간 — 활동 수정과 같은 검사
+        expectError(save(id, "{\"newActivity\": {\"name\": \"새 활동\", \"period\": {\"start\": \"2024-13\", \"end\": null, "
+                + "\"ongoing\": false}}" + tail), 400, "INVALID_REQUEST");
+        expectError(save(id, "{\"newActivity\": {\"name\": \"새 활동\", \"period\": {\"start\": \"2024\"}}" + tail), 400,
+                "INVALID_REQUEST");
+        expectError(save(id, "{\"newActivity\": {\"name\": \"새 활동\", \"period\": {\"start\": \"2025-03\", \"end\": \"2024\", "
+                + "\"ongoing\": false}}" + tail), 400, "INVALID_PERIOD");
+        expectError(save(id, "{\"newActivity\": {\"name\": \"새 활동\", \"period\": {\"start\": \"2024\", \"end\": \"2025\", "
+                + "\"ongoing\": true}}" + tail), 400, "INVALID_PERIOD");
+        // 경험 쪽이 실패하면 먼저 만든 활동도 되돌린다
+        expectError(save(id, "{\"newActivity\": {\"name\": \"새 활동\"}, \"content\": \" \", \"actor\": \"ME\"}"), 400,
+                "INVALID_REQUEST");
+        expectError(save(id, "{\"newActivity\": {\"name\": \"새 활동\"}, \"content\": \"했다\", \"actor\": \"I\"}"), 400,
+                "INVALID_REQUEST");
+        // 남의 후보 · 남의 활동
+        long other = users.saveAndFlush(new AppUser("newfact-other-" + System.nanoTime(), "hash", null)).getId();
+        expectError(TestLogin.mvc(context, other).perform(post("/api/new-fact-candidates/{id}/save", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"newActivity\": {\"name\": \"새 활동\"}" + tail)), 404,
+                "NEW_FACT_NOT_FOUND");
+        long theirs = activities.save(new Activity(other, "남의 활동", new Period(null, null, false))).getId();
+        expectError(save(id, "{\"activityId\": " + theirs + tail), 404, "ACTIVITY_NOT_FOUND");
+
+        assertThat(activities.count()).isEqualTo(3); // 내 활동 2 + 남의 활동 1
+        assertThat(experiences.count()).isEqualTo(1);
+        detail().andExpect(jsonPath("$.answer.newFacts.candidates[0].status").value("PENDING"));
+    }
+
     // --- 도우미 ---
+
+    private List<Long> candidateIds() throws Exception {
+        confirm(TEXT).andExpect(status().isOk());
+        find().andExpect(status().isAccepted());
+        List<Number> ids = JsonPath.read(awaitDone(), "$.answer.newFacts.candidates[*].id");
+        return ids.stream().map(Number::longValue).toList();
+    }
 
     private ResultActions detail() throws Exception {
         return mvc.perform(get("/api/questions/{id}", questionId)).andExpect(status().isOk());
