@@ -107,15 +107,24 @@ public class QuestionService {
         return detail(question);
     }
 
-    /** 실패한 문항만 다시 돌린다 — 같은 문항 ID 를 그대로 쓴다. */
+    /**
+     * 실패한 문항의 다시 시도(S-18) · 끝난 문항의 「경험 다시 찾기」(S-90) — 같은 문항 ID · 같은 글로 추천을 다시 돌린다.
+     * 옛 요구사항 · 추천 · 추천의 되묻기만 지운다. 초안 · 근거 점검 · 확정 답 · 임시 글은 남는다 — 글이 그대로다(문항 글 고치기와 다른 점).
+     */
     @Transactional
     public QuestionResponses.Detail retry(long questionId) {
         Question question = questions.findForUpdate(questionId, CurrentUser.id())
                 .orElseThrow(() -> notFound(questionId));
-        if (question.getStatus() != JobStatus.FAILED) {
-            throw new ApiException(HttpStatus.CONFLICT, "QUESTION_NOT_FAILED",
-                    "문항 " + questionId + " 은(는) 실패 상태가 아닙니다(" + question.getStatus() + ")");
+        // 초안 · 근거 점검도 잠가 본다 — 그것들이 도는 중에 추천이 바뀌지 않게(문항 글 고치기와 같은 조건)
+        Optional<Draft> draft = draftRows.lockByQuestionId(questionId);
+        Optional<GroundingCheck> check = checks.lockByQuestionId(questionId);
+        if (question.getStatus() == JobStatus.ANALYZING
+                || draft.filter(d -> d.getStatus() == JobStatus.ANALYZING).isPresent()
+                || check.filter(c -> c.getStatus() == JobStatus.ANALYZING).isPresent()) {
+            throw new ApiException(HttpStatus.CONFLICT, "QUESTION_ANALYZING",
+                    "문항 " + questionId + " 은(는) 분석 중입니다. 끝난 뒤 다시 시도하세요");
         }
+        // 한도면 429 — 옛 추천을 지우기 전에
         limiter.consume(question.getUserId());
         question.restart();
         questions.flush();

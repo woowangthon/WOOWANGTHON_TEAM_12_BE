@@ -135,7 +135,7 @@ public class Question {
         restart();
     }
 
-    /** 실패한 문항을 같은 문항으로 다시 돌린다. */
+    /** 실패했거나 끝난 문항을 같은 문항으로 다시 돌린다(S-18 · S-90). */
     public void restart() {
         clearResults();
         status = JobStatus.ANALYZING;
