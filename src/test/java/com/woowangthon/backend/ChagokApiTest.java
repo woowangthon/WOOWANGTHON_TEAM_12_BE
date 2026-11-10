@@ -486,6 +486,58 @@ class ChagokApiTest {
     }
 
     @Test
+    void 문항의_추천_경험과_초안에만_쓴_경험을_맥락으로_싣는다() throws Exception {
+        lines = List.of(DONE);
+        String submitted = mvc.perform(post("/api/applications").contentType(MediaType.APPLICATION_JSON).content("""
+                {"organization":"OO 부트캠프","questions":[{"text":"문제를 해결한 경험"}]}"""))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        long questionId = ((Number) JsonPath.read(submitted, "$.questionIds[0]")).longValue();
+        long activity = jdbc.queryForObject("insert into activity (user_id, name) values (?, '바꿔요') returning id",
+                Long.class, TestLogin.USER_ID);
+        String insert = "insert into experience (activity_id, content, actor, source_status, competencies_by, position) "
+                + "values (?, ?, 'ME', 'SOURCE_CONFIRMED', 'AI', ?) returning id";
+        long first = jdbc.queryForObject(insert, Long.class, activity, "WebSocket 으로 바꿨다", 0);
+        long second = jdbc.queryForObject(insert, Long.class, activity, "회고를 이끌었다", 1);
+        long draftOnly = jdbc.queryForObject(insert, Long.class, activity, "배포를 맡았다", 2);
+        long gone = 999_999_999L;
+        for (long[] row : new long[][] {{0, second}, {1, first}, {2, gone}}) {
+            jdbc.update("insert into question_recommendation (question_id, position, experience_id, reason, emphasis) "
+                    + "values (?, ?, ?, '이유', '강조')", questionId, row[0], row[1]);
+        }
+        long draft = jdbc.queryForObject("insert into draft (question_id, status) values (?, 'COMPLETED') returning id",
+                Long.class, questionId);
+        jdbc.update("insert into draft_experience (draft_id, position, experience_id) values (?, 0, ?), (?, 1, ?)",
+                draft, first, draft, draftOnly);
+        try {
+            await(id(postRun("{\"text\":\"다른 경험 찾아 줘\",\"questionId\":" + questionId + "}")), "DONE");
+
+            String sent = RECEIVED.getFirst();
+            List<Integer> ids = JsonPath.read(sent, "$.context.question.experiences[*].id");
+            assertThat(ids).containsExactly((int) second, (int) first, (int) draftOnly);
+            List<Boolean> recommended = JsonPath.read(sent, "$.context.question.experiences[*].recommended");
+            List<Boolean> inDraft = JsonPath.read(sent, "$.context.question.experiences[*].inDraft");
+            assertThat(recommended).containsExactly(true, true, false);
+            assertThat(inDraft).containsExactly(false, true, true);
+            assertThat((String) JsonPath.read(sent, "$.context.question.experiences[0].activityName")).isEqualTo("바꿔요");
+            assertThat((String) JsonPath.read(sent, "$.context.question.experiences[0].content")).isEqualTo("회고를 이끌었다");
+        } finally {
+            jdbc.update("delete from question where id = ?", questionId);
+            jdbc.update("delete from experience where activity_id = ?", activity);
+            jdbc.update("delete from activity where id = ?", activity);
+        }
+    }
+
+    @Test
+    void 추천도_초안도_없는_문항이면_경험은_빈_목록() throws Exception {
+        lines = List.of(DONE);
+        String submitted = mvc.perform(post("/api/applications").contentType(MediaType.APPLICATION_JSON).content("""
+                {"organization":"OO","questions":[{"text":"문항"}]}"""))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        await(id(postRun("{\"text\":\"글\",\"questionId\":" + JsonPath.read(submitted, "$.questionIds[0]") + "}")), "DONE");
+        assertThat((List<?>) JsonPath.read(RECEIVED.getFirst(), "$.context.question.experiences")).isEmpty();
+    }
+
+    @Test
     void 남의_일은_없는_것과_같다() throws Exception {
         AppUser other = users.save(new AppUser("chagok-other-" + System.nanoTime(), "hash", null));
         MockMvc stranger = TestLogin.mvc(context, other.getId());
