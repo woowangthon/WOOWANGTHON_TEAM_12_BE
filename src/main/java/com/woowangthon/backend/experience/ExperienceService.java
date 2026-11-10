@@ -13,6 +13,7 @@ import com.woowangthon.backend.revision.RevisionErrors;
 import com.woowangthon.backend.revision.RevisionKind;
 import com.woowangthon.backend.revision.RevisionOrigin;
 import com.woowangthon.backend.revision.RevisionRecorder;
+import jakarta.persistence.EntityManager;
 import java.util.List;
 import org.hibernate.Hibernate;
 import org.springframework.http.HttpStatus;
@@ -27,9 +28,14 @@ public class ExperienceService {
     private final SupplementRepository supplements;
     private final ActivityRepository activities;
     private final RevisionRecorder recorder;
+    private final ExperienceMerger merger;
+    private final EntityManager em;
 
     public ExperienceService(ExperienceRepository experiences, CitationRepository citations,
-            SupplementRepository supplements, ActivityRepository activities, RevisionRecorder recorder) {
+            SupplementRepository supplements, ActivityRepository activities, RevisionRecorder recorder,
+            ExperienceMerger merger, EntityManager em) {
+        this.merger = merger;
+        this.em = em;
         this.experiences = experiences;
         this.citations = citations;
         this.supplements = supplements;
@@ -187,6 +193,52 @@ public class ExperienceService {
             experiences.flush();
         }
         return ExperienceResponse.from(experience);
+    }
+
+    /**
+     * 같은 활동의 경험 둘을 하나로 — from 의 근거 · 보완을 남길 경험으로 옮기고, from 을 가리키던 것도 남길 경험으로 바꾼 뒤
+     * from 을 지운다. 한 트랜잭션이라 중간에 실패하면 아무것도 바뀌지 않는다. 남길 경험의 값은 그대로이고 저장만 둘 중 하나라도
+     * 켜져 있으면 켠다(계약 「경험 합치기」 · S-70 · S-71).
+     */
+    @Transactional
+    public ExperienceResponse merge(long keepId, PatchBody body) {
+        Long fromId = body.id("fromExperienceId").map(PatchBody.Field::value).orElse(null);
+        if (fromId == null) {
+            throw ApiException.invalidRequest("fromExperienceId 가 없습니다");
+        }
+        if (fromId == keepId) {
+            throw ApiException.invalidRequest("같은 경험끼리는 합칠 수 없습니다");
+        }
+        // 서로 반대로 합치는 요청끼리 맞물리지 않게 id 가 작은 쪽부터 잠근다
+        Experience keep;
+        Experience from;
+        if (keepId < fromId) {
+            keep = lockOwned(keepId);
+            from = lockOwned(fromId);
+        } else {
+            from = lockOwned(fromId);
+            keep = lockOwned(keepId);
+        }
+        if (!keep.getActivity().getId().equals(from.getActivity().getId())) {
+            throw ApiException.invalidRequest("다른 활동의 경험은 합칠 수 없습니다 — 먼저 같은 활동으로 옮기세요");
+        }
+
+        if (from.isSaved() && !keep.isSaved()) {
+            keep.setSaved(true);
+        }
+        experiences.flush();
+        merger.repoint(keepId, fromId);
+        // 근거 · 보완은 이미 keep 으로 옮겼다 — 지울 때 같이 지워지지 않게 SQL 로 from 한 줄만 지운다
+        em.createNativeQuery("delete from experience where id = :id").setParameter("id", fromId).executeUpdate();
+        // SQL 로 바뀐 것을 다시 읽는다
+        em.clear();
+        return ExperienceResponse.from(findOwned(keepId));
+    }
+
+    private Experience lockOwned(long experienceId) {
+        return experiences.findOwnedForUpdate(experienceId, CurrentUser.id())
+                .orElseThrow(() -> ApiException.notFound("EXPERIENCE_NOT_FOUND",
+                        "경험 " + experienceId + " 이(가) 없습니다"));
     }
 
     /** 경험들을 받은 순서대로 활동의 맨 뒤로 옮긴다(옮기기 · 합치기가 같이 쓴다). */
