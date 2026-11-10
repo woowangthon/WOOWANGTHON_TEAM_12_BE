@@ -295,6 +295,7 @@ class DraftApiTest {
     private String contractExample() {
         return """
                 {
+                  "title": "폴링을 구독으로 바꿔 푼 채팅 지연",
                   "sentences": [
                     { "kind": "FACT", "text": "%s", "evidence": [{ "type": "CITATION", "id": %d }] },
                     { "kind": "FACT", "text": "%s", "evidence": [{ "type": "SUPPLEMENT", "id": %d }] },
@@ -327,11 +328,15 @@ class DraftApiTest {
                 .andExpect(jsonPath("$.error").value(nullValue()))
                 .andExpect(jsonPath("$.experienceIds[0]").value(study))
                 .andExpect(jsonPath("$.experienceIds[1]").value(chat))
+                .andExpect(jsonPath("$.title").value(nullValue()))
                 .andExpect(jsonPath("$.sentences.length()").value(0))
                 .andExpect(jsonPath("$.omitted.length()").value(0));
 
         String done = awaitDraft();
         assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        // AI 가 제안한 소제목을 그대로 저장해 응답한다(S-86)
+        assertThat((String) JsonPath.read(done, "$.draft.title")).isEqualTo("폴링을 구독으로 바꿔 푼 채팅 지연");
+        assertThat(jdbc.queryForObject("select title from draft", String.class)).isEqualTo("폴링을 구독으로 바꿔 푼 채팅 지연");
         assertThat((String) JsonPath.read(done, "$.draft.createdAt")).matches(".*\\+09:00");
 
         // AI 에는 문항과 고른 경험만, 고른 순서대로 — 근거는 원본에서 찾은 것만, 보완은 전부
@@ -430,6 +435,66 @@ class DraftApiTest {
     }
 
     @Test
+    void 소제목이_없으면_null_이고_다시_만들거나_실패하면_예전_소제목을_지운다() throws Exception {
+        // AI 서버가 아직 소제목을 안 줘도 실패가 아니다 — 소제목 없는 초안
+        draftReply = new FakeReply(200, "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"사실\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}], \"omitted\": []}"
+                .formatted(chatCitation), 0);
+        start(chat).andExpect(status().isAccepted());
+        String plain = awaitDraft();
+        assertThat((String) JsonPath.read(plain, "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat((Object) JsonPath.read(plain, "$.draft.title")).isNull();
+
+        // 소제목이 있는 초안을 만들고
+        jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID); // 하루 한도에 닿지 않게
+        draftReply = new FakeReply(200, "{\"title\": \"채팅 지연을 푼 경험\", \"sentences\": [{\"kind\": \"FACT\", \"text\": \"사실\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}], \"omitted\": []}"
+                .formatted(chatCitation), 0);
+        start(chat).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.title")).isEqualTo("채팅 지연을 푼 경험");
+
+        // 다시 만드는 중에는 예전 소제목이 보이지 않고, 실패하면 남지 않는다
+        jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID);
+        draftReply = new FakeReply(500, "{\"error\": {\"code\": \"LLM_FAILED\", \"message\": \"실패\"}}", 0);
+        start(chat).andExpect(status().isAccepted()).andExpect(jsonPath("$.title").value(nullValue()));
+        String failed = awaitDraft();
+        assertThat((String) JsonPath.read(failed, "$.draft.status")).isEqualTo("FAILED");
+        assertThat((Object) JsonPath.read(failed, "$.draft.title")).isNull();
+        assertThat(jdbc.queryForObject("select title from draft", String.class)).isNull();
+    }
+
+    @Test
+    void 소제목이_규칙을_벗어나면_아무것도_저장하지_않고_실패() throws Exception {
+        String sentence = "{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"CITATION\", \"id\": %d}]}".formatted(chatCitation);
+        List<String> bodies = List.of(
+                // 빈 소제목 · 줄바꿈 · 41자
+                "{\"title\": \" \", \"sentences\": [" + sentence + "], \"omitted\": []}",
+                "{\"title\": \"한 줄\n두 줄\", \"sentences\": [" + sentence + "], \"omitted\": []}",
+                "{\"title\": \"" + "가".repeat(41) + "\", \"sentences\": [" + sentence + "], \"omitted\": []}");
+        for (String body : bodies) {
+            jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID); // 하루 한도에 닿지 않게
+            draftReply = new FakeReply(200, body, 0);
+            start(chat).andExpect(status().isAccepted());
+            String failed = awaitDraft();
+            assertThat((String) JsonPath.read(failed, "$.draft.status")).as(body).isEqualTo("FAILED");
+            assertThat((String) JsonPath.read(failed, "$.draft.error.code")).as(body).isEqualTo("AI_FAILED");
+            assertThat((Object) JsonPath.read(failed, "$.draft.title")).as(body).isNull();
+        }
+        // 40자는 된다
+        jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID);
+        draftReply = new FakeReply(200, "{\"title\": \"" + "가".repeat(40) + "\", \"sentences\": [" + sentence + "], \"omitted\": []}", 0);
+        start(chat).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDraft(), "$.draft.title")).hasSize(40);
+    }
+
+    @Test
+    void 문장이_0개인데_소제목이_있으면_실패() throws Exception {
+        draftReply = new FakeReply(200, "{\"title\": \"소제목\", \"sentences\": [], \"omitted\": []}", 0);
+        start(bare).andExpect(status().isAccepted());
+        String failed = awaitDraft();
+        assertThat((String) JsonPath.read(failed, "$.draft.status")).isEqualTo("FAILED");
+        assertThat((String) JsonPath.read(failed, "$.draft.error.code")).isEqualTo("AI_FAILED");
+    }
+
+    @Test
     void 받칠_것이_없으면_문장_없이_완료된다() throws Exception {
         draftReply = new FakeReply(200,
                 "{\"sentences\": [], \"omitted\": [{\"text\": \"경험 전부\", \"question\": null, \"experienceId\": null}]}", 0);
@@ -438,6 +503,7 @@ class DraftApiTest {
         String done = awaitDraft();
         assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
         assertThat((List<?>) JsonPath.read(done, "$.draft.sentences")).isEmpty();
+        assertThat((Object) JsonPath.read(done, "$.draft.title")).isNull();
         assertThat((List<String>) JsonPath.read(done, "$.draft.omitted[*].text")).containsExactly("경험 전부");
         assertThat((List<?>) JsonPath.read(RECEIVED.getFirst(), "$.experiences[0].citations")).isEmpty();
     }

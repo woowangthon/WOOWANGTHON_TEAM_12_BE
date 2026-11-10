@@ -1160,6 +1160,23 @@ class QuestionApiTest {
     }
 
     @Test
+    void 직무_역량_유형을_AI_가_붙이고_사용자도_고를_수_있다() throws Exception {
+        // AI 가 JOB_SKILL 을 붙인다(S-85)
+        reply = new FakeReply(200, withType(contractExample(), "JOB_SKILL"), 0);
+        long questionId = submit(QUESTION_A);
+        String done = awaitDone(questionId);
+        assertThat((String) JsonPath.read(done, "$.questionType")).isEqualTo("JOB_SKILL");
+        assertThat((String) JsonPath.read(done, "$.questionTypeBy")).isEqualTo("AI");
+
+        // 다른 유형에서 JOB_SKILL 로 고친다
+        patchQuestion(questionId, "{\"questionType\": \"OTHER\"}").andExpect(status().isOk());
+        patchQuestion(questionId, "{\"questionType\": \"JOB_SKILL\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.questionType").value("JOB_SKILL"))
+                .andExpect(jsonPath("$.questionTypeBy").value("USER"));
+    }
+
+    @Test
     void 문항_유형_고치기_오류() throws Exception {
         reply = new FakeReply(200, withType(contractExample(), "PROBLEM_SOLVING"), 0);
         long questionId = submit(QUESTION_A);
