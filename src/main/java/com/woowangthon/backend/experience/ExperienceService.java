@@ -166,14 +166,26 @@ public class ExperienceService {
     /** 경험과 그 근거 · 보완을 지운다. 원본과 활동은 남는다(계약 「경험 지우기」 · S-11). */
     @Transactional
     public void delete(long experienceId) {
-        Experience experience = findOwned(experienceId);
+        remove(findOwned(experienceId));
+        experiences.flush();
+    }
+
+    /** 활동 지우기(S-88) — 그 활동의 경험마다 경험 지우기와 같은 길로 지운다. 활동은 부르는 쪽이 지운다. */
+    @Transactional
+    public void deleteAllOf(Activity activity) {
+        for (Experience experience : List.copyOf(activity.getExperiences())) {
+            remove(experience);
+        }
+        experiences.flush();
+    }
+
+    private void remove(Experience experience) {
         citations.deleteAll(experience.getCitations());
         supplements.deleteAll(experience.getSupplements());
         experiences.delete(experience);
         if (Hibernate.isInitialized(experience.getActivity().getExperiences())) {
             experience.getActivity().getExperiences().remove(experience);
         }
-        experiences.flush();
     }
 
     /** 경험이 속한 활동만 바꾼다. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤에 붙는다(계약 「경험 옮기기」 · S-12). */

@@ -3,6 +3,7 @@ package com.woowangthon.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.nullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -776,6 +777,22 @@ class AnalysisJobApiTest {
         assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
         assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isFalse();
         assertThat(((Number) JsonPath.read(done, "$.targetActivityId")).longValue()).isEqualTo(target);
+        assertThat((List<?>) JsonPath.read(done, "$.activityIds")).hasSize(3);
+    }
+
+    @Test
+    void 분석_중에_대상이_지워지면_대상_없이_끝나고_targetMatched_는_false() throws Exception {
+        List<Integer> first = JsonPath.read(awaitDone(submitText()), "$.activityIds");
+        long target = first.get(0);
+
+        reply = new FakeReply(200, ATTACH_REPLY.formatted(target, target, null), 300);
+        long jobId = submit(addTo(target));
+        awaitReceived(2);
+        mvc.perform(delete("/api/activities/{id}", target)).andExpect(status().isNoContent());
+        String done = awaitDone(jobId);
+
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        assertThat((Boolean) JsonPath.read(done, "$.targetMatched")).isFalse();
         assertThat((List<?>) JsonPath.read(done, "$.activityIds")).hasSize(3);
     }
 

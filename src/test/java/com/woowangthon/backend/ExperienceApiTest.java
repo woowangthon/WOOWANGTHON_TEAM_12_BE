@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -147,7 +148,7 @@ class ExperienceApiTest {
     @Test
     void 스프링_기본_오류도_같은_오류_모양이다() throws Exception {
         expectError(mvc.perform(get("/api/nothing")), 404, "NOT_FOUND");
-        expectError(mvc.perform(delete("/api/activities/{id}", appId)), 405, "METHOD_NOT_ALLOWED");
+        expectError(mvc.perform(put("/api/activities/{id}", appId)), 405, "METHOD_NOT_ALLOWED");
         expectError(mvc.perform(patch("/api/activities/{id}", appId).content("{}")), 415, "UNSUPPORTED_MEDIA_TYPE");
     }
 
