@@ -251,6 +251,9 @@ class QuestionApiTest {
         assertThat((List<Integer>) JsonPath.read(sent, "$.experiences[*].id"))
                 .containsExactly((int) study, (int) chat, (int) retro); // 타임라인 순서
         assertThat((String) JsonPath.read(sent, "$.experiences[1].activityName")).isEqualTo("바꿔요 — 캠퍼스 중고거래 앱");
+        // 추천의 활동 수를 세게 경험마다 activityId 를 싣는다(S-84)
+        assertThat(((Number) JsonPath.read(sent, "$.experiences[1].activityId")).longValue()).isEqualTo(appId);
+        assertThat(((Number) JsonPath.read(sent, "$.experiences[0].activityId")).longValue()).isEqualTo(studyId);
         assertThat((String) JsonPath.read(sent, "$.experiences[1].period.start")).isEqualTo("2025-03");
         assertThat((String) JsonPath.read(sent, "$.experiences[1].actor")).isEqualTo("ME");
         assertThat((String) JsonPath.read(sent, "$.experiences[1].sourceStatus")).isEqualTo("SOURCE_CONFIRMED");
@@ -1157,6 +1160,49 @@ class QuestionApiTest {
         assertThat((String) JsonPath.read(retried, "$.status")).isEqualTo("COMPLETED");
         assertThat((String) JsonPath.read(retried, "$.questionType")).isEqualTo("CONFLICT");
         assertThat((String) JsonPath.read(retried, "$.questionTypeBy")).isEqualTo("USER");
+    }
+
+    @Test
+    void 추천은_8개까지_활동은_5개까지_저장한다() throws Exception {
+        // 활동 5개(앱 · 스터디 · 해커톤 · 동아리 · 인턴) · 추천 8개
+        Activity x1 = activities.save(new Activity(TestLogin.USER_ID, "해커톤", new Period("2025-10", "2025-10", false)));
+        Activity x2 = activities.save(new Activity(TestLogin.USER_ID, "동아리", new Period("2025-01", "2025-02", false)));
+        Activity x3 = activities.save(new Activity(TestLogin.USER_ID, "인턴", new Period("2025-07", "2025-08", false)));
+        Activity x4 = activities.save(new Activity(TestLogin.USER_ID, "공모전", new Period("2025-11", "2025-11", false)));
+        List<Long> ids = new java.util.ArrayList<>(List.of(chat, retro, study));
+        for (Activity a : List.of(x1, x1, x2, x3, x3)) {
+            ids.add(extra(a, ids.size()));
+        }
+        reply = new FakeReply(200, withRecommendations(ids), 0);
+        String done = awaitDone(submit(QUESTION_A));
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        assertThat((List<Integer>) JsonPath.read(done, "$.recommendations[*].experience.id"))
+                .containsExactlyElementsOf(ids.stream().map(Long::intValue).toList());
+
+        // 9개는 계약 위반
+        long ninth = extra(x4, 9);
+        List<Long> nine = new java.util.ArrayList<>(ids);
+        nine.add(ninth);
+        reply = new FakeReply(200, withRecommendations(nine), 0);
+        assertThat((String) JsonPath.read(awaitDone(submit(QUESTION_A)), "$.status")).isEqualTo("FAILED");
+
+        // 8개여도 서로 다른 활동이 6개면 계약 위반
+        List<Long> sixActivities = new java.util.ArrayList<>(ids);
+        sixActivities.set(4, ninth);
+        reply = new FakeReply(200, withRecommendations(sixActivities), 0);
+        assertThat((String) JsonPath.read(awaitDone(submit(QUESTION_A)), "$.status")).isEqualTo("FAILED");
+    }
+
+    private long extra(Activity activity, int position) {
+        return experiences.save(new Experience(activity, "경험 " + position, List.of(Competency.OPERATION),
+                CompetenciesBy.AI, Actor.ME, SourceStatus.NEEDS_REVIEW, position)).getId();
+    }
+
+    private String withRecommendations(List<Long> experienceIds) {
+        String recs = experienceIds.stream().map(id -> "{\"experienceId\": %d, \"reason\": \"r\", \"emphasis\": \"e\", \"evidence\": [], \"gaps\": []}".formatted(id))
+                .collect(java.util.stream.Collectors.joining(","));
+        return "{\"requirements\": [{\"text\": \"요구\", \"status\": \"SUPPORTED\", \"experienceIds\": [%d]}], \"recommendations\": [%s], \"clarifications\": []}"
+                .formatted(experienceIds.getFirst(), recs);
     }
 
     @Test
