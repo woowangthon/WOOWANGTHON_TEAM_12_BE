@@ -21,6 +21,8 @@ import java.util.List;
 import java.util.Arrays;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.NotFound;
+import org.hibernate.annotations.NotFoundAction;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
@@ -71,9 +73,17 @@ public class Experience {
     @OrderBy("id asc")
     private List<Supplement> supplements = new ArrayList<>();
 
-    // 확정 답의 새 경험 후보를 저장해 생긴 경험만 그 문항(S-48 · origin). 고치거나 옮기거나 합쳐도 그대로다
+    // 확정 답의 새 경험 후보를 저장해 생긴 경험만 그 문항 · 지원(S-48 · origin). 고치거나 옮기거나 합쳐도, 문항을 지워도 그대로다(S-89)
+    @Column(name = "origin_question_id", updatable = false)
+    private Long originQuestionId;
+
+    @Column(name = "origin_application_id", updatable = false)
+    private Long originApplicationId;
+
+    // 응답 때 지원처 이름 · 문항 글을 지금 값으로 읽는다 — 지운 문항이면 null(외래 키 없음)
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "origin_question_id", updatable = false)
+    @NotFound(action = NotFoundAction.IGNORE)
+    @JoinColumn(name = "origin_question_id", insertable = false, updatable = false)
     private Question originQuestion;
 
     // 외부 AI 가 고쳐 사용자가 아직 정하지 않았을 때만 찬다(S-53 · 계약 mcpChange). 응답마다 변경 기록을 읽지 않으려고 여기 둔다
@@ -211,6 +221,8 @@ public class Experience {
 
     /** 확정 답에서 왔다고 표시한다 — 만들 때 한 번만. */
     public void markFromAnswer(Question question) {
+        this.originQuestionId = question.getId();
+        this.originApplicationId = question.getApplication().getId();
         this.originQuestion = question;
     }
 
@@ -238,6 +250,15 @@ public class Experience {
         return mcpClient;
     }
 
+    public Long getOriginQuestionId() {
+        return originQuestionId;
+    }
+
+    public Long getOriginApplicationId() {
+        return originApplicationId;
+    }
+
+    /** 지금 있는 문항 — 지웠으면 null. */
     public Question getOriginQuestion() {
         return originQuestion;
     }

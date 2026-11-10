@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -1236,6 +1237,192 @@ class QuestionApiTest {
         mvc.perform(get("/api/questions/{id}", questionId))
                 .andExpect(jsonPath("$.questionType").value("PROBLEM_SOLVING"))
                 .andExpect(jsonPath("$.questionTypeBy").value("AI"));
+    }
+
+    // --- 지원 · 문항 지우기 · 문항 글 고치기 (S-89) — BE#156 ---
+
+    @Test
+    void 문항을_지우면_딸린_것이_지워지고_보완과_만든_경험은_남는다() throws Exception {
+        long applicationId = submitApplication("""
+                {"organization": "OO 백엔드 부트캠프", "questions": [{"text": "문제 해결 경험"}, {"text": "협업 경험"}]}""");
+        awaitApplication(applicationId);
+        List<Number> ids = JsonPath.read(mvc.perform(get("/api/applications/{id}", applicationId))
+                .andReturn().getResponse().getContentAsString(), "$.questions[*].id");
+        long first = ids.get(0).longValue();
+        long second = ids.get(1).longValue();
+        long clarificationId = ((Number) JsonPath.read(awaitDone(first), "$.clarifications[0].id")).longValue();
+        long supplementId = answeredSupplement(clarificationId);
+        putJson("/api/questions/" + first + "/answer", "{\"text\": \"채팅을 WebSocket 으로 바꿨습니다.\"}")
+                .andExpect(status().is2xxSuccessful());
+        putJson("/api/questions/" + second + "/answer", "{\"text\": \"회고를 했습니다.\"}")
+                .andExpect(status().is2xxSuccessful());
+        putJson("/api/questions/" + first + "/answer-draft", "{\"text\": \"쓰는 중\", \"state\": {}}")
+                .andExpect(status().is2xxSuccessful());
+        jdbc.update("insert into draft (question_id, status) values (?, 'COMPLETED')", first);
+        jdbc.update("insert into grounding_check (question_id, text, status) values (?, '글', 'COMPLETED')", first);
+        // 새 경험 후보로 만든 경험(S-48)
+        jdbc.update("update experience set origin_question_id = ?, origin_application_id = ? where id = ?",
+                first, applicationId, retro);
+        // 비슷한 답은 유형 · 직무 · 종류 중 하나가 같아야 실린다
+        patchQuestion(first, "{\"questionType\": \"COLLABORATION\"}").andExpect(status().isOk());
+        patchQuestion(second, "{\"questionType\": \"COLLABORATION\"}").andExpect(status().isOk());
+        assertThat(similarIds(second)).contains(first);
+
+        mvc.perform(delete("/api/questions/{id}", first)).andExpect(status().isNoContent());
+
+        expectError(mvc.perform(get("/api/questions/{id}", first)), 404, "QUESTION_NOT_FOUND");
+        expectError(mvc.perform(delete("/api/questions/{id}", first)), 404, "QUESTION_NOT_FOUND");
+        for (String table : List.of("draft", "grounding_check", "answer", "answer_draft", "question_recommendation",
+                "clarification")) {
+            assertThat(jdbc.queryForObject("select count(*) from " + table + " where question_id = ?", Long.class, first))
+                    .as(table).isZero();
+        }
+        // 보완은 남고 문항만 null
+        assertThat(jdbc.queryForObject("select question_id from supplement where id = ?", Long.class, supplementId))
+                .isNull();
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences[0].supplements.length()").value(1))
+                .andExpect(jsonPath("$.experiences[1].id").value(retro))
+                .andExpect(jsonPath("$.experiences[1].origin.type").value("ANSWER"))
+                .andExpect(jsonPath("$.experiences[1].origin.questionId").value(first))
+                .andExpect(jsonPath("$.experiences[1].origin.applicationId").value(applicationId))
+                .andExpect(jsonPath("$.experiences[1].origin.organization").value(nullValue()))
+                .andExpect(jsonPath("$.experiences[1].origin.questionText").value(nullValue()))
+                // 쓰인 지원에서 지운 문항이 빠진다
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].questions.length()").value(1))
+                .andExpect(jsonPath("$.experiences[0].usedIn[0].questions[0].id").value(second));
+        assertThat(similarIds(second)).doesNotContain(first);
+        mvc.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(jsonPath("$.questions.length()").value(1));
+
+        // 마지막 문항은 지원 지우기로
+        expectError(mvc.perform(delete("/api/questions/{id}", second)), 409, "LAST_QUESTION");
+        mvc.perform(get("/api/questions/{id}", second)).andExpect(status().isOk());
+    }
+
+    @Test
+    void 지원을_지우면_문항이_전부_지워지고_보완은_남는다() throws Exception {
+        long applicationId = submitApplication(APPLICATION);
+        awaitApplication(applicationId);
+        List<Number> ids = JsonPath.read(mvc.perform(get("/api/applications/{id}", applicationId))
+                .andReturn().getResponse().getContentAsString(), "$.questions[*].id");
+        long clarificationId = ((Number) JsonPath.read(awaitDone(ids.get(0).longValue()), "$.clarifications[0].id"))
+                .longValue();
+        long supplementId = answeredSupplement(clarificationId);
+        putJson("/api/questions/" + ids.get(0) + "/answer", "{\"text\": \"답\"}").andExpect(status().is2xxSuccessful());
+
+        mvc.perform(delete("/api/applications/{id}", applicationId)).andExpect(status().isNoContent());
+
+        expectError(mvc.perform(get("/api/applications/{id}", applicationId)), 404, "APPLICATION_NOT_FOUND");
+        for (Number id : ids) {
+            expectError(mvc.perform(get("/api/questions/{id}", id.longValue())), 404, "QUESTION_NOT_FOUND");
+        }
+        expectError(mvc.perform(delete("/api/applications/{id}", applicationId)), 404, "APPLICATION_NOT_FOUND");
+        mvc.perform(get("/api/applications")).andExpect(jsonPath("$.applications.length()").value(0));
+        mvc.perform(get("/api/questions")).andExpect(jsonPath("$.questions.length()").value(0));
+        assertThat(jdbc.queryForObject("select count(*) from answer", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from supplement where id = ?", Long.class, supplementId))
+                .isEqualTo(1L);
+        mvc.perform(get("/api/activities/{id}", appId))
+                .andExpect(jsonPath("$.experiences[0].usedIn.length()").value(0));
+    }
+
+    @Test
+    void 지우기_오류() throws Exception {
+        expectError(mvc.perform(delete("/api/applications/{id}", 999_999)), 404, "APPLICATION_NOT_FOUND");
+        expectError(mvc.perform(delete("/api/questions/{id}", 999_999)), 404, "QUESTION_NOT_FOUND");
+        long applicationId = submitApplication(APPLICATION);
+        awaitApplication(applicationId);
+        long questionId = questions.findAll().getFirst().getId();
+        Long other = jdbc.queryForObject("insert into app_user (name) values ('다른 사용자') returning id", Long.class);
+        try {
+            MockMvc otherMvc = TestLogin.mvc(context, other);
+            expectError(otherMvc.perform(delete("/api/applications/{id}", applicationId)), 404, "APPLICATION_NOT_FOUND");
+            expectError(otherMvc.perform(delete("/api/questions/{id}", questionId)), 404, "QUESTION_NOT_FOUND");
+            expectError(otherMvc.perform(patch("/api/questions/{id}", questionId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"text\": \"남의 글\"}")), 404, "QUESTION_NOT_FOUND");
+            assertThat(questions.count()).isEqualTo(3);
+        } finally {
+            jdbc.update("delete from app_user where id = ?", other);
+        }
+    }
+
+    @Test
+    void 문항_글을_고치면_추천이_다시_돌고_초안_점검은_지워지고_답은_남는다() throws Exception {
+        long questionId = submit(QUESTION_A);
+        awaitDone(questionId);
+        long clarificationId = ((Number) JsonPath.read(awaitDone(questionId), "$.clarifications[0].id")).longValue();
+        long supplementId = answeredSupplement(clarificationId);
+        putJson("/api/questions/" + questionId + "/answer", "{\"text\": \"확정한 답\"}").andExpect(status().is2xxSuccessful());
+        putJson("/api/questions/" + questionId + "/answer-draft", "{\"text\": \"쓰는 중\", \"state\": {}}")
+                .andExpect(status().is2xxSuccessful());
+        jdbc.update("insert into draft (question_id, status) values (?, 'COMPLETED')", questionId);
+        jdbc.update("insert into grounding_check (question_id, text, status) values (?, '글', 'COMPLETED')", questionId);
+        int used = jdbc.queryForObject("select count from analysis_usage where user_id = ?", Integer.class, TestLogin.USER_ID);
+
+        reply = new FakeReply(200, contractExample(), 500);
+        patchQuestion(questionId, "{\"text\": \"  협업으로 문제를 푼 경험을 적어 주세요.  \", \"targetLength\": 700}")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.text").value("협업으로 문제를 푼 경험을 적어 주세요."))
+                .andExpect(jsonPath("$.status").value("ANALYZING"))
+                .andExpect(jsonPath("$.error").value(nullValue()))
+                .andExpect(jsonPath("$.targetLength").value(700))
+                .andExpect(jsonPath("$.requirements.length()").value(0))
+                .andExpect(jsonPath("$.recommendations.length()").value(0))
+                .andExpect(jsonPath("$.clarifications.length()").value(0))
+                .andExpect(jsonPath("$.draft").value(nullValue()))
+                .andExpect(jsonPath("$.answer.text").value("확정한 답"))
+                .andExpect(jsonPath("$.answerDraft.text").value("쓰는 중"));
+        // 분석 중엔 글을 못 바꾼다(유형 · 글자 수는 된다)
+        expectError(patchQuestion(questionId, "{\"text\": \"또 다른 글\"}"), 409, "QUESTION_ANALYZING");
+        patchQuestion(questionId, "{\"targetLength\": 800}").andExpect(status().isOk());
+
+        String done = awaitDone(questionId);
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(done, "$.text")).isEqualTo("협업으로 문제를 푼 경험을 적어 주세요.");
+        assertThat((String) JsonPath.read(done, "$.answer.text")).isEqualTo("확정한 답");
+        assertThat((List<?>) JsonPath.read(done, "$.recommendations")).isNotEmpty();
+        assertThat((String) JsonPath.read(RECEIVED.getLast(), "$.question.text")).isEqualTo("협업으로 문제를 푼 경험을 적어 주세요.");
+        assertThat(jdbc.queryForObject("select count(*) from draft where question_id = ?", Long.class, questionId)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from grounding_check where question_id = ?", Long.class, questionId))
+                .isZero();
+        assertThat(jdbc.queryForObject("select question_id from supplement where id = ?", Long.class, supplementId))
+                .isEqualTo(questionId);
+        assertThat(jdbc.queryForObject("select count from analysis_usage where user_id = ?", Integer.class, TestLogin.USER_ID))
+                .isEqualTo(used + 1);
+
+        // 앞뒤 공백만 다르면 바뀐 것 없음 — 200, 추천도 다시 돌지 않는다
+        int received = RECEIVED.size();
+        patchQuestion(questionId, "{\"text\": \"협업으로 문제를 푼 경험을 적어 주세요. \"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+        assertThat(RECEIVED).hasSize(received);
+    }
+
+    @Test
+    void 문항_글_고치기_한도_오류() throws Exception {
+        long questionId = submit(QUESTION_A);
+        awaitDone(questionId);
+        jdbc.update("update app_user set daily_analysis_limit = 1 where id = ?", TestLogin.USER_ID);
+
+        expectError(patchQuestion(questionId, "{\"text\": \"다른 글\"}"), 429, "DAILY_LIMIT_EXCEEDED");
+        expectError(patchQuestion(questionId, "{\"text\": \"   \"}"), 400, "EMPTY_TEXT");
+        expectError(patchQuestion(questionId, "{\"text\": null}"), 400, "INVALID_REQUEST");
+        expectError(patchQuestion(questionId, "{\"text\": \"" + "가".repeat(5001) + "\"}"), 413, "TEXT_TOO_LONG");
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.text").value("기술적인 문제를 해결한 경험을 구체적으로 적어 주세요."))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    private ResultActions putJson(String url, String json) throws Exception {
+        return mvc.perform(put(url).contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private List<Long> similarIds(long questionId) throws Exception {
+        String body = mvc.perform(get("/api/questions/{id}/similar-answers", questionId))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        List<Number> raw = JsonPath.read(body, "$.answers[*].questionId");
+        return raw.stream().map(Number::longValue).toList();
     }
 
     // --- 도움 ---

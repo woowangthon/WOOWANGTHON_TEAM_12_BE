@@ -3,6 +3,7 @@ package com.woowangthon.backend.question;
 import com.woowangthon.backend.common.PatchBody;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,6 +52,12 @@ public class ApplicationController {
     @GetMapping("/{applicationId}")
     public QuestionResponses.ApplicationResponse get(@PathVariable long applicationId) {
         return service.get(applicationId);
+    }
+
+    @DeleteMapping("/{applicationId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable long applicationId) {
+        service.delete(applicationId);
     }
 
     @PatchMapping("/{applicationId}")

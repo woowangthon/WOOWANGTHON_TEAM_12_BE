@@ -185,11 +185,22 @@ public class ApplicationService {
         applications.findForUpdate(applicationId, userId).ifPresent(a -> questions.lockByApplicationId(applicationId));
     }
 
-    /** 지원과 문항 · 요구사항 · 추천 · 되묻기를 지운다. question.application_id 는 저절로 지워지지 않아 문항부터 지운다. */
+    /** 지원 지우기(S-89) — 지원과 문항 전부, 문항마다 문항 지우기와 같이. 한 트랜잭션이다. */
+    @Transactional
+    public void delete(long applicationId) {
+        remove(CurrentUser.id(), applicationId);
+    }
+
+    /**
+     * 지원과 문항 · 요구사항 · 추천 · 되묻기를 지운다. question.application_id 는 저절로 지워지지 않아 문항부터 지운다.
+     * 초안 · 근거 점검 · 확정 답 · 임시 글 · 새 경험 후보는 DB 가 문항과 같이 지우고, 보완의 questionId 는 null 이 된다.
+     * 지원 · 문항 행을 잠가 그새 문항 더하기 · 분석 결과 저장이 끼어들지 못한다(끝난 분석은 문항이 없어 버려진다).
+     */
     @Transactional
     public void remove(long userId, long applicationId) {
-        Application application = applications.findByIdAndUserId(applicationId, userId)
+        Application application = applications.findForUpdate(applicationId, userId)
                 .orElseThrow(() -> notFound(applicationId));
+        questions.lockByApplicationId(applicationId);
         questions.deleteAll(application.getQuestions());
         questions.flush();
         applications.delete(application);

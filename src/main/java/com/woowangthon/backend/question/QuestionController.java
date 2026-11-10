@@ -3,6 +3,8 @@ package com.woowangthon.backend.question;
 import com.woowangthon.backend.common.PatchBody;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -44,9 +46,21 @@ public class QuestionController {
     }
 
     @PatchMapping("/{questionId}")
-    public QuestionResponses.Detail update(@PathVariable long questionId,
+    public ResponseEntity<QuestionResponses.Detail> update(@PathVariable long questionId,
             @RequestBody(required = false) Map<String, Object> body) {
-        return service.update(questionId, new PatchBody(body));
+        QuestionService.Updated updated = service.update(questionId, new PatchBody(body));
+        if (!updated.rematch()) {
+            return ResponseEntity.ok(updated.question());
+        }
+        // 글이 바뀌었으면 저장 트랜잭션이 끝난 뒤 추천을 다시 돌린다(S-89)
+        runner.run(questionId);
+        return ResponseEntity.accepted().body(updated.question());
+    }
+
+    @DeleteMapping("/{questionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable long questionId) {
+        service.delete(questionId);
     }
 
     @PostMapping("/{questionId}/retry")
