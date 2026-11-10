@@ -52,10 +52,15 @@ public class QuestionService {
     private final DraftService drafts;
     private final AnswerService answers;
     private final AnswerDraftService answerDrafts;
+    private final DraftRepository draftRows;
+    private final GroundingCheckRepository checks;
 
     public QuestionService(QuestionRepository questions, ApplicationRepository applications,
             ExperienceRepository experiences, UsageLimiter limiter, DraftService drafts,
-            AnswerService answers, AnswerDraftService answerDrafts) {
+            AnswerService answers, AnswerDraftService answerDrafts, DraftRepository draftRows,
+            GroundingCheckRepository checks) {
+        this.draftRows = draftRows;
+        this.checks = checks;
         this.questions = questions;
         this.applications = applications;
         this.experiences = experiences;
@@ -117,17 +122,24 @@ public class QuestionService {
         return detail(question);
     }
 
+    /** 고친 문항 — 글이 바뀌었으면 rematch(202, 추천을 다시 돌린다). */
+    public record Updated(QuestionResponses.Detail question, boolean rematch) {
+    }
+
     /**
-     * 문항 유형(S-41) · 목표 글자 수(S-77)를 사용자가 고친다 — 보낸 필드만, 둘 중 하나 이상. 분석 중 · 실패한 문항도 된다. 유형은 null 로 AI 값에
-     * 되돌리기가 없고, 목표 글자 수는 null 이면 비운다.
+     * 문항 글(S-89) · 유형(S-41) · 목표 글자 수(S-77)를 사용자가 고친다 — 보낸 필드만, 하나 이상. 유형 · 목표 글자 수만이면 분석 중 · 실패한
+     * 문항도 되고 추천은 그대로다. 유형은 null 로 AI 값에 되돌리기가 없고, 목표 글자 수는 null 이면 비운다.
+     * 글이 바뀌면 옛 추천 · 초안 · 근거 점검을 지우고 추천을 다시 돌린다(분석 1회). 확정 답 · 임시 글 · 보완은 남는다.
      */
     @Transactional
-    public QuestionResponses.Detail update(long questionId, PatchBody body) {
+    public Updated update(long questionId, PatchBody body) {
+        Optional<PatchBody.Field<String>> textField = body.string("text");
         Optional<PatchBody.Field<String>> typeField = body.string("questionType");
         Optional<PatchBody.Field<Long>> lengthField = body.id("targetLength");
-        if (typeField.isEmpty() && lengthField.isEmpty()) {
-            throw ApiException.invalidRequest("questionType · targetLength 중 하나 이상을 보내야 합니다");
+        if (textField.isEmpty() && typeField.isEmpty() && lengthField.isEmpty()) {
+            throw ApiException.invalidRequest("text · questionType · targetLength 중 하나 이상을 보내야 합니다");
         }
+        String text = textField.map(f -> checkText(f.value()).strip()).orElse(null);
         QuestionType type = typeField.map(f -> value(QuestionType.class, f.value(), "questionType")).orElse(null);
         if (typeField.isPresent() && type == null) {
             throw ApiException.invalidRequest("questionType 은 null 일 수 없습니다");
@@ -139,6 +151,23 @@ public class QuestionService {
         }
         Question question = questions.findForUpdate(questionId, CurrentUser.id())
                 .orElseThrow(() -> notFound(questionId));
+        boolean rematch = text != null && !text.equals(question.getText().strip());
+        if (rematch) {
+            // 초안 · 근거 점검도 잠가 본다 — 그새 시작하거나 끝나며 지울 것을 다시 쓰지 못하게
+            Optional<Draft> draft = draftRows.lockByQuestionId(questionId);
+            Optional<GroundingCheck> check = checks.lockByQuestionId(questionId);
+            if (question.getStatus() == JobStatus.ANALYZING
+                    || draft.filter(d -> d.getStatus() == JobStatus.ANALYZING).isPresent()
+                    || check.filter(c -> c.getStatus() == JobStatus.ANALYZING).isPresent()) {
+                throw new ApiException(HttpStatus.CONFLICT, "QUESTION_ANALYZING",
+                        "문항 " + questionId + " 은(는) 분석 중입니다. 끝난 뒤 다시 고치세요");
+            }
+            // 한도면 429 — 아무것도 바꾸기 전에
+            limiter.consume(question.getUserId());
+            draft.ifPresent(draftRows::delete);
+            check.ifPresent(checks::delete);
+            question.changeText(text);
+        }
         if (type != null) {
             question.chooseType(type);
         }
@@ -146,7 +175,30 @@ public class QuestionService {
             question.setTargetLength(length == null ? null : length.intValue());
         }
         questions.flush();
-        return detail(question);
+        return new Updated(detail(question), rematch);
+    }
+
+    /**
+     * 문항 지우기(S-89) — 문항과 요구사항 · 추천 · 되묻기 · 초안 · 근거 점검 · 확정 답 · 임시 글 · 새 경험 후보를 지운다(DB 가 같이).
+     * 보완(questionId → null) · 후보로 만든 경험(origin 그대로)은 남는다. 지원의 마지막 문항이면 409 — 지원 지우기를 쓴다.
+     */
+    @Transactional
+    public void delete(long questionId) {
+        long userId = CurrentUser.id();
+        Question found = questions.findByIdAndUserId(questionId, userId).orElseThrow(() -> notFound(questionId));
+        long applicationId = found.getApplication().getId();
+        // 지원 · 문항 행을 잠가 문항 더하기 · 다른 문항 지우기와 겹쳐 마지막 문항을 지우지 않게
+        applications.findForUpdate(applicationId, userId).orElseThrow(() -> notFound(questionId));
+        List<Question> siblings = questions.lockByApplicationId(applicationId);
+        if (siblings.stream().noneMatch(q -> q.getId() == questionId)) {
+            throw notFound(questionId);
+        }
+        if (siblings.size() <= 1) {
+            throw new ApiException(HttpStatus.CONFLICT, "LAST_QUESTION",
+                    "지원의 마지막 문항은 지울 수 없습니다. 지원을 지우세요");
+        }
+        questions.delete(found);
+        questions.flush();
     }
 
     /** AI 에 보낼 후보 — 그 사용자의 경험 전부를 근거 · 보완과 함께 지금 상태로(ADR-003). */

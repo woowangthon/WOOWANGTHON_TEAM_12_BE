@@ -129,6 +129,12 @@ public class Question {
         finishedAt = OffsetDateTime.now();
     }
 
+    /** 문항 글을 바꾸고 추천을 처음부터 다시 돌린다(S-89) — 옛 결과는 지운다. 유형 · 목표 글자 수는 그대로다. */
+    public void changeText(String newText) {
+        text = newText;
+        restart();
+    }
+
     /** 실패한 문항을 같은 문항으로 다시 돌린다. */
     public void restart() {
         clearResults();
