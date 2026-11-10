@@ -190,7 +190,7 @@ class DraftRemoveApiTest {
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table mcp_change");
         jdbc.execute("truncate table guideline");
-        jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, "
+        jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, answer_draft, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, "
                 + "grounding_sentence_evidence, grounding_sentence, grounding_check, "
                 + "question_recommendation_evidence, question_recommendation, question_requirement, supplement, clarification, "
                 + "question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
