@@ -4,6 +4,7 @@ import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.experience.ExperienceResponse;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -46,11 +47,14 @@ public class AnswerController {
     }
 
     @PostMapping("/api/questions/{questionId}/answer/new-facts")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public AnswerService.Result findNewFacts(@PathVariable long questionId) {
-        AnswerService.Result result = service.startFinding(questionId);
+    public ResponseEntity<AnswerService.Result> findNewFacts(@PathVariable long questionId) {
+        AnswerService.Started started = service.startFinding(questionId);
+        if (!started.started()) {
+            // 이미 이 글로 찾은 결과 — 다시 찾지 않고 지금 답을 그대로(200)
+            return ResponseEntity.ok(started.result());
+        }
         runner.run(questionId);
-        return result;
+        return ResponseEntity.accepted().body(started.result());
     }
 
     @PostMapping("/api/new-fact-candidates/{candidateId}/save")

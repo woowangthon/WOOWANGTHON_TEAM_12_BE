@@ -87,7 +87,8 @@ public class AnswerService {
 
     /**
      * 답을 확정한다 — AI 를 부르지 않고 분석 횟수도 쓰지 않는다. 예전 답 · 찾기를 이것으로 바꾼다(PENDING 후보는 지우고, 만든 경험 ·
-     * 「저장 안 함」 기억은 남는다). 찾기가 진행 중이면 409 로 예전 것을 그대로 둔다.
+     * 「저장 안 함」 기억은 남는다). 찾기가 진행 중이면 409 로 예전 것을 그대로 둔다. 글이 지금 확정 답과 글자까지 같으면 아무것도
+     * 바꾸지 않고 지금 답을 돌려준다(다른 탭 · 기기에서 눌러도 고르지 않은 후보가 지워지지 않게 — ETC#250). 임시 글은 그래도 지운다.
      */
     @Transactional
     public Result confirm(long questionId, ConfirmRequest request) {
@@ -96,6 +97,10 @@ public class AnswerService {
         Answer answer = answers.findByQuestionId(questionId).orElse(null);
         if (answer != null && answer.getNewFactsStatus() == JobStatus.ANALYZING) {
             throw inProgress(questionId);
+        }
+        if (answer != null && answer.getText().equals(text)) {
+            answerDrafts.discard(questionId);
+            return new Result(view(answer, question.getUserId()));
         }
         if (answer == null) {
             answer = new Answer(questionId);
@@ -107,19 +112,29 @@ public class AnswerService {
         return new Result(view(answer, question.getUserId()));
     }
 
-    /** 후보 찾기를 시작한다(분석 1회). 진행 중(409) · 한도(429)면 예전 찾기를 그대로 둔다. */
+    /** startFinding 의 결과 — started 가 false 면 이미 이 글로 찾은 결과(COMPLETED)라 다시 찾지 않았다. */
+    public record Started(Result result, boolean started) {
+    }
+
+    /**
+     * 후보 찾기를 시작한다(분석 1회). 진행 중(409) · 한도(429)면 예전 찾기를 그대로 둔다. 이 답으로 이미 COMPLETED 면 다시 찾지 않고
+     * 지금 답을 돌려준다 — 분석 횟수를 쓰지 않고 PENDING 후보도 그대로다(확정 답이 바뀌면 찾기가 지워지므로 COMPLETED 는 늘 지금 글의 결과).
+     */
     @Transactional
-    public Result startFinding(long questionId) {
+    public Started startFinding(long questionId) {
         Question question = lockQuestion(questionId);
         Answer answer = answers.findByQuestionId(questionId).orElseThrow(() -> ApiException.notFound(
                 "ANSWER_NOT_FOUND", "문항 " + questionId + " 에 확정한 답이 없습니다"));
         if (answer.getNewFactsStatus() == JobStatus.ANALYZING) {
             throw inProgress(questionId);
         }
+        if (answer.getNewFactsStatus() == JobStatus.COMPLETED) {
+            return new Started(new Result(view(answer, question.getUserId())), false);
+        }
         limiter.consume(question.getUserId());
         answer.startFinding();
         answers.saveAndFlush(answer);
-        return new Result(view(answer, question.getUserId()));
+        return new Started(new Result(view(answer, question.getUserId())), true);
     }
 
     /** 문항 응답에 싣는 확정 답 — 확정하지 않았으면 null. 문항을 읽는 트랜잭션 안에서 부른다. */
