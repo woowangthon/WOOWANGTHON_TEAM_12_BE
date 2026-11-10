@@ -12,6 +12,7 @@ import com.woowangthon.backend.common.PatchBody;
 import com.woowangthon.backend.common.Times;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
+import com.woowangthon.backend.experience.ExperienceResponse;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
 import com.woowangthon.backend.guideline.GuidelineRepository;
@@ -93,11 +94,14 @@ public class DraftService {
     }
 
     /**
-     * 경험에 붙지 않은 빈칸은 text 만 있고 question · experienceId · clarificationId · supplementId 는 null. supplementId 는 지금 그
-     * 되묻기에 달린 보완. 문장 속 빈칸이면 placeholder · sentenceIndex 가 함께 있다.
+     * 경험에 붙지 않은 빈칸은 text 만 있고 question · experienceId · clarificationId · supplementId · activityId · activityName ·
+     * experienceContent · supplement 는 null. supplementId 와 supplement 는 지금 그 되묻기에 달린 보완(안 답했거나 지웠으면 null).
+     * activityId · activityName · experienceContent 는 그 경험의 지금 값 — 추천에 없는 보조 재료 경험(S-75)도 FE 가 이 값으로 그린다.
+     * 문장 속 빈칸이면 placeholder · sentenceIndex 가 함께 있다.
      */
     public record Omitted(String text, String question, Long experienceId, Long clarificationId, Long supplementId,
-            String placeholder, Integer sentenceIndex) {
+            String placeholder, Integer sentenceIndex, Long activityId, String activityName, String experienceContent,
+            ExperienceResponse.SupplementResponse supplement) {
     }
 
     /** 글 · 출처는 초안을 만들 때의 것이다. id 가 지금 없는 지침일 수 있다. */
@@ -415,25 +419,38 @@ public class DraftService {
         List<AppliedGuideline> applied = d.getStatus() != JobStatus.COMPLETED ? List.of()
                 : d.getGuidelines().stream().map(g -> new AppliedGuideline(g.getGuidelineId(), g.getText(), g.getSource(),
                         g.getApplied(), g.getNote())).toList();
-        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current), d.getFrame(),
+        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current, userId), d.getFrame(),
                 d.isUseContext(), d.getStatus() != JobStatus.ANALYZING && freeRegenerate(d, userId), applied,
                 Times.seoul(d.getCreatedAt()),
                 d.getUpdatedAt() == null ? null : Times.seoul(d.getUpdatedAt()));
     }
 
-    // 경험이 그새 지워진 항목은 뺀다. 답한 보완은 지금 연결로 찾는다 — 보완을 지우면 null 로 돌아간다
-    private List<Omitted> omitted(Draft d, Map<String, SentenceEvidence.Ref> current) {
-        List<Long> asked = d.getOmitted().stream().map(DraftOmitted::getClarificationId).filter(Objects::nonNull).toList();
-        Map<Long, Long> answered = asked.isEmpty() ? Map.of()
-                : supplements.findByClarificationIdIn(asked).stream()
-                        .collect(Collectors.toMap(Supplement::getClarificationId, Supplement::getId, (a, b) -> a));
+    // 경험이 그새 지워진 항목은 뺀다. 활동 · 경험 문장 · 답한 보완은 그 사용자의 경험에서 지금 값으로 읽는다 — 보완을 지우면 null 로 돌아간다
+    private List<Omitted> omitted(Draft d, Map<String, SentenceEvidence.Ref> current, long userId) {
+        Set<Long> attached = d.getOmitted().stream().map(DraftOmitted::getExperienceId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, Experience> owned = attached.isEmpty() ? Map.of()
+                : experiences.findAllOwned(attached, userId).stream()
+                        .collect(Collectors.toMap(Experience::getId, Function.identity()));
         return d.getOmitted().stream()
                 .filter(o -> o.getExperienceId() == null
                         || current.containsKey(SentenceEvidence.key(EvidenceType.EXPERIENCE, o.getExperienceId())))
-                .map(o -> new Omitted(o.getText(), o.getQuestion(), o.getExperienceId(), o.getClarificationId(),
-                        o.getClarificationId() == null ? null : answered.get(o.getClarificationId()), o.getPlaceholder(),
-                        o.getSentenceIndex()))
+                .map(o -> omitted(o, o.getExperienceId() == null ? null : owned.get(o.getExperienceId())))
                 .toList();
+    }
+
+    private static Omitted omitted(DraftOmitted o, Experience e) {
+        if (e == null) {
+            return new Omitted(o.getText(), o.getQuestion(), o.getExperienceId(), o.getClarificationId(), null,
+                    o.getPlaceholder(), o.getSentenceIndex(), null, null, null, null);
+        }
+        Supplement answered = o.getClarificationId() == null ? null
+                : e.getSupplements().stream().filter(s -> o.getClarificationId().equals(s.getClarificationId()))
+                        .findFirst().orElse(null);
+        return new Omitted(o.getText(), o.getQuestion(), o.getExperienceId(), o.getClarificationId(),
+                answered == null ? null : answered.getId(), o.getPlaceholder(), o.getSentenceIndex(),
+                e.getActivity().getId(), e.getActivity().getName(), e.getContent(),
+                answered == null ? null : ExperienceResponse.SupplementResponse.from(answered));
     }
 
     /** 지금 다시 만들면 분석 횟수를 세지 않는가(S-77) — 시작할 때 세는 판단과 응답의 freeRegenerate 가 같은 코드를 쓴다. */
