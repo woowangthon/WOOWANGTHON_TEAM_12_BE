@@ -17,7 +17,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ErrorResponse> handleApi(ApiException e) {
-        return ResponseEntity.status(e.status()).body(ErrorResponse.of(e.code(), e.getMessage()));
+        return ResponseEntity.status(e.status()).body(new ErrorResponse(new ErrorResponse.Error(e.code(), e.getMessage(), e.source())));
     }
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})

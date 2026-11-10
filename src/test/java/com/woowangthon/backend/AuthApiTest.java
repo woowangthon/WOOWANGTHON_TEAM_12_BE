@@ -240,7 +240,7 @@ class AuthApiTest {
     }
 
     private long submit(MockHttpSession session) throws Exception {
-        String body = postJson(session, "/api/sources", "{\"kind\":\"TEXT\",\"text\":\"메모\"}")
+        String body = postJson(session, "/api/sources", "{\"kind\":\"TEXT\",\"text\":\"메모\",\"allowDuplicate\":true}")
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.<Number>read(body, "$.jobId").longValue();
