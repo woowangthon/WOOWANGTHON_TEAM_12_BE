@@ -8,7 +8,7 @@ import java.util.List;
  * 가 된다 — 객체로 추측해 고치지 않는다(ETC#139).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> omitted,
+public record DraftResponse(String title, List<SentenceResult> sentences, List<OmittedResult> omitted,
         List<GuidelineResult> guidelines, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)

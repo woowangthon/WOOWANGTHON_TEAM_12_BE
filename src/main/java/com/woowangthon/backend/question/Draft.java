@@ -28,6 +28,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 @Table(name = "draft")
 public class Draft {
 
+    public static final int MAX_TITLE = 40;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -57,6 +59,10 @@ public class Draft {
     @CollectionTable(name = "draft_omitted", joinColumns = @JoinColumn(name = "draft_id"))
     @OrderColumn(name = "position")
     private List<DraftOmitted> omitted = new ArrayList<>();
+
+    // AI 가 제안한 첫 줄 소제목(S-86) — 문장이 0개 · 만드는 중 · 실패 · 옛 초안은 null. 사용자가 고친 것은 저장하지 않는다(답칸 글이 원본)
+    @Column(length = MAX_TITLE)
+    private String title;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -100,6 +106,7 @@ public class Draft {
         useContext = withContext;
         guidelines.clear();
         guidelines.addAll(enabled);
+        title = null;
         legacyOmitted = false;
         status = JobStatus.ANALYZING;
         errorCode = null;
@@ -108,8 +115,9 @@ public class Draft {
     }
 
     /** 문장들은 이 초안을 가리키게 만든 것이어야 한다. */
-    public void complete(List<DraftSentence> newSentences, List<DraftOmitted> newOmitted,
+    public void complete(String newTitle, List<DraftSentence> newSentences, List<DraftOmitted> newOmitted,
             List<DraftGuideline> judged) {
+        title = newTitle;
         sentences.clear();
         sentences.addAll(newSentences);
         omitted.clear();
@@ -122,6 +130,7 @@ public class Draft {
     }
 
     public void fail(String code, String message) {
+        title = null;
         sentences.clear();
         omitted.clear();
         guidelines.clear();
@@ -152,6 +161,10 @@ public class Draft {
 
     public List<Long> getExperienceIds() {
         return experienceIds;
+    }
+
+    public String getTitle() {
+        return title;
     }
 
     public List<DraftSentence> getSentences() {

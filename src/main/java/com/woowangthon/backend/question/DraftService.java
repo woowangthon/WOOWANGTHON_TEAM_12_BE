@@ -112,7 +112,7 @@ public class DraftService {
     }
 
     public record DraftView(Long questionId, JobStatus status, ErrorResponse.Error error, List<Long> experienceIds,
-            List<Sentence> sentences, List<Omitted> omitted, DraftFrame frame, boolean useContext, boolean freeRegenerate,
+            String title, List<Sentence> sentences, List<Omitted> omitted, DraftFrame frame, boolean useContext, boolean freeRegenerate,
             List<AppliedGuideline> guidelines, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
     }
 
@@ -294,7 +294,25 @@ public class DraftService {
 
         List<DraftGuideline> judged = judged(draft, orEmpty(result.guidelines()));
         List<DraftOmitted> omitted = omitted(questionId, draft, sent, found, orEmpty(result.omitted()));
-        draft.complete(sentences, omitted, judged);
+        draft.complete(title(result.title(), found.size()), sentences, omitted, judged);
+    }
+
+    /**
+     * 소제목(S-86) — 문장이 있으면 줄바꿈 없는 1 ~ 40자, 0개면 null 이어야 한다. 숫자 · 칭찬 같은 글 규칙은 AI 서버 코드가 막는다. AI 서버가 아직
+     * 소제목을 안 줘도(null) 실패로 보지 않는다 — 소제목 없는 초안으로 저장한다(BE#50 과 같다).
+     */
+    private static String title(String title, int sentenceCount) {
+        if (title == null) {
+            return null;
+        }
+        if (sentenceCount == 0) {
+            throw AiCallException.invalidResponse("sentences 가 0개면 title 은 null 이어야 합니다");
+        }
+        if (title.isBlank() || title.indexOf(10) >= 0 || title.indexOf(13) >= 0
+                || title.codePointCount(0, title.length()) > Draft.MAX_TITLE) {
+            throw AiCallException.invalidResponse("title 은 줄바꿈 없는 1 ~ " + Draft.MAX_TITLE + "자여야 합니다");
+        }
+        return title;
     }
 
     // ai-api.md 응답 규칙 guidelines — 실은 지침마다 하나씩, 같은 순서로. 빠진 지침을 「반영함」으로 채우지 않는다
@@ -453,7 +471,8 @@ public class DraftService {
         List<AppliedGuideline> applied = d.getStatus() != JobStatus.COMPLETED ? List.of()
                 : d.getGuidelines().stream().map(g -> new AppliedGuideline(g.getGuidelineId(), g.getText(), g.getSource(),
                         g.getApplied(), g.getNote())).toList();
-        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen, sentences, omitted(d, current, userId), d.getFrame(),
+        return new DraftView(d.getQuestionId(), d.getStatus(), error, chosen,
+                d.getStatus() == JobStatus.COMPLETED ? d.getTitle() : null, sentences, omitted(d, current, userId), d.getFrame(),
                 d.isUseContext(), d.getStatus() != JobStatus.ANALYZING && freeRegenerate(d, userId), applied,
                 Times.seoul(d.getCreatedAt()),
                 d.getUpdatedAt() == null ? null : Times.seoul(d.getUpdatedAt()));
