@@ -892,6 +892,19 @@ class DraftApiTest {
     }
 
     @Test
+    void 구조_카드_틀은_저장되고_응답에_나오고_AI_요청에_그대로_실린다() throws Exception {
+        for (String frame : List.of("MOTIVE_LINK", "CAUSE_FIX", "ALIGN", "CHANGE", "SKILL_STEPS", "ORIGIN")) {
+            RECEIVED.clear();
+            postJson("{\"experienceIds\": [" + chat + ", " + study + "], \"frame\": \"" + frame + "\"}").andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.frame").value(frame));
+            awaitDraft();
+
+            assertThat((String) JsonPath.read(RECEIVED.getFirst(), "$.question.frame")).as(frame).isEqualTo(frame);
+            mvc.perform(get("/api/questions/{id}", questionId)).andExpect(jsonPath("$.draft.frame").value(frame));
+        }
+    }
+
+    @Test
     void 지침_응답이_규칙을_벗어나면_실패로_남긴다() throws Exception {
         long id = saveGuidelines("지침").getFirst();
         for (String guidelines : List.of(
