@@ -169,6 +169,23 @@ public class ActivityService {
         return detail(keep);
     }
 
+    /**
+     * 활동 지우기(S-88) — 경험마다 경험 지우기와 같이(근거 · 보완과 함께) 지우고 활동을 지운다. 원본은 남는다.
+     * 이 활동을 가리키던 같은 활동 제안은 null, 걸린 이어짐은 같이 지운다. 한 트랜잭션이라 중간에 실패하면 아무것도 바뀌지 않는다.
+     * 분석 중인 자료 더하기의 대상이었으면 그 작업은 끝날 때 대상을 못 찾아 targetMatched false 로 끝난다(AnalysisService).
+     */
+    @Transactional
+    public void delete(long activityId) {
+        // 같이 고치는 요청(합치기 · 자료 더하기 붙이기)과 겹치지 않게 잠근다
+        Activity activity = activities.findOwnedForUpdate(activityId, CurrentUser.id())
+                .orElseThrow(() -> ApiException.notFound("ACTIVITY_NOT_FOUND", "활동 " + activityId + " 이(가) 없습니다"));
+        experiences.deleteAllOf(activity);
+        linkRows.deleteAll(linkRows.findTouching(activityId));
+        activities.clearMergeSuggestionsTo(activityId);
+        activities.delete(activity);
+        activities.flush();
+    }
+
     /** 따로 두기(S-44) — 제안만 null 로. 두 활동은 그대로고, 이미 없어도 된다. */
     @Transactional
     public void dismissMergeSuggestion(long activityId) {
