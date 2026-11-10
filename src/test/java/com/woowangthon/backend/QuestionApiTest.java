@@ -770,7 +770,19 @@ class QuestionApiTest {
     void 조회_다시_시도_오류() throws Exception {
         long questionId = submit(QUESTION_A);
         awaitDone(questionId);
-        expectError(mvc.perform(post("/api/questions/{id}/retry", questionId)), 409, "QUESTION_NOT_FAILED");
+        // 분석 중이면 409 — 추천 · 초안 · 근거 점검 어느 것이든(S-90)
+        jdbc.update("insert into draft (question_id, status) values (?, 'ANALYZING')", questionId);
+        expectError(mvc.perform(post("/api/questions/{id}/retry", questionId)), 409, "QUESTION_ANALYZING");
+        jdbc.update("delete from draft where question_id = ?", questionId);
+        jdbc.update("insert into grounding_check (question_id, text, status) values (?, '글', 'ANALYZING')", questionId);
+        expectError(mvc.perform(post("/api/questions/{id}/retry", questionId)), 409, "QUESTION_ANALYZING");
+        jdbc.update("delete from grounding_check where question_id = ?", questionId);
+        // 한도면 429 — 옛 추천은 그대로
+        jdbc.update("update app_user set daily_analysis_limit = 1 where id = ?", TestLogin.USER_ID);
+        expectError(mvc.perform(post("/api/questions/{id}/retry", questionId)), 429, "DAILY_LIMIT_EXCEEDED");
+        mvc.perform(get("/api/questions/{id}", questionId))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.recommendations").isNotEmpty());
         expectError(mvc.perform(post("/api/questions/{id}/retry", 999_999)), 404, "QUESTION_NOT_FOUND");
         expectError(mvc.perform(get("/api/questions/{id}", 999_999)), 404, "QUESTION_NOT_FOUND");
     }
@@ -1397,6 +1409,48 @@ class QuestionApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
         assertThat(RECEIVED).hasSize(received);
+    }
+
+    @Test
+    void 끝난_문항을_다시_찾으면_추천만_새로_돌고_초안_점검_답은_남는다() throws Exception {
+        // 추천 0개로 끝난 문항 — 경험을 나중에 넣은 사용자(ETC#298)
+        reply = new FakeReply(200, "{\"requirements\": [{\"text\": \"기술 문제 해결\", \"status\": \"NOT_FOUND\", \"experienceIds\": []}], \"recommendations\": [], \"clarifications\": []}", 0);
+        long questionId = submit(QUESTION_A);
+        String empty = awaitDone(questionId);
+        assertThat((String) JsonPath.read(empty, "$.status")).isEqualTo("COMPLETED");
+        assertThat((List<?>) JsonPath.read(empty, "$.recommendations")).isEmpty();
+        putJson("/api/questions/" + questionId + "/answer", "{\"text\": \"확정한 답\"}").andExpect(status().is2xxSuccessful());
+        putJson("/api/questions/" + questionId + "/answer-draft", "{\"text\": \"쓰는 중\", \"state\": {}}")
+                .andExpect(status().is2xxSuccessful());
+        jdbc.update("insert into draft (question_id, status) values (?, 'COMPLETED')", questionId);
+        jdbc.update("insert into grounding_check (question_id, text, status) values (?, '글', 'COMPLETED')", questionId);
+        int used = jdbc.queryForObject("select count from analysis_usage where user_id = ?", Integer.class, TestLogin.USER_ID);
+        int received = RECEIVED.size();
+
+        reply = new FakeReply(200, contractExample(), 500);
+        mvc.perform(post("/api/questions/{id}/retry", questionId))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("ANALYZING"))
+                .andExpect(jsonPath("$.error").value(nullValue()))
+                .andExpect(jsonPath("$.recommendations.length()").value(0))
+                .andExpect(jsonPath("$.draft.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.answer.text").value("확정한 답"))
+                .andExpect(jsonPath("$.answerDraft.text").value("쓰는 중"));
+        // 도는 중에 또 누르면 409
+        expectError(mvc.perform(post("/api/questions/{id}/retry", questionId)), 409, "QUESTION_ANALYZING");
+
+        String done = awaitDone(questionId);
+        assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("COMPLETED");
+        assertThat((List<?>) JsonPath.read(done, "$.recommendations")).isNotEmpty();
+        assertThat((String) JsonPath.read(done, "$.draft.status")).isEqualTo("COMPLETED");
+        assertThat((String) JsonPath.read(done, "$.answer.text")).isEqualTo("확정한 답");
+        assertThat(RECEIVED).hasSize(received + 1);
+        assertThat((String) JsonPath.read(RECEIVED.getLast(), "$.question.text"))
+                .isEqualTo("기술적인 문제를 해결한 경험을 구체적으로 적어 주세요.");
+        assertThat(jdbc.queryForObject("select count(*) from grounding_check where question_id = ?", Long.class, questionId))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count from analysis_usage where user_id = ?", Integer.class, TestLogin.USER_ID))
+                .isEqualTo(used + 1);
     }
 
     @Test
