@@ -48,7 +48,7 @@ public class DraftService {
 
     // ai-api.md 「응답 규칙」
     private static final int MAX_SENTENCES = 15;
-    private static final int MAX_OMITTED = 5;
+    private static final int MAX_OMITTED = 10;
     private static final int MAX_OPINIONS = 3;
     private static final int MAX_GUIDELINE_NOTE = 80;
     private static final int MAX_SENTENCE_NOTE = 60;
@@ -88,16 +88,19 @@ public class DraftService {
     public record StartRequest(List<Long> experienceIds, DraftFrame frame, Object useContext) {
     }
 
-    /** note 는 ELABORATED 만 있다. confirmed · removed 는 카드에서 「맞아요」 · 「빼기」를 눌렀나(S-79). */
+    /**
+     * note 는 ELABORATED 만, specific 은 SUPPOSED 만 있다(나머지 · 옛 초안은 null). confirmed · removed 는 카드에서 「맞아요」 · 「빼기」를
+     * 눌렀나(S-79).
+     */
     public record Sentence(Long id, DraftSentenceKind kind, String text, List<SentenceEvidence.Ref> evidence, String note,
-            boolean confirmed, boolean removed) {
+            Boolean specific, boolean confirmed, boolean removed) {
     }
 
     /**
      * 경험에 붙지 않은 빈칸은 text 만 있고 question · experienceId · clarificationId · supplementId · activityId · activityName ·
      * experienceContent · supplement 는 null. supplementId 와 supplement 는 지금 그 되묻기에 달린 보완(안 답했거나 지웠으면 null).
      * activityId · activityName · experienceContent 는 그 경험의 지금 값 — 추천에 없는 보조 재료 경험(S-75)도 FE 가 이 값으로 그린다.
-     * 문장 속 빈칸이면 placeholder · sentenceIndex 가 함께 있다.
+     * 문장 속 빈칸이면 placeholder · sentenceIndex 가 함께 있고, SUPPOSED 문장의 짝이면 placeholder 는 null · sentenceIndex 만 있다(ADR-014).
      */
     public record Omitted(String text, String question, Long experienceId, Long clarificationId, Long supplementId,
             String placeholder, Integer sentenceIndex, Long activityId, String activityName, String experienceContent,
@@ -252,6 +255,7 @@ public class DraftService {
         }
         List<DraftSentence> sentences = new ArrayList<>();
         int opinions = 0;
+        int supposed = 0;
         for (int position = 0; position < found.size(); position++) {
             DraftResponse.SentenceResult s = found.get(position);
             if (s.text() == null || s.text().isBlank() || s.text().contains("\n") || s.text().contains("\r")) {
@@ -259,8 +263,8 @@ public class DraftService {
             }
             DraftSentenceKind kind = kind(position, s.kind());
             List<Evidence> backing = ids.checked(s.evidence());
-            // 사실 · AI 보탬은 받치는 것이 1개 이상, 생각(「AI 제안 — 확인 필요」)은 근거를 붙이지 않는다
-            if (kind != DraftSentenceKind.OPINION && backing.isEmpty()) {
+            // 사실 · AI 보탬은 받치는 것이 1개 이상, 생각(「AI 제안 — 확인 필요」)은 근거를 붙이지 않는다. AI 가정은 0개도 된다
+            if ((kind == DraftSentenceKind.FACT || kind == DraftSentenceKind.ELABORATED) && backing.isEmpty()) {
                 throw AiCallException.invalidResponse("sentences[" + position + "].evidence 가 비었습니다");
             }
             if (kind == DraftSentenceKind.OPINION && !backing.isEmpty()) {
@@ -274,7 +278,18 @@ public class DraftService {
                 throw AiCallException.invalidResponse("sentences[" + position + "].note 는 ELABORATED 면 줄바꿈 없는 1 ~ "
                         + MAX_SENTENCE_NOTE + "자, 나머지는 null 이어야 합니다");
             }
-            sentences.add(new DraftSentence(draft, position, kind, s.text(), s.note(), backing));
+            // AI 가정만 specific 이 불리언 필수다(S-78) — 나머지는 null
+            if ((kind == DraftSentenceKind.SUPPOSED) != (s.specific() != null)) {
+                throw AiCallException.invalidResponse("sentences[" + position + "].specific 은 SUPPOSED 면 true · false, 나머지는 null 이어야 합니다");
+            }
+            if (kind == DraftSentenceKind.SUPPOSED) {
+                supposed++;
+            }
+            sentences.add(new DraftSentence(draft, position, kind, s.text(), s.note(), s.specific(), backing));
+        }
+        // 전부 가정인 초안은 쓰지 않는다 — AI 가정은 받칠 것이 있을 때만이고 받치는 문장이 하나는 있어야 한다(ai-api 「응답 규칙」)
+        if (supposed > 0 && (supposed == found.size() || !new SentenceEvidence.Sent(sent.baseExperiences()).hasBacking())) {
+            throw AiCallException.invalidResponse("SUPPOSED 만으로 초안을 쓸 수 없습니다");
         }
 
         List<DraftGuideline> judged = judged(draft, orEmpty(result.guidelines()));
@@ -317,7 +332,7 @@ public class DraftService {
             return DraftSentenceKind.valueOf(kind);
         } catch (IllegalArgumentException | NullPointerException e) {
             throw AiCallException.invalidResponse(
-                    "sentences[" + position + "].kind 는 FACT · OPINION · ELABORATED 중 하나여야 합니다: " + kind);
+                    "sentences[" + position + "].kind 는 FACT · OPINION · ELABORATED · SUPPOSED 중 하나여야 합니다: " + kind);
         }
     }
 
@@ -333,6 +348,7 @@ public class DraftService {
         Set<Long> sentIds = sent.allExperiences().stream().map(MatchRequest.ExperiencePart::id)
                 .collect(Collectors.toSet());
         Set<String> paired = new HashSet<>();
+        Set<Integer> supposedPaired = new HashSet<>();
         for (int i = 0; i < found.size(); i++) {
             DraftResponse.OmittedResult o = found.get(i);
             if (o == null || o.text() == null || o.text().isBlank()) {
@@ -347,8 +363,18 @@ public class DraftService {
             if (o.experienceId() != null && !sentIds.contains(o.experienceId())) {
                 throw AiCallException.invalidResponse("omitted[" + i + "].experienceId 가 보낸 경험이 아닙니다: " + o.experienceId());
             }
-            if ((o.placeholder() == null) != (o.sentenceIndex() == null)) {
-                throw AiCallException.invalidResponse("omitted[" + i + "] 의 placeholder 와 sentenceIndex 는 함께 null 이어야 합니다");
+            if (o.placeholder() != null && o.sentenceIndex() == null) {
+                throw AiCallException.invalidResponse("omitted[" + i + "] 에 placeholder 가 있으면 sentenceIndex 도 있어야 합니다");
+            }
+            if (o.placeholder() == null && o.sentenceIndex() != null) {
+                // AI 가정(SUPPOSED) 문장의 짝 — 문장마다 정확히 하나(ADR-014)
+                int index = o.sentenceIndex();
+                if (index < 0 || index >= sentences.size() || !isSupposed(sentences.get(index))) {
+                    throw AiCallException.invalidResponse("omitted[" + i + "].sentenceIndex 가 SUPPOSED 문장이 아닙니다: " + index);
+                }
+                if (!supposedPaired.add(index)) {
+                    throw AiCallException.invalidResponse("sentences[" + index + "] 의 SUPPOSED 짝이 둘 이상입니다");
+                }
             }
             if (o.placeholder() != null) {
                 checkPlaceholder(i, o, sentences);
@@ -358,6 +384,9 @@ public class DraftService {
             }
         }
         for (int position = 0; position < sentences.size(); position++) {
+            if (isSupposed(sentences.get(position)) && !supposedPaired.contains(position)) {
+                throw AiCallException.invalidResponse("sentences[" + position + "] 는 SUPPOSED 라 짝 omitted 가 하나 있어야 합니다");
+            }
             Matcher m = PLACEHOLDER.matcher(sentences.get(position).text());
             while (m.find()) {
                 if (!paired.contains(position + ":" + m.group())) {
@@ -377,6 +406,10 @@ public class DraftService {
                     o.sentenceIndex()));
         }
         return omitted;
+    }
+
+    private static boolean isSupposed(DraftResponse.SentenceResult s) {
+        return DraftSentenceKind.SUPPOSED.name().equals(s.kind());
     }
 
     // 「[…]」 꼴(안이 비지 않음) 12자 이하, 가리키는 문장에 글자 그대로 한 번
@@ -412,7 +445,8 @@ public class DraftService {
                 .filter(id -> current.containsKey(SentenceEvidence.key(EvidenceType.EXPERIENCE, id))).toList();
         List<Sentence> sentences = d.getSentences().stream()
                 .map(s -> new Sentence(s.getId(), s.getKind(), s.getText(),
-                        SentenceEvidence.resolve(s.getEvidence(), current), s.getNote(), s.isConfirmed(), s.isRemoved()))
+                        SentenceEvidence.resolve(s.getEvidence(), current), s.getNote(), s.getSpecific(), s.isConfirmed(),
+                        s.isRemoved()))
                 .toList();
         ErrorResponse.Error error = d.getErrorCode() == null ? null
                 : new ErrorResponse.Error(d.getErrorCode(), d.getErrorMessage());

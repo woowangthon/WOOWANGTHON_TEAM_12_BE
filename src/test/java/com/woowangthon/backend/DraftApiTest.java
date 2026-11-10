@@ -665,8 +665,8 @@ class DraftApiTest {
                 "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(chat),
                 // 보내지 않은 경험의 본문을 근거로
                 "{\"sentences\": [{\"kind\": \"FACT\", \"text\": \"문장\", \"evidence\": [{\"type\": \"EXPERIENCE\", \"id\": %d}]}]}".formatted(stranger),
-                // omitted 5개 넘음 · 빈 text · 예전 문자열 배열 · 질문과 경험의 null 짝 · 빈 질문 · 보내지 않은 경험
-                "{\"sentences\": [" + okSentence + "], \"omitted\": [" + String.join(",", java.util.Collections.nCopies(6, gap)) + "]}",
+                // omitted 10개 넘음 · 빈 text · 예전 문자열 배열 · 질문과 경험의 null 짝 · 빈 질문 · 보내지 않은 경험
+                "{\"sentences\": [" + okSentence + "], \"omitted\": [" + String.join(",", java.util.Collections.nCopies(11, gap)) + "]}",
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \" \", \"question\": null, \"experienceId\": null}]}",
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [\"예전 문자열\"]}",
                 "{\"sentences\": [" + okSentence + "], \"omitted\": [{\"text\": \"빈칸\", \"question\": \"질문?\", \"experienceId\": null}]}",

@@ -12,7 +12,8 @@ public record DraftResponse(List<SentenceResult> sentences, List<OmittedResult> 
         List<GuidelineResult> guidelines, String model) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record SentenceResult(String kind, String text, List<MatchResponse.EvidenceResult> evidence, String note) {
+    public record SentenceResult(String kind, String text, List<MatchResponse.EvidenceResult> evidence, String note,
+            Boolean specific) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
