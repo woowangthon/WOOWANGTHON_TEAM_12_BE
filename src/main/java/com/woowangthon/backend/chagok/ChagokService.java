@@ -11,11 +11,17 @@ import com.woowangthon.backend.mcp.AccessToken;
 import com.woowangthon.backend.mcp.McpConnectionService;
 import com.woowangthon.backend.mcp.McpTool;
 import com.woowangthon.backend.mcp.McpWriteTool;
+import com.woowangthon.backend.experience.Experience;
+import com.woowangthon.backend.experience.ExperienceRepository;
+import com.woowangthon.backend.question.Draft;
+import com.woowangthon.backend.question.DraftRepository;
 import com.woowangthon.backend.question.Question;
+import com.woowangthon.backend.question.Recommendation;
 import com.woowangthon.backend.question.QuestionRepository;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -53,6 +59,8 @@ public class ChagokService {
 
     private final ChagokRunRepository runs;
     private final QuestionRepository questions;
+    private final DraftRepository drafts;
+    private final ExperienceRepository experiences;
     private final McpConnectionService connections;
     private final UsageLimiter limiter;
     private final JsonMapper json;
@@ -61,12 +69,15 @@ public class ChagokService {
     private final int maxTextLength;
     private final int maxToolCalls;
 
-    public ChagokService(ChagokRunRepository runs, QuestionRepository questions, McpConnectionService connections,
+    public ChagokService(ChagokRunRepository runs, QuestionRepository questions, DraftRepository drafts,
+            ExperienceRepository experiences, McpConnectionService connections,
             UsageLimiter limiter, JsonMapper json, List<McpTool> tools, List<McpWriteTool> writeTools,
             @Value("${app.source.max-text-length}") int maxTextLength,
             @Value("${app.chagok.max-tool-calls}") int maxToolCalls) {
         this.runs = runs;
         this.questions = questions;
+        this.drafts = drafts;
+        this.experiences = experiences;
         this.connections = connections;
         this.limiter = limiter;
         this.json = json;
@@ -378,7 +389,29 @@ public class ChagokService {
     private AgentRequest.QuestionPart question(long questionId, long userId) {
         Question question = questions.findByIdAndUserId(questionId, userId)
                 .orElseThrow(() -> ApiException.notFound("QUESTION_NOT_FOUND", "문항 " + questionId + " 이(가) 없습니다"));
-        return new AgentRequest.QuestionPart(question.getId(), question.getText(), question.getOrganization());
+        return new AgentRequest.QuestionPart(question.getId(), question.getText(), question.getOrganization(),
+                experiencesOf(question, userId));
+    }
+
+    /**
+     * 그 문항에 지금 걸린 경험 — 추천 순서대로, 그 뒤 추천엔 없고 초안에만 쓴 경험(S-90 재매칭 뒤 생긴다). 지워진 · 남의 경험은 뺀다.
+     * 「지금 경험 말고 다른 것」 부탁에 차곡이가 되묻지 않게 한다(ETC#300). FE 에서 체크한 활동은 BE 가 모른다 — 초안 경험이 대신한다.
+     */
+    private List<AgentRequest.ExperiencePart> experiencesOf(Question question, long userId) {
+        List<Long> inDraft = drafts.findByQuestionId(question.getId()).map(Draft::getExperienceIds).orElse(List.of());
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        question.getRecommendations().stream().map(Recommendation::getExperienceId).forEach(ids::add);
+        Set<Long> recommended = Set.copyOf(ids);
+        ids.addAll(inDraft);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, Experience> found = experiences.findAllOwned(ids, userId).stream()
+                .collect(Collectors.toMap(Experience::getId, Function.identity()));
+        return ids.stream().filter(found::containsKey).map(found::get)
+                .map(e -> new AgentRequest.ExperiencePart(e.getId(), e.getActivity().getName(), e.getContent(),
+                        recommended.contains(e.getId()), inDraft.contains(e.getId())))
+                .toList();
     }
 
     private String checkText(String text) {
