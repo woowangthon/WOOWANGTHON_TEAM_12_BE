@@ -19,6 +19,7 @@ import com.woowangthon.backend.guideline.GuidelineRepository;
 import com.woowangthon.backend.job.JobStatus;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,7 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DraftService {
 
-    private static final int MAX_EXPERIENCES = 3;
+    // 고른 경험 1 ~ 8개 — 체크한 활동의 추천 경험을 모두 보낸다(S-84)
+    private static final int MAX_EXPERIENCES = 8;
 
     // question-api.md 「POST /api/questions/{questionId}/draft」 보조 재료(S-75) — 둘째 · 셋째 활동은 각 2개까지
     private static final int MAX_CONTEXT = 12;
@@ -177,7 +179,7 @@ public class DraftService {
         List<DraftRequest.ExperiencePart> parts = chosen.stream()
                 .map(e -> experiencePart(SentenceEvidence.matchedPart(e), recommended.get(e.getId()))).toList();
         List<MatchRequest.ExperiencePart> context = draft.isUseContext()
-                ? context(chosen, question.getUserId()).stream().map(SentenceEvidence::matchedPart).toList()
+                ? context(chosen, question.getQuestionType(), question.getUserId()).stream().map(SentenceEvidence::matchedPart).toList()
                 : null;
         List<DraftRequest.RequirementPart> requirements = question.getRequirements().stream()
                 .map(r -> new DraftRequest.RequirementPart(r.getText(), r.getStatus())).toList();
@@ -193,9 +195,10 @@ public class DraftService {
     /**
      * 보조 재료(S-75) — 고른 경험의 활동에서 고른 경험을 뺀 나머지, 최대 12개. 첫째 고른 경험의 활동이 먼저다: 둘째 · 셋째의 활동은 각 2개까지
      * 받고 나머지 몫은 첫째 활동이 받는다. 첫째 활동에 모자라면 남는 몫을 다음 활동으로 넘긴다. 같은 활동을 둘 이상 골랐으면 앞선 쪽으로 한 번만 센다.
-     * 활동 안에서는 최근에 생긴 경험부터, 싣는 순서는 활동 순서대로.
+     * 활동 안에서는 문항 유형과 역량이 겹치는 경험이 먼저, 그다음 최근에 생긴 경험부터(S-84 · {@link QuestionTypeCompetencies}), 싣는 순서는 활동
+     * 순서대로.
      */
-    private List<Experience> context(List<Experience> chosen, long userId) {
+    private List<Experience> context(List<Experience> chosen, QuestionType type, long userId) {
         List<Long> activityIds = chosen.stream().map(e -> e.getActivity().getId()).distinct().toList();
         if (activityIds.isEmpty()) {
             return List.of();
@@ -209,6 +212,8 @@ public class DraftService {
             }
         }
         List<List<Experience>> candidates = new ArrayList<>(byActivity.values());
+        // 안정 정렬 — 겹치는 것 먼저, 같은 쪽 안에서는 이미 최근 순이다
+        candidates.forEach(list -> list.sort(Comparator.comparing(e -> !QuestionTypeCompetencies.overlaps(type, e.getCompetencies()))));
         int[] taken = new int[candidates.size()];
         int left = MAX_CONTEXT;
         for (int i = 1; i < candidates.size(); i++) {

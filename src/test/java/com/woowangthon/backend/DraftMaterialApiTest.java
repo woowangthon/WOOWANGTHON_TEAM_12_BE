@@ -276,7 +276,7 @@ class DraftMaterialApiTest {
             b.add(saveExperience(actB, "B " + i, SourceStatus.NEEDS_REVIEW, i));
         }
 
-        // 추천은 3개까지라 c1 의 추천 자리를 study 로 바꿔 chat · study · b1 을 고를 수 있게 한다
+        // c1 의 추천 자리를 study 로 바꿔 chat · study · b1 을 고를 수 있게 한다
         jdbc.update("update question_recommendation set experience_id = ? where experience_id = ?", study, c1);
         start(chat, study, b1).andExpect(status().isAccepted());
         awaitDraft();
@@ -286,6 +286,57 @@ class DraftMaterialApiTest {
         expected.addAll(b.subList(0, 2));
         List<Long> sent = contextIds(RECEIVED.getFirst());
         assertThat(sent).containsExactlyElementsOf(expected).doesNotContain(chat, study);
+    }
+
+    @Test
+    void 문항_유형과_역량이_겹치는_경험이_활동_안에서_먼저고_그다음_최근_순이다() throws Exception {
+        long teamNew = saveExperience(actA, "협업 최근", SourceStatus.NEEDS_REVIEW, 1, Competency.COLLABORATION);
+        long learn = saveExperience(actA, "학습", SourceStatus.NEEDS_REVIEW, 20, Competency.LEARNING);
+        long teamOld = saveExperience(actA, "협업 조금 전", SourceStatus.NEEDS_REVIEW, 2, Competency.COMMUNICATION);
+        long impl = saveExperience(actA, "구현", SourceStatus.NEEDS_REVIEW, 30, Competency.IMPLEMENTATION);
+
+        // 유형이 없으면 최근 순만
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(contextIds(RECEIVED.getFirst())).containsExactly(teamNew, teamOld, learn, impl, study);
+
+        // JOB_SKILL(IMPLEMENTATION · LEARNING · ANALYSIS)이 겹치는 것이 먼저 — study(LEARNING)는 오래돼도 협업보다 앞이다
+        patchQuestion(questionId, "{\"questionType\": \"JOB_SKILL\"}").andExpect(status().isOk());
+        RECEIVED.clear();
+        jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID);
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(contextIds(RECEIVED.getFirst())).containsExactly(learn, impl, study, teamNew, teamOld);
+
+        // 표에 역량이 없는 유형(MOTIVATION)은 최근 순만
+        patchQuestion(questionId, "{\"questionType\": \"MOTIVATION\"}").andExpect(status().isOk());
+        RECEIVED.clear();
+        jdbc.update("delete from analysis_usage where user_id = ?", TestLogin.USER_ID);
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(contextIds(RECEIVED.getFirst())).containsExactly(teamNew, teamOld, learn, impl, study);
+    }
+
+    @Test
+    void 경험은_8개까지_고를_수_있고_9개는_400() throws Exception {
+        // 추천 자리를 8개로 늘린다 — 활동 B · C 에 경험을 더해 둔다
+        List<Long> chosen = new ArrayList<>(List.of(chat, study, b1, c1));
+        for (int i = 0; i < 4; i++) {
+            long id = saveExperience(i % 2 == 0 ? actB : actC, "추천 " + i, SourceStatus.NEEDS_REVIEW, 100 + i);
+            chosen.add(id);
+        }
+        jdbc.update("delete from question_recommendation where question_id = ?", questionId);
+        for (int i = 0; i < chosen.size(); i++) {
+            jdbc.update("insert into question_recommendation (question_id, position, experience_id, reason, emphasis) "
+                    + "values (?, ?, ?, '이유', '강조')", questionId, i, chosen.get(i));
+        }
+
+        start(chosen.stream().mapToLong(Long::longValue).toArray()).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(ids(RECEIVED.getFirst(), "$.experiences[*].id")).containsExactlyElementsOf(chosen);
+
+        // 9개
+        expectError(start(1, 2, 3, 4, 5, 6, 7, 8, 9), 400, "INVALID_REQUEST");
     }
 
     @Test
@@ -840,8 +891,12 @@ class DraftMaterialApiTest {
     // --- 도우미 ---
 
     private long saveExperience(long activityId, String content, SourceStatus status, int minutesAgo) {
+        return saveExperience(activityId, content, status, minutesAgo, Competency.LEARNING);
+    }
+
+    private long saveExperience(long activityId, String content, SourceStatus status, int minutesAgo, Competency competency) {
         Experience e = experiences.save(new Experience(activities.findById(activityId).orElseThrow(), content,
-                List.of(Competency.LEARNING), CompetenciesBy.AI, Actor.ME, status, position++));
+                List.of(competency), CompetenciesBy.AI, Actor.ME, status, position++));
         setCreated(e.getId(), minutesAgo);
         return e.getId();
     }

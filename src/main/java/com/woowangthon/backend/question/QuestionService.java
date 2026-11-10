@@ -40,7 +40,9 @@ public class QuestionService {
 
     // ai-api.md 「응답 규칙」
     private static final int MAX_REQUIREMENTS = 6;
-    private static final int MAX_RECOMMENDATIONS = 3;
+    // 추천 0 ~ 8개, 서로 다른 활동 5개까지(S-84 · ETC#274). 2026-11-10 전에 넣은 문항의 0 ~ 3개는 그대로 읽는다
+    private static final int MAX_RECOMMENDATIONS = 8;
+    private static final int MAX_RECOMMENDED_ACTIVITIES = 5;
     private static final int MAX_CLARIFICATIONS = 3;
 
     private final QuestionRepository questions;
@@ -160,7 +162,7 @@ public class QuestionService {
     @Transactional(readOnly = true)
     public List<MatchRequest.ExperiencePart> experienceParts(long userId) {
         return experiences.findAllOfUser(userId).stream()
-                .map(e -> new MatchRequest.ExperiencePart(e.getId(), e.getActivity().getName(),
+                .map(e -> new MatchRequest.ExperiencePart(e.getId(), e.getActivity().getId(), e.getActivity().getName(),
                         e.getActivity().getPeriod(), e.getContent(), e.getCompetencies(), e.getActor(),
                         e.getSourceStatus(),
                         e.getCitations().stream().map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
@@ -193,12 +195,16 @@ public class QuestionService {
             throw AiCallException.invalidResponse("recommendations 는 " + MAX_RECOMMENDATIONS + "개까지입니다");
         }
         Set<Long> recommendedIds = new HashSet<>();
+        Set<Long> recommendedActivities = new HashSet<>();
         List<Recommendation> recommendations = new ArrayList<>();
         for (int position = 0; position < recommended.size(); position++) {
             MatchResponse.RecommendationResult r = recommended.get(position);
             MatchRequest.ExperiencePart experience = candidate(r.experienceId(), candidates, "recommendations[].experienceId");
             if (!recommendedIds.add(r.experienceId())) {
                 throw AiCallException.invalidResponse("recommendations 에 같은 경험이 두 번 있습니다: " + r.experienceId());
+            }
+            if (recommendedActivities.add(experience.activityId()) && recommendedActivities.size() > MAX_RECOMMENDED_ACTIVITIES) {
+                throw AiCallException.invalidResponse("recommendations 는 서로 다른 활동 " + MAX_RECOMMENDED_ACTIVITIES + "개까지입니다");
             }
             recommendations.add(new Recommendation(question, position, r.experienceId(),
                     required(r.reason(), "recommendations[].reason"), required(r.emphasis(), "recommendations[].emphasis"),
