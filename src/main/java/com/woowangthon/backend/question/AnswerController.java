@@ -17,11 +17,20 @@ import org.springframework.web.bind.annotation.RestController;
 public class AnswerController {
 
     private final AnswerService service;
+    private final AnswerDraftService draftService;
     private final NewFactsRunner runner;
 
-    public AnswerController(AnswerService service, NewFactsRunner runner) {
+    public AnswerController(AnswerService service, AnswerDraftService draftService, NewFactsRunner runner) {
         this.service = service;
+        this.draftService = draftService;
         this.runner = runner;
+    }
+
+    /** 쓰는 중인 답 임시 저장(S-72) — AI 를 부르지 않고 분석 횟수를 쓰지 않는다. */
+    @PutMapping("/api/questions/{questionId}/answer-draft")
+    public AnswerDraftService.Result saveDraft(@PathVariable long questionId,
+            @RequestBody(required = false) AnswerDraftService.SaveRequest request) {
+        return draftService.save(questionId, request);
     }
 
     /** 비슷한 확정 답변(S-43) — 참고 목록. AI 를 부르지 않고 분석 횟수를 쓰지 않는다. */

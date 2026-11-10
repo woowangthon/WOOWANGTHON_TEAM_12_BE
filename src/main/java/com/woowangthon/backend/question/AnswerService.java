@@ -51,10 +51,11 @@ public class AnswerService {
     private final ActivityRepository activities;
     private final ExperienceService experienceService;
     private final UsageLimiter limiter;
+    private final AnswerDraftService answerDrafts;
 
     public AnswerService(QuestionRepository questions, AnswerRepository answers, NewFactCandidateRepository candidates,
             DraftRepository drafts, ExperienceRepository experiences, ActivityRepository activities,
-            ExperienceService experienceService, UsageLimiter limiter) {
+            ExperienceService experienceService, UsageLimiter limiter, AnswerDraftService answerDrafts) {
         this.questions = questions;
         this.answers = answers;
         this.candidates = candidates;
@@ -63,6 +64,7 @@ public class AnswerService {
         this.activities = activities;
         this.experienceService = experienceService;
         this.limiter = limiter;
+        this.answerDrafts = answerDrafts;
     }
 
     public record ConfirmRequest(String text) {
@@ -100,6 +102,8 @@ public class AnswerService {
         }
         answer.confirm(text);
         answers.saveAndFlush(answer);
+        // 확정하면 쓰는 중인 임시 글은 지운다(S-72)
+        answerDrafts.discard(questionId);
         return new Result(view(answer, question.getUserId()));
     }
 
