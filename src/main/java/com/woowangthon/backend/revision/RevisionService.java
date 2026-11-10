@@ -78,6 +78,10 @@ public class RevisionService {
             ActivityService.ActivityBrief activity, AnswerDraftService.AnswerDraftView answerDraft) {
     }
 
+    // to — BEFORE(그 수정 전 값) · AFTER(그때 값). 본문이 없거나 빼면 BEFORE
+    public record RestoreRequest(String to) {
+    }
+
     // 다음 쪽의 시작점 — FE 는 해석하지 않는다
     private record Cursor(String at, long id) {
     }
@@ -113,27 +117,32 @@ public class RevisionService {
     }
 
     /**
-     * 그 수정 전 값으로 되돌리고 RESTORE 기록을 하나 더한다. 지난 기록은 건드리지 않는다.
+     * 고른 기록의 스냅샷으로 되돌리고 RESTORE 기록을 하나 더한다. 지난 기록은 건드리지 않는다.
+     * to 가 AFTER 면 그 기록의 그때 값(after), BEFORE · null 이면 그 수정 전 값(before) — 화면의 줄은 after 를 보인다(FE#430).
      * 경험 · 활동은 바로 쓰고, 답은 확정 답을 바꾸지 않고 임시 글로 넣는다.
      */
     @Transactional
-    public RestoreResult restore(long revisionId) {
+    public RestoreResult restore(long revisionId, String to) {
+        if (to != null && !to.equals("BEFORE") && !to.equals("AFTER")) {
+            throw ApiException.invalidRequest("to 는 BEFORE · AFTER 중 하나여야 합니다: " + to);
+        }
         Revision source = revisions.findByIdAndUserId(revisionId, CurrentUser.id())
                 .orElseThrow(() -> ApiException.notFound("REVISION_NOT_FOUND", "수정 이력 " + revisionId + " 이(가) 없습니다"));
+        String snapshot = "AFTER".equals(to) ? source.getAfterSnapshot() : source.getBeforeSnapshot();
         return switch (source.getTargetType()) {
             case EXPERIENCE -> {
                 Restored<ExperienceResponse> restored = experienceService.restore(source.getTargetId(),
-                        json.readValue(source.getBeforeSnapshot(), ExperienceSnapshot.class), source.getId());
+                        json.readValue(snapshot, ExperienceSnapshot.class), source.getId());
                 yield new RestoreResult(view(restored.revision(), false), restored.value(), null, null);
             }
             case ACTIVITY -> {
                 Restored<ActivityService.ActivityBrief> restored = activityService.restore(source.getTargetId(),
-                        json.readValue(source.getBeforeSnapshot(), ActivitySnapshot.class), source.getId());
+                        json.readValue(snapshot, ActivitySnapshot.class), source.getId());
                 yield new RestoreResult(view(restored.revision(), false), null, restored.value(), null);
             }
             case ANSWER -> {
                 Restored<AnswerDraftService.AnswerDraftView> restored = answerDrafts.restore(source.getTargetId(),
-                        json.readValue(source.getBeforeSnapshot(), AnswerSnapshot.class).text(), source.getId());
+                        json.readValue(snapshot, AnswerSnapshot.class).text(), source.getId());
                 yield new RestoreResult(view(restored.revision(), false), null, null, restored.value());
             }
         };

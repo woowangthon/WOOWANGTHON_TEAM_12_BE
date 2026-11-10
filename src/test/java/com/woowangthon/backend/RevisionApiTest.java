@@ -469,6 +469,63 @@ class RevisionApiTest {
         expectError(web.perform(post("/api/revisions/{id}/restore", first)), 409, "NOTHING_TO_RESTORE");
     }
 
+    // --- 그때 값(after)으로 되돌리기 (FE#430) ---
+
+    @Test
+    void 초안을_넣고_고친_뒤에도_그_줄의_그때_글로_되돌린다_거듭_눌러도_기록이_늘지_않는다() throws Exception {
+        saveDraft("{\"text\":\"처음 초안\",\"fromDraft\":true}");
+        // 자동 저장 — 이력에 남지 않아 「처음 초안」을 before 로 가진 기록이 없다
+        saveDraft("{\"text\":\"처음 초안을 고친 글\"}");
+        long draft = jdbc.queryForObject("select id from revision where target_type = 'ANSWER'", Long.class);
+
+        restoreTo(draft, "AFTER")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision.kind").value("RESTORE"))
+                .andExpect(jsonPath("$.revision.restoredFromId").value(draft))
+                .andExpect(jsonPath("$.revision.before.text").value("처음 초안을 고친 글"))
+                .andExpect(jsonPath("$.revision.after.text").value("처음 초안"))
+                .andExpect(jsonPath("$.answerDraft.text").value("처음 초안"));
+        long restore = jdbc.queryForObject("select id from revision where kind = 'RESTORE'", Long.class);
+
+        // 지금 값이 이미 그 글이다 — 맨 위(RESTORE) 줄이든 원래 줄이든 다시 눌러도 기록이 늘지 않는다
+        expectError(restoreTo(restore, "AFTER"), 409, "NOTHING_TO_RESTORE");
+        expectError(restoreTo(draft, "AFTER"), 409, "NOTHING_TO_RESTORE");
+        assertThat(jdbc.queryForObject("select count(*) from revision", Long.class)).isEqualTo(2);
+    }
+
+    @Test
+    void 경험과_활동도_그때_값으로_되돌리고_to_를_빼면_수정_전_값이다() throws Exception {
+        web.perform(patch("/api/experiences/{id}", experienceId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"첫 번째로 고친 글\"}")).andExpect(status().isOk());
+        web.perform(patch("/api/experiences/{id}", experienceId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"content\":\"두 번째로 고친 글\"}")).andExpect(status().isOk());
+        long first = revisionIdAfter("첫 번째로 고친 글");
+
+        restoreTo(first, "AFTER")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision.after.content").value("첫 번째로 고친 글"))
+                .andExpect(jsonPath("$.experience.content").value("첫 번째로 고친 글"));
+        // 본문 없이 · to 를 빼고 · BEFORE 는 모두 그 수정 전 값
+        web.perform(post("/api/revisions/{id}/restore", first).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.experience.content").value(org.hamcrest.Matchers.not("첫 번째로 고친 글")));
+        expectError(restoreTo(first, "BEFORE"), 409, "NOTHING_TO_RESTORE");
+        expectError(restoreTo(first, "LATEST"), 400, "INVALID_REQUEST");
+
+        patchActivity(activityId, "{\"name\":\"새 이름\"}").andExpect(status().isOk());
+        patchActivity(activityId, "{\"name\":\"더 새 이름\"}").andExpect(status().isOk());
+        long renamed = jdbc.queryForObject("select id from revision where target_type = 'ACTIVITY' "
+                + "and after_snapshot like '%\"새 이름\"%'", Long.class);
+        restoreTo(renamed, "AFTER")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activity.name").value("새 이름"));
+    }
+
+    private ResultActions restoreTo(long revisionId, String to) throws Exception {
+        return web.perform(post("/api/revisions/{id}/restore", revisionId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"to\":\"" + to + "\"}"));
+    }
+
     // --- 외부 AI 에는 열지 않는다 ---
 
     @Test
