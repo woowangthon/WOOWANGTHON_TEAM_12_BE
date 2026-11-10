@@ -61,6 +61,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /api/activities/{id}/experiences` | 경험 직접 추가 — 「내가 입력」, 근거 없음, 맨 뒤에 붙음(201) |
 | `DELETE /api/experiences/{id}` | 경험 지우기 — 근거 · 보완도 지우고 원본 · 활동은 남김(204) |
 | `POST /api/experiences/{id}/move` | 경험 옮기기 — 속한 활동만 바꿈. 내용 · 근거 · 출처 상태는 그대로, 옮긴 활동의 맨 뒤 |
+| `POST /api/experiences/{keepId}/merge` | 경험 합치기 — 같은 활동의 경험 둘을 하나로. 지울 쪽 근거 · 보완이 남길 쪽으로 옮겨지고, 가리키던 추천 · 초안 · 되묻기도 남길 쪽으로 바뀐다(S-70) |
 | `PUT /api/experiences/{id}/shared` | 공개 프로필에 넣기 · 빼기(S-65) — 「확인 필요」는 넣을 수 없다(409). 내용 · 출처 상태는 그대로 |
 | `GET` · `PATCH /api/public-profile` | 내 공개 설정 읽기 · 제목 고치기 |
 | `POST` · `DELETE /api/public-profile/link` | 링크 켜기 · 새로 만들기(언제나 새 토큰, 201) · 끄기(204) — 옛 주소는 바로 404 |

@@ -55,6 +55,13 @@ public class ExperienceController {
         return service.move(experienceId, new PatchBody(body));
     }
 
+    /** 경험 합치기(S-70) — 주소의 경험이 남는다. */
+    @PostMapping("/api/experiences/{keepId}/merge")
+    public ExperienceResponse merge(@PathVariable long keepId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        return service.merge(keepId, new PatchBody(body));
+    }
+
     @PutMapping("/api/experiences/{experienceId}/shared")
     public ExperienceResponse setShared(@PathVariable long experienceId,
             @RequestBody(required = false) Map<String, Object> body) {
