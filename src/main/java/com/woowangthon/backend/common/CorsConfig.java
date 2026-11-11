@@ -24,6 +24,8 @@ public class CorsConfig implements WebMvcConfigurer {
         registry.addMapping("/api/**")
                 .allowedOriginPatterns(allowedOrigins)
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-                .allowCredentials(true);
+                .allowCredentials(true)
+                // 내보내기(export-api.md) 파일 이름을 FE fetch 가 읽게 — CORS 기본 노출 헤더가 아니다
+                .exposedHeaders("Content-Disposition");
     }
 }
