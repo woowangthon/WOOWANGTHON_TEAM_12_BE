@@ -123,7 +123,7 @@ public class McpChangeService {
             recorder.experience(experience, before, RevisionKind.EDIT, RevisionOrigin.userOnChange(change.getId()),
                     null);
         } else {
-            targets.supplements().get(change.getSupplementId()).confirmExternalAiAnswer();
+            targets.supplements().get(change.getSupplementId()).confirmByUser();
         }
         change.confirm();
         return new McpChangeResponses.Confirmed(response(change, targets));

@@ -8,7 +8,7 @@ import java.util.List;
  * 계약의 Star 모양(experience-api.md 「STAR 칸 Star」). 활동 세부의 경험 · 칸 답하기 · 칸 고치기 응답에만 싣는다 —
  * 경험 찾기 · MCP · 공개 프로필 · AI 요청엔 싣지 않는다.
  */
-public record StarView(StarStatus status, List<Slot> slots) {
+public record StarView(StarStatus status, boolean hasNew, List<Slot> slots) {
 
     public record Slot(StarSlotName slot, String text, StarSourceType sourceType, Long sourceId, String question) {
     }
@@ -27,14 +27,14 @@ public record StarView(StarStatus status, List<Slot> slots) {
      */
     public static StarView from(Experience e) {
         if (!e.hasStarSlots()) {
-            return new StarView(e.getStarStatus(), List.of());
+            return new StarView(e.getStarStatus(), e.hasNewForStar(), List.of());
         }
         List<Slot> slots = new ArrayList<>();
         for (StarSlotName name : StarSlotName.values()) {
             StarSlot stored = e.getStarSlots().stream().filter(s -> s.getSlot() == name).findFirst().orElse(null);
             slots.add(view(e, name, stored));
         }
-        return new StarView(e.getStarStatus(), slots);
+        return new StarView(e.getStarStatus(), e.hasNewForStar(), slots);
     }
 
     private static Slot view(Experience e, StarSlotName name, StarSlot stored) {

@@ -41,9 +41,13 @@ public class ClarificationService {
     public record Answered(Long experienceId, ExperienceResponse.SupplementResponse supplement) {
     }
 
+    /** 웹 — 답이 곧 근거라 그 경험 STAR 칸 밖에 새 답이 생긴다(BE#184). 외부 AI 답은 맞아요를 눌러야 그렇다(McpChangeService). */
     @Transactional
     public Answered answer(long clarificationId, AnswerRequest request) {
-        return answer(CurrentUser.id(), clarificationId, request);
+        long userId = CurrentUser.id();
+        Answered answered = answer(userId, clarificationId, request);
+        experiences.findOwned(answered.experienceId(), userId).ifPresent(Experience::markStarNew);
+        return answered;
     }
 
     /** 외부 AI 는 세션 없이 사용자를 넘긴다 — 웹과 같은 코드다(S-56). */

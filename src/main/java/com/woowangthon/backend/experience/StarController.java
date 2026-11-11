@@ -35,6 +35,15 @@ public class StarController {
         return detail;
     }
 
+    /** 경험 하나 다시 나누기(분석 횟수 안 셈 · BE#184) — 정리 중인 그 경험을 돌려주고 뒤에서 돌린다. */
+    @PostMapping("/api/experiences/{experienceId}/star")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public StarView.WithExperience resort(@PathVariable long experienceId) {
+        StarView.WithExperience started = service.startOne(experienceId);
+        runner.run(List.of(List.of(experienceId)));
+        return started;
+    }
+
     @PostMapping("/api/experiences/{experienceId}/star/{slot}/answer")
     public StarView.WithExperience answer(@PathVariable long experienceId, @PathVariable String slot,
             @RequestBody(required = false) StarService.AnswerRequest request) {

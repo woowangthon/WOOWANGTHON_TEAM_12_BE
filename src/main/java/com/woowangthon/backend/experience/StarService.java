@@ -9,6 +9,7 @@ import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -73,6 +74,24 @@ public class StarService {
         list.forEach(Experience::startStar);
         experiences.flush();
         return chunks(list.stream().map(Experience::getId).toList());
+    }
+
+    /**
+     * 경험 하나 다시 나누기(BE#184) — 사용자가 누를 때만. 그 경험만 정리 중으로 두고 분석 횟수를 세지 않는다(BE#180 과 같은 이유 —
+     * StarRunner 동시 호출 상한 안에서). 경험 행만 잠근다 — 활동 단위 다시 시도와 겹치면 /star 가 한 번 더 불릴 뿐 결과는 하나다
+     * (먼저 끝난 쪽이 READY 로 두면 뒤의 것은 건너뛴다). AI 는 이 트랜잭션이 끝난 뒤 부른다.
+     */
+    @Transactional
+    public StarView.WithExperience startOne(long experienceId) {
+        Experience experience = experiences.findOwnedForUpdate(experienceId, CurrentUser.id())
+                .orElseThrow(() -> ApiException.notFound("EXPERIENCE_NOT_FOUND",
+                        "경험 " + experienceId + " 이(가) 없습니다"));
+        if (experience.getStarStatus() == StarStatus.ANALYZING) {
+            throw new ApiException(HttpStatus.CONFLICT, "STAR_ANALYZING", "이 경험의 STAR 를 정리하는 중입니다");
+        }
+        experience.startStar();
+        experiences.flush();
+        return StarView.WithExperience.from(experience);
     }
 
     /** 정리 안 한(NONE) 경험이 before 전부터 남은 활동 ID 를 limit 개까지 — 정리 중인 활동은 뺀다(BE#180). */
@@ -167,7 +186,7 @@ public class StarService {
             }
             Checked checked = slots(sent.get(r.id()), r.slots());
             violations += checked.violations();
-            experience.completeStar(checked.slots());
+            experience.completeStar(keepUserSlots(experience, checked.slots()));
         }
         experiences.flush();
         if (violations > 0) {
@@ -176,6 +195,42 @@ public class StarService {
     }
 
     private record Checked(List<StarSlot> slots, int violations) {
+    }
+
+    /**
+     * 사용자가 쓴 칸은 지킨다(계약 「사용자가 쓴 칸은 지킨다」 · BE#184) — 앞 칸이 아직 있는 보완을 가리키면 그 칸은 그대로 두고 나머지만
+     * 새 결과로. 새 결과가 지킨 칸의 보완 글을 다른 칸에 또 넣으면(같은 보완 · 한쪽 글이 다른 쪽에 적혀 있음) 그 칸은 빈칸 — 같은 글이
+     * 두 칸에 보이지 않게. 처음 정리면 앞 칸이 없어 그대로다.
+     */
+    static List<StarSlot> keepUserSlots(Experience experience, List<StarSlot> fresh) {
+        Map<StarSlotName, StarSlot> kept = new EnumMap<>(StarSlotName.class);
+        for (StarSlot old : experience.getStarSlots()) {
+            if (old.getSourceType() == StarSourceType.SUPPLEMENT && isFilled(experience, old)) {
+                kept.put(old.getSlot(), old);
+            }
+        }
+        if (kept.isEmpty()) {
+            return fresh;
+        }
+        List<StarSlot> merged = new ArrayList<>();
+        for (StarSlot slot : fresh) {
+            StarSlot keep = kept.get(slot.getSlot());
+            if (keep != null) {
+                merged.add(keep);
+            } else if (repeats(slot, kept.values())) {
+                merged.add(StarSlot.empty(slot.getSlot(), null));
+            } else {
+                merged.add(slot);
+            }
+        }
+        return merged;
+    }
+
+    private static boolean repeats(StarSlot slot, Collection<StarSlot> kept) {
+        return slot.getSourceType() == StarSourceType.SUPPLEMENT && kept.stream().anyMatch(k ->
+                k.getSourceId().equals(slot.getSourceId())
+                        && (StarText.contains(k.getText(), slot.getText())
+                                || StarText.contains(slot.getText(), k.getText())));
     }
 
     private static Checked slots(StarRequest.ExperiencePart part, List<StarResponse.SlotResult> results) {

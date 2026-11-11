@@ -29,6 +29,12 @@ import com.woowangthon.backend.experience.StarSweeper;
 import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
+import com.woowangthon.backend.mcp.McpChangeService;
+import com.woowangthon.backend.mcp.McpWriteService;
+import com.woowangthon.backend.question.Application;
+import com.woowangthon.backend.question.ApplicationRepository;
+import com.woowangthon.backend.question.Question;
+import com.woowangthon.backend.question.QuestionRepository;
 import com.woowangthon.backend.source.Source;
 import com.woowangthon.backend.source.SourceKind;
 import com.woowangthon.backend.source.SourceRepository;
@@ -137,6 +143,10 @@ class StarApiTest {
     @Autowired InterruptedStarCleaner cleaner;
     @Autowired StarSweeper sweeper;
     @Autowired StarRunner starRunner;
+    @Autowired ApplicationRepository applications;
+    @Autowired QuestionRepository questions;
+    @Autowired McpWriteService mcpWrites;
+    @Autowired McpChangeService mcpChanges;
 
     MockMvc mvc;
     long app;
@@ -180,7 +190,7 @@ class StarApiTest {
         awaitNotAnalyzing();
         StarIdle.await(starRunner);
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
-        jdbc.execute("truncate table experience_star_slot, new_fact_candidate, answer_dismissed, answer, answer_draft, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, grounding_sentence_evidence, grounding_sentence, grounding_check, question_recommendation_evidence, question_recommendation, question_requirement, "
+        jdbc.execute("truncate table mcp_change, experience_star_slot, new_fact_candidate, answer_dismissed, answer, answer_draft, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, grounding_sentence_evidence, grounding_sentence, grounding_check, question_recommendation_evidence, question_recommendation, question_requirement, "
                 + "supplement, clarification, question, application_posting_line, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
     }
 
@@ -554,6 +564,110 @@ class StarApiTest {
     }
 
     // 받은 경험마다 네 칸 모두 빈칸
+    @Test
+    void 경험_하나_다시_나누기는_그_경험만_보내고_세지_않고_사용자_칸은_지킨다() throws Exception {
+        sort();
+        awaitNotAnalyzing();
+        hasNew(false);
+
+        // 칸 답하기 · 칸 고치기로는 켜지지 않는다 — 이미 칸에 있다
+        String answered = answer(chat, "T", "제가 맡았어요").andExpect(jsonPath("$.star.hasNew").value(false))
+                .andReturn().getResponse().getContentAsString();
+        long tSupplement = ((Number) JsonPath.read(answered, "$.star.slots[1].sourceId")).longValue();
+        edit(chat, "S", "축제 기간에 채팅이 몇 초씩 늦게 왔다").andExpect(jsonPath("$.star.hasNew").value(false));
+        // 보완 답을 고치면 켜진다
+        patchSupplement(chatSupplement, CHAT_ANSWER + " 그 뒤 재연결도 넣었다");
+        hasNew(true);
+
+        // 새 결과: S 근거 · T 빈칸 · A 보완 일부 · R 이 T 의 보완 글을 또 넣음 → S · T · A 는 사용자 칸 그대로, R 은 빈칸
+        int calls = STARRED.size();
+        jdbc.update("update app_user set daily_analysis_limit = 0 where id = ?", TestLogin.USER_ID);
+        starReply = body -> new Reply(200, """
+                {"experiences":[{"id":%1$d,"slots":[
+                  {"slot":"S","sourceType":"CITATION","sourceId":%2$d,"text":"채팅 메시지가 늦게 도착하는 문제가 있었다","question":null},
+                  {"slot":"T","sourceType":null,"sourceId":null,"text":null,"question":"누가 맡았나요?"},
+                  {"slot":"A","sourceType":"SUPPLEMENT","sourceId":%3$d,"text":"그 뒤 재연결도 넣었다","question":null},
+                  {"slot":"R","sourceType":"SUPPLEMENT","sourceId":%4$d,"text":"제가 맡았어요","question":null}]}],
+                 "model":"test-model"}""".formatted(chat, chatCitation, chatSupplement, tSupplement), 300);
+        mvc.perform(post("/api/experiences/{id}/star", chat)).andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value(chat))
+                .andExpect(jsonPath("$.star.status").value("ANALYZING"))
+                .andExpect(jsonPath("$.star.hasNew").value(false))
+                .andExpect(jsonPath("$.star.slots").isEmpty());
+        // 정리 중에 또 누르면 409
+        mvc.perform(post("/api/experiences/{id}/star", chat)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("STAR_ANALYZING"));
+        String done = awaitNotAnalyzing();
+
+        assertThat(STARRED).hasSize(calls + 1);
+        assertThat(JsonPath.<List<Number>>read(STARRED.getLast(), "$.experiences[*].id")).extracting(Number::longValue)
+                .containsExactly(chat);
+        assertThat(usage()).isZero();
+        assertThat(JsonPath.<String>read(done, "$.experiences[0].star.status")).isEqualTo("READY");
+        assertThat(JsonPath.<Boolean>read(done, "$.experiences[0].star.hasNew")).isFalse();
+        assertThat(JsonPath.<String>read(done, "$.experiences[0].star.slots[0].text")).isEqualTo("축제 기간에 채팅이 몇 초씩 늦게 왔다");
+        assertThat(JsonPath.<String>read(done, "$.experiences[0].star.slots[1].text")).isEqualTo("제가 맡았어요");
+        assertThat(JsonPath.<String>read(done, "$.experiences[0].star.slots[2].text"))
+                .isEqualTo(CHAT_ANSWER + " 그 뒤 재연결도 넣었다");
+        assertThat((Object) JsonPath.read(done, "$.experiences[0].star.slots[3].sourceType")).isNull();
+        // 배포 경험은 건드리지 않았다
+        assertThat(JsonPath.<String>read(done, "$.experiences[1].star.slots[2].text")).isEqualTo("AWS 에 올렸다");
+
+        // 활동 단위 다시 시도도 같은 규칙 — 사용자 칸이 남는다
+        starReply = body -> new Reply(200, contractReply(), 0);
+        sort().andExpect(status().isAccepted());
+        String retried = awaitNotAnalyzing();
+        assertThat(JsonPath.<String>read(retried, "$.experiences[0].star.slots[0].text")).isEqualTo("축제 기간에 채팅이 몇 초씩 늦게 왔다");
+        assertThat(JsonPath.<String>read(retried, "$.experiences[0].star.slots[1].text")).isEqualTo("제가 맡았어요");
+
+        TestLogin.mvc(context, 999999L).perform(post("/api/experiences/{id}/star", chat))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.error.code").value("EXPERIENCE_NOT_FOUND"));
+    }
+
+    @Test
+    void 되묻기_답_외부_AI_맞아요_합치기로_새_답_있음이_켜진다() throws Exception {
+        sort();
+        awaitNotAnalyzing();
+        // 경험 하나 다시 나누기는 그 경험만 보낸다 — 받은 경험마다 빈칸 넷
+        starReply = body -> new Reply(200, emptyReply(body), 0);
+        Question question = questions.save(new Question(applications.save(new Application(TestLogin.USER_ID, "지원")),
+                "문항"));
+
+        // 웹 되묻기 답 — 켜진다
+        long asked = clarification(question, "어떤 방식으로 바꿨나요?");
+        mvc.perform(post("/api/clarifications/{id}/answer", asked).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"answer\":\"STOMP 구독으로 바꿨어요\"}")).andExpect(status().isCreated());
+        hasNew(true);
+        mvc.perform(post("/api/experiences/{id}/star", chat)).andExpect(status().isAccepted());
+        awaitNotAnalyzing();
+        hasNew(false);
+
+        // 외부 AI 가 전한 답은 맞아요 전엔 아니고, 맞아요 뒤에 켜진다
+        long change = mcpWrites.answerClarification(TestLogin.USER_ID, "claude-ai",
+                clarification(question, "결과는 어땠나요?"), "지연이 사라졌어요").changeId();
+        hasNew(false);
+        mcpChanges.confirm(TestLogin.USER_ID, change);
+        hasNew(true);
+        mvc.perform(post("/api/experiences/{id}/star", chat)).andExpect(status().isAccepted());
+        awaitNotAnalyzing();
+        hasNew(false);
+
+        // 합치기로 근거가 늘면 켜진다
+        mvc.perform(post("/api/experiences/{id}/merge", chat).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"fromExperienceId\":" + deploy + "}")).andExpect(status().isOk());
+        hasNew(true);
+    }
+
+    private long clarification(Question question, String text) {
+        return jdbc.queryForObject("insert into clarification (question_id, position, experience_id, question) "
+                + "values (?, 0, ?, ?) returning id", Long.class, question.getId(), chat, text);
+    }
+
+    private void hasNew(boolean expected) throws Exception {
+        mvc.perform(get("/api/activities/{id}", app))
+                .andExpect(jsonPath("$.experiences[0].star.hasNew").value(expected));
+    }
+
     private static String emptyReply(String body) {
         String slots = """
                 [{"slot":"S","sourceType":null,"sourceId":null,"text":null,"question":null},

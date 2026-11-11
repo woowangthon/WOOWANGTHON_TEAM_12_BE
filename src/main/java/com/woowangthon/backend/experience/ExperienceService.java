@@ -235,6 +235,8 @@ public class ExperienceService {
             throw ApiException.invalidRequest("다른 활동의 경험은 합칠 수 없습니다 — 먼저 같은 활동으로 옮기세요");
         }
 
+        // 옮겨 오는 근거 · 보완이 있으면 남길 경험의 칸 밖에 새 근거가 생긴다(BE#184)
+        boolean grows = !from.getCitations().isEmpty() || !from.getSupplements().isEmpty();
         if (from.isSaved() && !keep.isSaved()) {
             keep.setSaved(true);
         }
@@ -247,8 +249,12 @@ public class ExperienceService {
         em.createNativeQuery("delete from experience where id = :id").setParameter("id", fromId).executeUpdate();
         // SQL 로 바뀐 것을 다시 읽는다
         em.clear();
-        // 남길 경험의 STAR 칸은 그대로 — 늘어난 근거 · 보완으로 다시 정리하지 않는다(ADR-019). 정리 전(NONE)이면 StarSweeper 가 정리한다
+        // 남길 경험의 STAR 칸은 그대로 — 늘어난 근거 · 보완으로 다시 정리하지 않는다(ADR-019). 정리 전(NONE)이면 StarSweeper 가 정리한다.
+        // 대신 「다시 나누기」를 누를 수 있게 표시한다(BE#184)
         Experience merged = findOwned(keepId);
+        if (grows) {
+            merged.markStarNew();
+        }
         return ExperienceResponse.from(merged);
     }
 

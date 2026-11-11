@@ -32,6 +32,8 @@ public class SupplementService {
         supplement.changeAnswer(answer);
         // STAR 칸이 가리키던 보완이면 칸이 새 답을 따르거나 「다시 정리」가 된다(계약 「다른 동작과의 관계」)
         supplement.getExperience().onSupplementChanged(supplementId, before, answer, null);
+        // 고친 답이 칸 밖에도 있을 수 있다 — 「다시 나누기」를 보이게(BE#184)
+        supplement.getExperience().markStarNew();
         // 응답의 updatedAt 이 바뀐 시각이 되게 지금 저장한다
         supplements.flush();
         return ExperienceResponse.SupplementResponse.from(supplement);
