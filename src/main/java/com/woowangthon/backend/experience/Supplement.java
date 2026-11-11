@@ -103,6 +103,12 @@ public class Supplement {
         mcpClient = null;
     }
 
+    /** 웹의 맞아요(S-56) — 이제 근거라 그 경험 STAR 칸 밖에 새 답이 생긴 것이다(BE#184). */
+    public void confirmByUser() {
+        confirmExternalAiAnswer();
+        experience.markStarNew();
+    }
+
     /** 근거로 써도 되나 — 외부 AI 를 거쳐 아직 확인 전이면 아니다. */
     public boolean isConfirmed() {
         return mcpChangeId == null;

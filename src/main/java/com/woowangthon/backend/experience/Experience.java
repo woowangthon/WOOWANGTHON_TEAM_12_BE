@@ -110,6 +110,10 @@ public class Experience {
     @CollectionTable(name = "experience_star_slot", joinColumns = @JoinColumn(name = "experience_id"))
     private List<StarSlot> starSlots = new ArrayList<>();
 
+    // 마지막 정리 뒤 칸 밖에 새 답 · 근거가 생겼나(BE#184 · 계약 Star.hasNew) — 「다시 나누기」 버튼을 보일지만 정한다. 상태는 바꾸지 않는다
+    @Column(name = "star_has_new", nullable = false)
+    private boolean starHasNew;
+
     // 수행 주체가 UNKNOWN 에서 처음 정해진 시각(S-77) — 그 뒤 다시 만든 초안은 세지 않는다. 한 번 채우면 덮지 않는다
     private OffsetDateTime actorDecidedAt;
 
@@ -243,11 +247,25 @@ public class Experience {
         starStatus = StarStatus.ANALYZING;
     }
 
-    /** STAR 정리 결과(S · T · A · R 넷)로 칸을 통째로 바꾼다. */
+    /** STAR 정리 결과(S · T · A · R 넷)로 칸을 통째로 바꾼다 — 칸 밖의 새 답은 이제 없다. */
     public void completeStar(List<StarSlot> slots) {
         starSlots.clear();
         starSlots.addAll(slots);
         starStatus = StarStatus.READY;
+        starHasNew = false;
+    }
+
+    /**
+     * 칸 밖에 새 답 · 근거가 생겼다(되묻기 답 · 외부 AI 보완 맞아요 · 보완 고치기 · 합치기 — BE#184). 칸 답하기 · 칸 고치기는 이미 칸에 있어
+     * 부르지 않는다. 다시 정리하지 않는다(ADR-019) — 사용자가 「다시 나누기」를 누를 수 있게 표시만 한다.
+     */
+    public void markStarNew() {
+        starHasNew = true;
+    }
+
+    /** 계약 Star.hasNew — NONE · ANALYZING 이면 false. */
+    public boolean hasNewForStar() {
+        return starHasNew && starStatus != StarStatus.NONE && starStatus != StarStatus.ANALYZING;
     }
 
     /** STAR 정리 실패 — 앞 칸은 그대로. */
