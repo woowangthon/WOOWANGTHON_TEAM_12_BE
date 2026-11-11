@@ -16,6 +16,7 @@ import com.woowangthon.backend.account.AppUserRepository;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.AiClient;
 import com.woowangthon.backend.ai.ExtractRequest;
+import com.woowangthon.backend.experience.StarRunner;
 import com.woowangthon.backend.job.AnalysisJob;
 import com.woowangthon.backend.job.AnalysisJobRepository;
 import com.woowangthon.backend.job.InterruptedJobCleaner;
@@ -163,6 +164,9 @@ class AnalysisJobApiTest {
     JdbcTemplate jdbc;
 
     @Autowired
+    StarRunner starRunner;
+
+    @Autowired
     AnalysisJobRepository jobs;
 
     @Autowired
@@ -186,7 +190,9 @@ class AnalysisJobApiTest {
     }
 
     @AfterEach
-    void cleanUp() {
+    void cleanUp() throws InterruptedException {
+        // 분석 뒤 STAR 정리가 뒤에서 돌고 있으면 끝날 때까지 기다린다(truncate 와 교착하지 않게)
+        StarIdle.await(starRunner);
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, analysis_usage, analysis_job_activity, analysis_job, supplement, citation, experience, activity_link, activity, source_section, source");
     }

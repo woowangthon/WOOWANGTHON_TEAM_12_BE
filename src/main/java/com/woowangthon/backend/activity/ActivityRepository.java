@@ -23,6 +23,11 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     @Query("select a from Activity a where a.id = :id and a.userId = :userId")
     Optional<Activity> findOwnedForUpdate(Long id, Long userId);
 
+    // 사용자 요청 밖(BE 가 알아서 하는 STAR 정리 — BE#180)에서 활동을 잠근다
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from Activity a where a.id = :id")
+    Optional<Activity> findForUpdate(Long id);
+
     // 수정 이력 목록에서 지금도 있는 활동만(S-80)
     @Query("select a.id from Activity a where a.id in :ids and a.userId = :userId")
     List<Long> findOwnedIds(Collection<Long> ids, Long userId);

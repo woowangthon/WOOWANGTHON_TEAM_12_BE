@@ -1,6 +1,5 @@
 package com.woowangthon.backend.experience;
 
-import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
 import com.woowangthon.backend.ai.AiCallException;
@@ -8,6 +7,7 @@ import com.woowangthon.backend.ai.StarRequest;
 import com.woowangthon.backend.ai.StarResponse;
 import com.woowangthon.backend.common.ApiException;
 import com.woowangthon.backend.common.CurrentUser;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -19,6 +19,7 @@ import java.util.Set;
 import org.hibernate.Hibernate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,14 +39,12 @@ public class StarService {
     private final ActivityRepository activities;
     private final ExperienceRepository experiences;
     private final SupplementRepository supplements;
-    private final UsageLimiter limiter;
 
     public StarService(ActivityRepository activities, ExperienceRepository experiences,
-            SupplementRepository supplements, UsageLimiter limiter) {
+            SupplementRepository supplements) {
         this.activities = activities;
         this.experiences = experiences;
         this.supplements = supplements;
-        this.limiter = limiter;
     }
 
     public record AnswerRequest(String answer) {
@@ -55,8 +54,8 @@ public class StarService {
     }
 
     /**
-     * 「STAR 로 정리」 — 활동의 경험 전부를 정리 중으로 두고 분석 1회를 센다(S-15 · 미결정 31). 돌릴 경험 ID 묶음(/star 한 번에 30개까지)을
-     * 돌려준다. AI 는 이 트랜잭션이 끝난 뒤 부른다.
+     * 실패한 정리 다시 시도 — 활동의 경험 전부를 정리 중으로 둔다. 분석 횟수를 세지 않는다(미결정 31 · ETC#346). 돌릴 경험 ID 묶음
+     * (/star 한 번에 30개까지)을 돌려준다. AI 는 이 트랜잭션이 끝난 뒤 부른다.
      */
     @Transactional
     public List<List<Long>> start(long activityId) {
@@ -71,10 +70,40 @@ public class StarService {
         if (list.stream().anyMatch(e -> e.getStarStatus() == StarStatus.ANALYZING)) {
             throw new ApiException(HttpStatus.CONFLICT, "STAR_ANALYZING", "이 활동의 STAR 를 정리하는 중입니다");
         }
-        limiter.consume(userId);
         list.forEach(Experience::startStar);
         experiences.flush();
         return chunks(list.stream().map(Experience::getId).toList());
+    }
+
+    /** 정리 안 한(NONE) 경험이 before 전부터 남은 활동 ID 를 limit 개까지 — 정리 중인 활동은 뺀다(BE#180). */
+    @Transactional(readOnly = true)
+    public List<Long> activitiesToSort(OffsetDateTime before, int limit) {
+        return experiences.findActivitiesToSort(before, PageRequest.of(0, limit));
+    }
+
+    @Transactional(readOnly = true)
+    public long countActivitiesToSort() {
+        return experiences.countActivitiesToSort();
+    }
+
+    /**
+     * BE 가 알아서 하는 정리(BE#180 · ADR-019) — 그 활동의 NONE 경험만 정리 중으로 둔다(이미 정리한 칸은 건드리지 않는다).
+     * 분석 횟수를 세지 않는다. 그새 지워졌거나 누가 정리를 시작했으면 빈 목록.
+     */
+    @Transactional
+    public List<List<Long>> startUnsorted(long activityId) {
+        Optional<Activity> activity = activities.findForUpdate(activityId);
+        if (activity.isEmpty()) {
+            return List.of();
+        }
+        List<Experience> list = activity.get().getExperiences();
+        if (list.stream().anyMatch(e -> e.getStarStatus() == StarStatus.ANALYZING)) {
+            return List.of();
+        }
+        List<Experience> unsorted = list.stream().filter(e -> e.getStarStatus() == StarStatus.NONE).toList();
+        unsorted.forEach(Experience::startStar);
+        experiences.flush();
+        return chunks(unsorted.stream().map(Experience::getId).toList());
     }
 
     /** 경험 ID 를 /star 한 번에 보낼 수 있는 만큼씩 나눈다(ai-api.md — 1 ~ 30개). */
@@ -233,7 +262,7 @@ public class StarService {
                 .forEach(Experience::failStar);
     }
 
-    /** 서버가 꺼지며 끊긴 정리를 실패로 돌린다 — 「다시 정리」를 누를 수 있게. 몇 개인지 돌려준다. */
+    /** 서버가 꺼지며 끊긴 정리를 실패로 돌린다 — 「다시 시도」를 누를 수 있게. 몇 개인지 돌려준다. */
     @Transactional
     public int failInterrupted() {
         return experiences.failInterruptedStar();

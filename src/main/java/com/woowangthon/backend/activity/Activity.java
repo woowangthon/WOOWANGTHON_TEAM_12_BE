@@ -56,12 +56,12 @@ public class Activity {
     @Formula("(select count(*) from experience e where e.activity_id = id)")
     private int experienceCount;
 
-    // STAR 빈칸 수(S-97) — 정리됐거나(READY) 다시 정리할(STALE) 경험의 빈칸만 센다. 저장된 값으로만 센다
+    // STAR 빈칸 수(S-97) — 정리된(READY) 경험의 빈칸만 센다(STALE 은 계약상 같이 세지만 이제 생기지 않는다 — ADR-019). 저장된 값으로만 센다
     @Formula("(select count(*) from experience_star_slot s join experience e on e.id = s.experience_id "
             + "where e.activity_id = id and e.star_status in ('READY', 'STALE') and s.source_id is null)")
     private int starGapCount;
 
-    // 아직 정리 안 했거나 실패했거나 다시 정리할 경험 수 — 「STAR 로 정리」를 보일지
+    // 아직 정리 안 했거나 실패한 경험 수(계약 starUnsortedCount — 화면이 버튼을 띄우는 데 쓰지 않는다)
     @Formula("(select count(*) from experience e where e.activity_id = id "
             + "and e.star_status in ('NONE', 'FAILED', 'STALE'))")
     private int starUnsortedCount;

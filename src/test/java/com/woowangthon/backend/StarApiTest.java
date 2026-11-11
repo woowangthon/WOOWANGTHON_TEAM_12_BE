@@ -24,6 +24,8 @@ import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.InterruptedStarCleaner;
+import com.woowangthon.backend.experience.StarRunner;
+import com.woowangthon.backend.experience.StarSweeper;
 import com.woowangthon.backend.experience.SourceStatus;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
@@ -34,9 +36,11 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,6 +69,9 @@ class StarApiTest {
 
     static final HttpServer FAKE_AI;
     static final List<String> STARRED = new CopyOnWriteArrayList<>();
+    // 동시에 받고 있는 /star 수와 그 최대 — 동시 호출 상한(BE#180) 확인용
+    static final AtomicInteger IN_FLIGHT = new AtomicInteger();
+    static final AtomicInteger MAX_IN_FLIGHT = new AtomicInteger();
     static volatile Function<String, Reply> starReply;
     static volatile String extractReply;
 
@@ -78,7 +85,12 @@ class StarApiTest {
         FAKE_AI.createContext("/star", exchange -> {
             String body = read(exchange);
             STARRED.add(body);
-            send(exchange, starReply.apply(body));
+            MAX_IN_FLIGHT.accumulateAndGet(IN_FLIGHT.incrementAndGet(), Math::max);
+            try {
+                send(exchange, starReply.apply(body));
+            } finally {
+                IN_FLIGHT.decrementAndGet();
+            }
         });
         FAKE_AI.createContext("/extract", exchange -> {
             read(exchange);
@@ -123,6 +135,8 @@ class StarApiTest {
     @Autowired SupplementRepository supplements;
     @Autowired SourceRepository sources;
     @Autowired InterruptedStarCleaner cleaner;
+    @Autowired StarSweeper sweeper;
+    @Autowired StarRunner starRunner;
 
     MockMvc mvc;
     long app;
@@ -138,6 +152,7 @@ class StarApiTest {
     void setUp() {
         mvc = TestLogin.mvc(context);
         STARRED.clear();
+        MAX_IN_FLIGHT.set(0);
         Source source = sources.save(new Source(TestLogin.USER_ID, SourceKind.TEXT, "바꿔요-회고.md",
                 CHAT_QUOTE + "\n" + DEPLOY_QUOTE));
         Activity activity = activities.save(new Activity(TestLogin.USER_ID, "바꿔요 — 캠퍼스 중고거래 앱",
@@ -163,6 +178,7 @@ class StarApiTest {
     void cleanUp() throws Exception {
         // 뒤에서 도는 정리가 남아 있으면 끝날 때까지 기다린다(지운 뒤 저장하지 않게)
         awaitNotAnalyzing();
+        StarIdle.await(starRunner);
         jdbc.update("update app_user set daily_analysis_limit = null where id = ?", TestLogin.USER_ID);
         jdbc.execute("truncate table experience_star_slot, new_fact_candidate, answer_dismissed, answer, answer_draft, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, grounding_sentence_evidence, grounding_sentence, grounding_check, question_recommendation_evidence, question_recommendation, question_requirement, "
                 + "supplement, clarification, question, application_posting_line, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
@@ -231,8 +247,8 @@ class StarApiTest {
                 .containsExactly(chatSupplement);
         assertThat(JsonPath.<String>read(sent, "$.experiences[1].actor")).isEqualTo("TEAM");
 
-        // 분석 1회 · 빈칸 수(채팅 T · R + 배포 S · T · R = 5) · 다 정리됨
-        assertThat(usage()).isEqualTo(1);
+        // 분석 횟수는 세지 않는다(미결정 31) · 빈칸 수(채팅 T · R + 배포 S · T · R = 5) · 다 정리됨
+        assertThat(usage()).isZero();
         mvc.perform(get("/api/activities"))
                 .andExpect(jsonPath("$.activities[0].starGapCount").value(5))
                 .andExpect(jsonPath("$.activities[0].starUnsortedCount").value(0));
@@ -252,12 +268,12 @@ class StarApiTest {
         sort().andExpect(status().isAccepted());
         sort().andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("STAR_ANALYZING"));
         awaitNotAnalyzing();
-        assertThat(usage()).isEqualTo(1);
+        assertThat(usage()).isZero();
 
-        // 한도를 다 썼으면 429 — 아무것도 바꾸지 않는다
-        jdbc.update("update app_user set daily_analysis_limit = 1 where id = ?", TestLogin.USER_ID);
-        sort().andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.error.code").value("DAILY_LIMIT_EXCEEDED"));
-        mvc.perform(get("/api/activities/{id}", app)).andExpect(jsonPath("$.experiences[0].star.status").value("READY"));
+        // 분석 한도를 다 써도 다시 시도할 수 있다 — 횟수를 세지 않는다(ETC#346)
+        jdbc.update("update app_user set daily_analysis_limit = 0 where id = ?", TestLogin.USER_ID);
+        sort().andExpect(status().isAccepted());
+        assertThat(JsonPath.<String>read(awaitNotAnalyzing(), "$.experiences[0].star.status")).isEqualTo("READY");
     }
 
     @Test
@@ -325,10 +341,10 @@ class StarApiTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"answer\":\"남의 답\"}"))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.error.code").value("EXPERIENCE_NOT_FOUND"));
 
-        // 새로고침해도 남고, 분석 횟수는 정리 1회뿐
+        // 새로고침해도 남고, 분석 횟수는 쓰지 않는다
         mvc.perform(get("/api/activities/{id}", app))
                 .andExpect(jsonPath("$.experiences[0].star.slots[1].sourceType").value("SUPPLEMENT"));
-        assertThat(usage()).isEqualTo(1);
+        assertThat(usage()).isZero();
     }
 
     @Test
@@ -366,9 +382,15 @@ class StarApiTest {
     }
 
     @Test
-    void 근거_보완이_바뀌면_다시_정리할_거리가_된다() throws Exception {
+    void 근거_보완이_바뀌어도_다시_정리하지_않고_칸만_맞춘다() throws Exception {
+        // 채팅 T 를 근거로 채운 응답(수행 주체 ME)
+        starReply = body -> new Reply(200, contractReply().replace(
+                "{\"slot\":\"T\",\"sourceType\":null,\"sourceId\":null,\"text\":null,\"question\":\"이 문제를 고치는 일은 누가 맡았나요?\"}",
+                "{\"slot\":\"T\",\"sourceType\":\"CITATION\",\"sourceId\":" + chatCitation
+                        + ",\"text\":\"내가 폴링을 WebSocket 으로 바꿔 해결했다\",\"question\":null}"), 0);
         sort();
         awaitNotAnalyzing();
+        int calls = STARRED.size();
 
         // 보완 전부를 가리키는 칸 — 보완을 고치면 칸이 따라가고 READY 그대로
         patchSupplement(chatSupplement, "WebSocket 으로 바꿨다");
@@ -376,26 +398,30 @@ class StarApiTest {
                 .andExpect(jsonPath("$.experiences[0].star.status").value("READY"))
                 .andExpect(jsonPath("$.experiences[0].star.slots[2].text").value("WebSocket 으로 바꿨다"));
 
-        // 보완 지우기 — 그 칸은 빈칸, 경험은 STALE
+        // 보완 지우기 — 그 칸은 빈칸, 경험은 READY 그대로
         mvc.perform(delete("/api/supplements/{id}", chatSupplement)).andExpect(status().isNoContent());
         mvc.perform(get("/api/activities/{id}", app))
-                .andExpect(jsonPath("$.experiences[0].star.status").value("STALE"))
+                .andExpect(jsonPath("$.experiences[0].star.status").value("READY"))
                 .andExpect(jsonPath("$.experiences[0].star.slots[2].sourceType").value(nullValue()));
         mvc.perform(get("/api/activities"))
-                .andExpect(jsonPath("$.activities[0].starUnsortedCount").value(1))
-                .andExpect(jsonPath("$.activities[0].starGapCount").value(6));
+                .andExpect(jsonPath("$.activities[0].starUnsortedCount").value(0))
+                .andExpect(jsonPath("$.activities[0].starGapCount").value(5));
 
-        // 수행 주체가 ME 에서 바뀌면 STALE — 배포(TEAM)는 ME 로 바꿔도 그대로
-        mvc.perform(patch("/api/experiences/{id}", deploy).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"actor\":\"ME\"}")).andExpect(status().isOk());
-        mvc.perform(get("/api/activities/{id}", app)).andExpect(jsonPath("$.experiences[1].star.status").value("READY"));
-        mvc.perform(patch("/api/experiences/{id}", deploy).contentType(MediaType.APPLICATION_JSON)
+        // 수행 주체가 ME 에서 바뀌면 근거로 찬 T 칸만 빈칸 — S(근거)는 그대로, 상태도 그대로
+        mvc.perform(patch("/api/experiences/{id}", chat).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"actor\":\"TEAM\"}")).andExpect(status().isOk());
-        mvc.perform(get("/api/activities/{id}", app)).andExpect(jsonPath("$.experiences[1].star.status").value("STALE"));
+        mvc.perform(get("/api/activities/{id}", app))
+                .andExpect(jsonPath("$.experiences[0].star.status").value("READY"))
+                .andExpect(jsonPath("$.experiences[0].star.slots[0].sourceType").value("CITATION"))
+                .andExpect(jsonPath("$.experiences[0].star.slots[1].sourceType").value(nullValue()));
+
+        // 알아서 정리도 READY 경험은 건드리지 않는다 — AI 를 다시 부르지 않았다
+        assertThat(sweeper.sweep(OffsetDateTime.now().plusSeconds(1))).isZero();
+        assertThat(STARRED).hasSize(calls);
     }
 
     @Test
-    void 보완_일부를_가리키던_칸은_보완을_고치면_STALE() throws Exception {
+    void 보완_일부를_가리키던_칸은_그_글이_남으면_그대로_사라지면_빈칸() throws Exception {
         starReply = body -> new Reply(200, contractReply().replace(
                 "\"text\":\"서버에 STOMP 엔드포인트를 만들고, 앱의 3초 폴링 코드를 구독 방식으로 바꿨다\"",
                 "\"text\":\"서버에 STOMP 엔드포인트를 만들고\""), 0);
@@ -403,12 +429,16 @@ class StarApiTest {
         awaitNotAnalyzing();
         patchSupplement(chatSupplement, "서버에 STOMP 엔드포인트를 만들고, 앱은 그대로 뒀다");
         mvc.perform(get("/api/activities/{id}", app))
-                .andExpect(jsonPath("$.experiences[0].star.status").value("STALE"))
+                .andExpect(jsonPath("$.experiences[0].star.status").value("READY"))
                 .andExpect(jsonPath("$.experiences[0].star.slots[2].text").value("서버에 STOMP 엔드포인트를 만들고"));
+        patchSupplement(chatSupplement, "앱만 구독 방식으로 바꿨다");
+        mvc.perform(get("/api/activities/{id}", app))
+                .andExpect(jsonPath("$.experiences[0].star.status").value("READY"))
+                .andExpect(jsonPath("$.experiences[0].star.slots[2].sourceType").value(nullValue()));
     }
 
     @Test
-    void 경험을_옮기면_칸이_따라가고_합치면_남길_경험이_STALE() throws Exception {
+    void 경험을_옮기면_칸이_따라가고_합치면_남길_경험의_칸이_남는다() throws Exception {
         sort();
         awaitNotAnalyzing();
         long other = activities.save(new Activity(TestLogin.USER_ID, "다른 활동", new Period(null, null, false))).getId();
@@ -424,7 +454,8 @@ class StarApiTest {
                 .content("{\"fromExperienceId\":" + deploy + "}")).andExpect(status().isOk());
         mvc.perform(get("/api/activities/{id}", app))
                 .andExpect(jsonPath("$.experiences.length()").value(1))
-                .andExpect(jsonPath("$.experiences[0].star.status").value("STALE"));
+                .andExpect(jsonPath("$.experiences[0].star.status").value("READY"))
+                .andExpect(jsonPath("$.experiences[0].star.slots[0].sourceId").value(chatCitation));
         assertThat(jdbc.queryForObject("select count(*) from experience_star_slot where experience_id = ?",
                 Integer.class, deploy)).isZero();
 
@@ -480,6 +511,58 @@ class StarApiTest {
         assertThat(JsonPath.<String>read(job, "$.status")).isEqualTo("COMPLETED");
         long club = ((Number) JsonPath.<List<Number>>read(job, "$.activityIds").getFirst()).longValue();
         assertThat(JsonPath.<String>read(awaitNotAnalyzing(club), "$.experiences[0].star.status")).isEqualTo("FAILED");
+    }
+
+    @Test
+    void 정리_안_한_경험은_알아서_정리된다_횟수_없이_새_경험만() throws Exception {
+        starReply = body -> new Reply(200, emptyReply(body), 0);
+        // 막 생긴 경험은 조금 둔다 — before 보다 늦게 생겼으면 맡기지 않는다
+        assertThat(sweeper.sweep(OffsetDateTime.now().minusMinutes(1))).isZero();
+
+        assertThat(sweeper.sweep(OffsetDateTime.now().plusSeconds(1))).isEqualTo(1);
+        String done = awaitNotAnalyzing();
+        assertThat(JsonPath.<List<String>>read(done, "$.experiences[*].star.status")).containsExactly("READY", "READY");
+        assertThat(usage()).isZero();
+
+        // 나중에 직접 기록한 경험 — 그 경험만 보낸다(이미 정리한 칸은 그대로)
+        Activity activity = activities.findById(app).orElseThrow();
+        long added = experiences.save(new Experience(activity, "발표 자료를 만들었다", List.of(), CompetenciesBy.USER,
+                Actor.ME, SourceStatus.USER_ENTERED, 2)).getId();
+        assertThat(sweeper.sweep(OffsetDateTime.now().plusSeconds(1))).isEqualTo(1);
+        awaitNotAnalyzing();
+        assertThat(JsonPath.<List<Number>>read(STARRED.getLast(), "$.experiences[*].id")).extracting(Number::longValue)
+                .containsExactly(added);
+        assertThat(sweeper.sweep(OffsetDateTime.now().plusSeconds(1))).isZero();
+    }
+
+    @Test
+    void 알아서_정리는_동시에_둘까지만_부른다() throws Exception {
+        for (int i = 0; i < 5; i++) {
+            Activity a = activities.save(new Activity(TestLogin.USER_ID, "활동 " + i, new Period(null, null, false)));
+            experiences.save(new Experience(a, "한 일 " + i, List.of(), CompetenciesBy.USER, Actor.ME,
+                    SourceStatus.USER_ENTERED, 0));
+        }
+        starReply = body -> new Reply(200, emptyReply(body), 200);
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (jdbc.queryForObject("select count(*) from experience where star_status <> 'READY'", Integer.class) > 0) {
+            assertThat(System.currentTimeMillis()).isLessThan(deadline);
+            sweeper.sweep(OffsetDateTime.now().plusSeconds(1));
+            Thread.sleep(20);
+        }
+        assertThat(STARRED).hasSize(6);
+        assertThat(MAX_IN_FLIGHT.get()).isEqualTo(StarRunner.MAX_CONCURRENT);
+    }
+
+    // 받은 경험마다 네 칸 모두 빈칸
+    private static String emptyReply(String body) {
+        String slots = """
+                [{"slot":"S","sourceType":null,"sourceId":null,"text":null,"question":null},
+                 {"slot":"T","sourceType":null,"sourceId":null,"text":null,"question":null},
+                 {"slot":"A","sourceType":null,"sourceId":null,"text":null,"question":null},
+                 {"slot":"R","sourceType":null,"sourceId":null,"text":null,"question":null}]""";
+        List<String> items = JsonPath.<List<Number>>read(body, "$.experiences[*].id").stream()
+                .map(id -> "{\"id\":" + id.longValue() + ",\"slots\":" + slots + "}").toList();
+        return "{\"experiences\":[" + String.join(",", items) + "],\"model\":\"test-model\"}";
     }
 
     private ResultActions sort() throws Exception {

@@ -25,7 +25,7 @@ public class StarController {
         this.activities = activities;
     }
 
-    /** 「STAR 로 정리」 · 「다시 정리」 — 정리 중인 활동 세부를 먼저 읽고 나서 뒤에서 돌린다. */
+    /** 실패한 정리 「다시 시도」(분석 횟수 안 셈) — 정리 중인 활동 세부를 먼저 읽고 나서 뒤에서 돌린다. */
     @PostMapping("/api/activities/{activityId}/star")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public ActivityResponses.Detail sort(@PathVariable long activityId) {

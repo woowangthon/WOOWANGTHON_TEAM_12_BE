@@ -6,7 +6,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
-/** 서버가 STAR 정리 도중 꺼지면 경험이 「정리 중」에 멈춘다. 시작할 때 실패로 돌려 「다시 정리」할 수 있게 한다(서버 한 대 — ADR-004). */
+/** 서버가 STAR 정리 도중 꺼지면 경험이 「정리 중」에 멈춘다. 시작할 때 실패로 돌려 「다시 시도」할 수 있게 한다(서버 한 대 — ADR-004). */
 @Component
 public class InterruptedStarCleaner implements ApplicationRunner {
 
