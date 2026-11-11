@@ -2,7 +2,9 @@ package com.woowangthon.backend.experience;
 
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.question.Question;
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -99,6 +101,15 @@ public class Experience {
     @Column(nullable = false)
     private boolean saved;
 
+    // STAR 정리 상태 · 칸(S-95 · ETC#327). 칸은 READY 가 된 적이 있을 때만 넷이 있다 — 다시 정리하는 동안 · 실패해도 앞 칸은 남는다
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private StarStatus starStatus = StarStatus.NONE;
+
+    @ElementCollection
+    @CollectionTable(name = "experience_star_slot", joinColumns = @JoinColumn(name = "experience_id"))
+    private List<StarSlot> starSlots = new ArrayList<>();
+
     // 수행 주체가 UNKNOWN 에서 처음 정해진 시각(S-77) — 그 뒤 다시 만든 초안은 세지 않는다. 한 번 채우면 덮지 않는다
     private OffsetDateTime actorDecidedAt;
 
@@ -165,6 +176,10 @@ public class Experience {
     // 처음 정하거나 바꾼 때만 시각을 남긴다(ME↔TEAM 포함, S-77) — 바꿨다 되돌려 무료 다시 만들기를 거듭 받지 않게.
     // 외부 AI 되돌리기의 「사용자가 손댄 경험」에도 쓴다
     private void changeActor(Actor newActor) {
+        // T(내 몫) 칸 규칙이 수행 주체에 따라 달라진다(계약 「다른 동작과의 관계」)
+        if (actor == Actor.ME && newActor != Actor.ME) {
+            markStarStale();
+        }
         if (newActor != actor && newActor != Actor.UNKNOWN && actorDecidedAt == null) {
             actorDecidedAt = OffsetDateTime.now();
         }
@@ -217,6 +232,89 @@ public class Experience {
         sourceStatus = SourceStatus.USER_ENTERED;
         mcpChangeId = null;
         mcpClient = null;
+    }
+
+    /** STAR 정리를 시작한다 — 앞 칸은 끝날 때까지 남겨 두고(실패하면 그대로 보인다) 응답엔 싣지 않는다. */
+    public void startStar() {
+        starStatus = StarStatus.ANALYZING;
+    }
+
+    /** STAR 정리 결과(S · T · A · R 넷)로 칸을 통째로 바꾼다. */
+    public void completeStar(List<StarSlot> slots) {
+        starSlots.clear();
+        starSlots.addAll(slots);
+        starStatus = StarStatus.READY;
+    }
+
+    /** STAR 정리 실패 — 앞 칸은 그대로. */
+    public void failStar() {
+        starStatus = StarStatus.FAILED;
+    }
+
+    /** 정리한 뒤 근거 · 보완이 바뀌었다 — 「다시 정리」. 정리된 적 없거나 정리 중 · 실패면 그대로다. 몰래 다시 부르지 않는다. */
+    public void markStarStale() {
+        if (starStatus == StarStatus.READY) {
+            starStatus = StarStatus.STALE;
+        }
+    }
+
+    /** 칸이 있나 — NONE · ANALYZING 이거나 정리된 적이 없으면 없다(계약 STAR_NOT_READY). */
+    public boolean hasStarSlots() {
+        return starStatus != StarStatus.NONE && starStatus != StarStatus.ANALYZING && !starSlots.isEmpty();
+    }
+
+    /** 칸 하나를 갈아 끼운다. */
+    public void replaceStarSlot(StarSlot slot) {
+        for (int i = 0; i < starSlots.size(); i++) {
+            if (starSlots.get(i).getSlot() == slot.getSlot()) {
+                starSlots.set(i, slot);
+                return;
+            }
+        }
+        starSlots.add(slot);
+    }
+
+    /** 칸이 가리키던 보완이 지워졌다 — 그 칸은 빈칸(질문은 남는다)이고 다시 정리할 거리다. */
+    public void onSupplementDeleted(long supplementId) {
+        boolean touched = false;
+        for (StarSlot slot : List.copyOf(starSlots)) {
+            if (slot.points(StarSourceType.SUPPLEMENT, supplementId)) {
+                replaceStarSlot(slot.cleared());
+                touched = true;
+            }
+        }
+        if (touched) {
+            markStarStale();
+        }
+    }
+
+    /**
+     * 칸이 가리키는 보완의 답이 바뀌었다 — 답 전부를 가리키던 칸은 새 답을 따르고, 일부를 가리키던 칸은 「다시 정리」.
+     * 일부가 새 답에서 사라졌으면 그 칸은 빈칸이다(칸 글은 늘 출처 글에 적혀 있다 — S-95). except 칸은 부르는 쪽이 채운다.
+     */
+    public void onSupplementChanged(long supplementId, String oldAnswer, String newAnswer, StarSlotName except) {
+        Supplement supplement = supplements.stream().filter(s -> s.getId() == supplementId).findFirst().orElse(null);
+        for (StarSlot slot : List.copyOf(starSlots)) {
+            if (slot.getSlot() == except || !slot.points(StarSourceType.SUPPLEMENT, supplementId)) {
+                continue;
+            }
+            if (StarText.normalize(slot.getText()).equals(StarText.normalize(oldAnswer)) && supplement != null) {
+                replaceStarSlot(slot.pointingTo(supplement, newAnswer));
+                continue;
+            }
+            if (!StarText.contains(newAnswer, slot.getText())) {
+                replaceStarSlot(slot.cleared());
+            }
+            markStarStale();
+        }
+    }
+
+    public StarStatus getStarStatus() {
+        return starStatus;
+    }
+
+    public List<StarSlot> getStarSlots() {
+        return starSlots;
     }
 
     /** 확정 답에서 왔다고 표시한다 — 만들 때 한 번만. */

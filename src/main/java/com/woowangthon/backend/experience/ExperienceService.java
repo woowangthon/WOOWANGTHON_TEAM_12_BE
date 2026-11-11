@@ -241,10 +241,17 @@ public class ExperienceService {
         experiences.flush();
         merger.repoint(keepId, fromId);
         // 근거 · 보완은 이미 keep 으로 옮겼다 — 지울 때 같이 지워지지 않게 SQL 로 from 한 줄만 지운다
+        // 지울 경험의 STAR 칸은 같이 사라진다(외래 키가 없어 직접 지운다)
+        em.createNativeQuery("delete from experience_star_slot where experience_id = :id").setParameter("id", fromId)
+                .executeUpdate();
         em.createNativeQuery("delete from experience where id = :id").setParameter("id", fromId).executeUpdate();
         // SQL 로 바뀐 것을 다시 읽는다
         em.clear();
-        return ExperienceResponse.from(findOwned(keepId));
+        Experience merged = findOwned(keepId);
+        // 근거 · 보완이 늘었다 — 남길 경험은 「다시 정리」(S-96)
+        merged.markStarStale();
+        experiences.flush();
+        return ExperienceResponse.from(merged);
     }
 
     private Experience lockOwned(long experienceId) {

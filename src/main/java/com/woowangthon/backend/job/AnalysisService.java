@@ -20,6 +20,7 @@ import com.woowangthon.backend.experience.CitationRepository;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.experience.SourceStatus;
+import com.woowangthon.backend.experience.StarService;
 import com.woowangthon.backend.source.SectionKind;
 import com.woowangthon.backend.source.Source;
 import com.woowangthon.backend.source.SourceHash;
@@ -245,8 +246,12 @@ public class AnalysisService {
      * 계약을 벗어난 칸이 하나라도 있으면 아무것도 남기지 않고 AiCallException(AI_FAILED)을 던진다.
      * 자료 더하기(S-60)면 대상과 같다고 한 활동은 새로 만들지 않고 대상에 바로 붙인다. 대상이 그새 사라졌으면 보통 자료 넣기처럼 끝낸다.
      */
+    /** 작업이 만든 활동들과, 이어서 STAR 를 정리할 새 경험 ID(활동마다 · /star 한 번에 보낼 만큼씩). */
+    public record Completed(List<Long> activityIds, List<List<Long>> starGroups) {
+    }
+
     @Transactional
-    public List<Long> complete(long jobId, ExtractRequest request, ExtractResponse result) {
+    public Completed complete(long jobId, ExtractRequest request, ExtractResponse result) {
         AnalysisJob job = jobs.findById(jobId).orElseThrow();
         Source source = job.getSource();
         if (result.activities() == null) {
@@ -258,12 +263,13 @@ public class AnalysisService {
         Activity target = target(request.targetActivityId(), job.getUserId());
         boolean matched = false;
         List<Long> activityIds = new ArrayList<>();
+        List<List<Long>> starGroups = new ArrayList<>();
         for (ExtractResponse.ActivityResult a : result.activities()) {
             Long sameAs = sameAs(a.sameAsActivityId(), sent, job.getUserId());
             String name = required(a.name(), "activities[].name");
             Period period = period(a.period());
             if (target != null && target.getId().equals(sameAs)) {
-                attach(target, a, source);
+                starGroups.addAll(StarService.chunks(attach(target, a, source)));
                 matched = true;
                 continue;
             }
@@ -273,22 +279,26 @@ public class AnalysisService {
             activity.categorizeByAi(category(a.category()));
 
             List<ExtractResponse.ExperienceResult> extracted = a.experiences() == null ? List.of() : a.experiences();
+            List<Long> created = new ArrayList<>();
             for (int position = 0; position < extracted.size(); position++) {
-                saveExperience(activity, position, extracted.get(position), source);
+                created.add(saveExperience(activity, position, extracted.get(position), source));
             }
+            starGroups.addAll(StarService.chunks(created));
         }
         job.complete(activityIds, job.getTargetActivityId() == null ? null : matched);
-        return activityIds;
+        return new Completed(activityIds, starGroups);
     }
 
     // 결과는 합치기(S-13)와 같다 — 대상의 이름 · 기간 · 계기는 그대로, 경험은 뒤에 AI 가 준 순서로, 미분류면 분류를 가져온다
-    private void attach(Activity target, ExtractResponse.ActivityResult a, Source source) {
+    private List<Long> attach(Activity target, ExtractResponse.ActivityResult a, Source source) {
         target.categorizeByAiIfNone(category(a.category()));
         int position = experiences.findLastPosition(target.getId()) + 1;
         List<ExtractResponse.ExperienceResult> extracted = a.experiences() == null ? List.of() : a.experiences();
+        List<Long> created = new ArrayList<>();
         for (ExtractResponse.ExperienceResult e : extracted) {
-            saveExperience(target, position++, e, source);
+            created.add(saveExperience(target, position++, e, source));
         }
+        return created;
     }
 
     /** 끝난 작업의 사용자에게 돌아가는 분석이 없으면 다음 QUEUED 를 시작한다(S-59). 돌릴 작업 ID 를 돌려준다. */
@@ -332,18 +342,22 @@ public class AnalysisService {
         jobs.findById(jobId).orElseThrow().fail(code, message);
     }
 
-    private void saveExperience(Activity activity, int position, ExtractResponse.ExperienceResult e, Source source) {
+    // 새 경험은 STAR 정리 중으로 시작한다 — 작업이 끝난 뒤 이어서 정리한다(S-95 · 횟수 안 셈)
+    private long saveExperience(Activity activity, int position, ExtractResponse.ExperienceResult e, Source source) {
         List<ExtractResponse.CitationResult> found = e.citations() == null ? List.of() : e.citations();
         SourceStatus status = sourceStatus(e.sourceStatus(), found);
 
-        Experience experience = experiences.save(new Experience(activity, required(e.content(), "experiences[].content"),
-                competencies(e.competencies()), CompetenciesBy.AI, actor(e.actor()), status, position));
+        Experience created = new Experience(activity, required(e.content(), "experiences[].content"),
+                competencies(e.competencies()), CompetenciesBy.AI, actor(e.actor()), status, position);
+        created.startStar();
+        Experience experience = experiences.save(created);
         for (ExtractResponse.CitationResult c : found) {
             ExtractResponse.LocationResult location = c.location();
             citations.save(new Citation(experience, source, required(c.quote(), "citations[].quote"), c.matched(),
                     location == null ? null : location.startLine(),
                     location == null ? null : location.endLine()));
         }
+        return experience.getId();
     }
 
     // ai-api.md 「응답 규칙」: 근거가 1개 이상이고 전부 matched: true 일 때만 SOURCE_CONFIRMED.
