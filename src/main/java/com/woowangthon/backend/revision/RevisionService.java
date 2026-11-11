@@ -86,9 +86,9 @@ public class RevisionService {
     private record Cursor(String at, long id) {
     }
 
-    /** 새것 먼저. targetType · targetId 를 둘 다 주면 그 항목만, 둘 다 빼면 전체. */
+    /** 새것 먼저. targetType · targetId 를 둘 다 주면 그 항목만, activityId 면 그 활동과 지금 속한 경험(BE#168), 다 빼면 전체. */
     @Transactional(readOnly = true)
-    public Page list(String targetType, Long targetId, String cursor, Integer limitParam) {
+    public Page list(String targetType, Long targetId, Long activityId, String cursor, Integer limitParam) {
         long userId = CurrentUser.id();
         int limit = limitParam == null ? DEFAULT_LIMIT : limitParam;
         if (limit < 1 || limit > MAX_LIMIT) {
@@ -97,16 +97,23 @@ public class RevisionService {
         if ((targetType == null) != (targetId == null)) {
             throw ApiException.invalidRequest("targetType 과 targetId 는 함께 보내야 합니다");
         }
+        if (activityId != null && targetType != null) {
+            throw ApiException.invalidRequest("activityId 는 targetType · targetId 와 함께 보낼 수 없습니다");
+        }
         RevisionTargetType type = targetType == null ? null : parseType(targetType);
         Cursor from = cursor == null ? null : decode(cursor);
         if (type != null) {
             requireOwned(userId, type, targetId);
         }
+        if (activityId != null) {
+            requireOwned(userId, RevisionTargetType.ACTIVITY, activityId);
+        }
 
         OffsetDateTime at = from == null ? FAR_FUTURE : Instant.parse(from.at()).atOffset(ZoneOffset.UTC);
         long id = from == null ? Long.MAX_VALUE : from.id();
         // 하나 더 읽어 다음 쪽이 있는지 안다
-        List<Revision> found = type == null ? revisions.recent(userId, at, id, Limit.of(limit + 1))
+        List<Revision> found = activityId != null ? revisions.ofActivity(userId, activityId, at, id, Limit.of(limit + 1))
+                : type == null ? revisions.recent(userId, at, id, Limit.of(limit + 1))
                 : revisions.ofTarget(userId, type, targetId, at, id, Limit.of(limit + 1));
         boolean more = found.size() > limit;
         List<Revision> shown = more ? found.subList(0, limit) : found;

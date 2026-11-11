@@ -285,6 +285,55 @@ class RevisionApiTest {
     }
 
     @Test
+    void 활동으로_보면_그_활동과_지금_속한_경험의_기록이_섞여_새것_먼저() throws Exception {
+        Activity other = activities.saveAndFlush(new Activity(userId, "다른 활동", new Period(null, null, false)));
+        // 같은 활동에 경험을 하나 더 — 직접 추가는 이력을 남기지 않는다(계약 「남기지 않는 것」)
+        String added = web.perform(post("/api/activities/{id}/experiences", activityId)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"content\":\"같은 활동의 두 번째 경험\",\"actor\":\"ME\"}"))
+                .andExpect(status().is2xxSuccessful()).andReturn().getResponse().getContentAsString();
+        long second = ((Number) JsonPath.read(added, "$.id")).longValue();
+        patchExperience(experienceId, "{\"content\":\"첫 번째\"}");
+        patchActivity(activityId, "{\"name\":\"두 번째\"}");
+        patchExperience(second, "{\"content\":\"세 번째\"}");
+        // 다른 활동의 기록은 섞이지 않는다
+        patchActivity(other.getId(), "{\"name\":\"다른 활동 고침\"}");
+
+        String first = web.perform(get("/api/revisions?activityId={id}&limit=2", activityId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revisions.length()").value(2))
+                .andExpect(jsonPath("$.revisions[0].after.content").value("세 번째"))
+                .andExpect(jsonPath("$.revisions[1].after.name").value("두 번째"))
+                .andExpect(jsonPath("$.nextCursor").isString())
+                .andReturn().getResponse().getContentAsString();
+        web.perform(get("/api/revisions").param("activityId", String.valueOf(activityId)).param("limit", "2")
+                        .param("cursor", (String) JsonPath.read(first, "$.nextCursor")))
+                .andExpect(jsonPath("$.revisions.length()").value(1))
+                .andExpect(jsonPath("$.revisions[0].after.content").value("첫 번째"))
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()));
+
+        // 옮긴 경험의 기록은 옮겨 간 활동에서 보인다(지금 소속 기준)
+        web.perform(post("/api/experiences/{id}/move", experienceId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"toActivityId\":" + other.getId() + "}")).andExpect(status().isOk());
+        web.perform(get("/api/revisions?activityId={id}", activityId))
+                .andExpect(jsonPath("$.revisions.length()").value(2))
+                .andExpect(jsonPath("$.revisions[*].after.content", not(hasItem("첫 번째"))));
+        web.perform(get("/api/revisions?activityId={id}", other.getId()))
+                .andExpect(jsonPath("$.revisions.length()").value(2))
+                .andExpect(jsonPath("$.revisions[0].after.name").value("다른 활동 고침"))
+                .andExpect(jsonPath("$.revisions[1].after.content").value("첫 번째"));
+    }
+
+    @Test
+    void 활동으로_볼_때_항목과_같이_주면_400_남의_활동은_404() throws Exception {
+        expectError(web.perform(get("/api/revisions?activityId={id}&targetType=ACTIVITY&targetId={id}", activityId,
+                activityId)), 400, "INVALID_REQUEST");
+        long otherId = users.save(new AppUser("other2", "hash", null)).getId();
+        Activity theirs = activities.saveAndFlush(new Activity(otherId, "남의 활동", new Period(null, null, false)));
+        expectError(web.perform(get("/api/revisions?activityId={id}", theirs.getId())), 404, "ACTIVITY_NOT_FOUND");
+        expectError(web.perform(get("/api/revisions?activityId=999999")), 404, "ACTIVITY_NOT_FOUND");
+    }
+
+    @Test
     void 잘못된_요청은_400() throws Exception {
         expectError(web.perform(get("/api/revisions?targetType=EXPERIENCE")), 400, "INVALID_REQUEST");
         expectError(web.perform(get("/api/revisions?targetId=1")), 400, "INVALID_REQUEST");
