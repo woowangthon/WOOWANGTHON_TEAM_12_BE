@@ -176,9 +176,13 @@ public class Experience {
     // 처음 정하거나 바꾼 때만 시각을 남긴다(ME↔TEAM 포함, S-77) — 바꿨다 되돌려 무료 다시 만들기를 거듭 받지 않게.
     // 외부 AI 되돌리기의 「사용자가 손댄 경험」에도 쓴다
     private void changeActor(Actor newActor) {
-        // T(내 몫) 칸 규칙이 수행 주체에 따라 달라진다(계약 「다른 동작과의 관계」)
+        // 나 말고는 T(내 몫)를 원문 근거로 채우지 않는다 — 다시 정리하지 않고 그 칸만 비운다(계약 「다른 동작과의 관계」 · ADR-019)
         if (actor == Actor.ME && newActor != Actor.ME) {
-            markStarStale();
+            for (StarSlot slot : List.copyOf(starSlots)) {
+                if (slot.getSlot() == StarSlotName.T && slot.getSourceType() == StarSourceType.CITATION) {
+                    replaceStarSlot(slot.cleared());
+                }
+            }
         }
         if (newActor != actor && newActor != Actor.UNKNOWN && actorDecidedAt == null) {
             actorDecidedAt = OffsetDateTime.now();
@@ -251,13 +255,6 @@ public class Experience {
         starStatus = StarStatus.FAILED;
     }
 
-    /** 정리한 뒤 근거 · 보완이 바뀌었다 — 「다시 정리」. 정리된 적 없거나 정리 중 · 실패면 그대로다. 몰래 다시 부르지 않는다. */
-    public void markStarStale() {
-        if (starStatus == StarStatus.READY) {
-            starStatus = StarStatus.STALE;
-        }
-    }
-
     /** 칸이 있나 — NONE · ANALYZING 이거나 정리된 적이 없으면 없다(계약 STAR_NOT_READY). */
     public boolean hasStarSlots() {
         return starStatus != StarStatus.NONE && starStatus != StarStatus.ANALYZING && !starSlots.isEmpty();
@@ -274,23 +271,18 @@ public class Experience {
         starSlots.add(slot);
     }
 
-    /** 칸이 가리키던 보완이 지워졌다 — 그 칸은 빈칸(질문은 남는다)이고 다시 정리할 거리다. */
+    /** 칸이 가리키던 보완이 지워졌다 — 그 칸은 빈칸(질문은 남는다). 다시 정리하지 않는다(ADR-019). */
     public void onSupplementDeleted(long supplementId) {
-        boolean touched = false;
         for (StarSlot slot : List.copyOf(starSlots)) {
             if (slot.points(StarSourceType.SUPPLEMENT, supplementId)) {
                 replaceStarSlot(slot.cleared());
-                touched = true;
             }
-        }
-        if (touched) {
-            markStarStale();
         }
     }
 
     /**
-     * 칸이 가리키는 보완의 답이 바뀌었다 — 답 전부를 가리키던 칸은 새 답을 따르고, 일부를 가리키던 칸은 「다시 정리」.
-     * 일부가 새 답에서 사라졌으면 그 칸은 빈칸이다(칸 글은 늘 출처 글에 적혀 있다 — S-95). except 칸은 부르는 쪽이 채운다.
+     * 칸이 가리키는 보완의 답이 바뀌었다 — 답 전부를 가리키던 칸은 새 답을 따르고, 일부를 가리키던 칸은 그 글이 새 답에 남아 있으면
+     * 그대로, 사라졌으면 빈칸이다(칸 글은 늘 출처 글에 적혀 있다 — S-95). 다시 정리하지 않는다(ADR-019). except 칸은 부르는 쪽이 채운다.
      */
     public void onSupplementChanged(long supplementId, String oldAnswer, String newAnswer, StarSlotName except) {
         Supplement supplement = supplements.stream().filter(s -> s.getId() == supplementId).findFirst().orElse(null);
@@ -305,7 +297,6 @@ public class Experience {
             if (!StarText.contains(newAnswer, slot.getText())) {
                 replaceStarSlot(slot.cleared());
             }
-            markStarStale();
         }
     }
 

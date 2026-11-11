@@ -247,10 +247,8 @@ public class ExperienceService {
         em.createNativeQuery("delete from experience where id = :id").setParameter("id", fromId).executeUpdate();
         // SQL 로 바뀐 것을 다시 읽는다
         em.clear();
+        // 남길 경험의 STAR 칸은 그대로 — 늘어난 근거 · 보완으로 다시 정리하지 않는다(ADR-019). 정리 전(NONE)이면 StarSweeper 가 정리한다
         Experience merged = findOwned(keepId);
-        // 근거 · 보완이 늘었다 — 남길 경험은 「다시 정리」(S-96)
-        merged.markStarStale();
-        experiences.flush();
         return ExperienceResponse.from(merged);
     }
 

@@ -1,9 +1,11 @@
 package com.woowangthon.backend.experience;
 
 import jakarta.persistence.LockModeType;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -53,6 +55,18 @@ public interface ExperienceRepository extends JpaRepository<Experience, Long> {
     @Query("update Experience e set e.starStatus = com.woowangthon.backend.experience.StarStatus.FAILED "
             + "where e.starStatus = com.woowangthon.backend.experience.StarStatus.ANALYZING")
     int failInterruptedStar();
+
+    // 정리 안 한(NONE) 경험이 before 전부터 남아 있고, 지금 정리 중인 경험은 없는 활동 — 오래된 활동부터(BE#180 StarSweeper)
+    @Query("select distinct e.activity.id from Experience e "
+            + "where e.starStatus = com.woowangthon.backend.experience.StarStatus.NONE and e.createdAt < :before "
+            + "and not exists (select 1 from Experience x where x.activity = e.activity "
+            + "and x.starStatus = com.woowangthon.backend.experience.StarStatus.ANALYZING) "
+            + "order by e.activity.id")
+    List<Long> findActivitiesToSort(OffsetDateTime before, Pageable page);
+
+    @Query("select count(distinct e.activity.id) from Experience e "
+            + "where e.starStatus = com.woowangthon.backend.experience.StarStatus.NONE")
+    long countActivitiesToSort();
 
     // 활동의 경험 맨 뒤 자리 — 경험이 없으면 -1
     @Query("select coalesce(max(e.position), -1) from Experience e where e.activity.id = :activityId")
