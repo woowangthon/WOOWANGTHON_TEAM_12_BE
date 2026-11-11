@@ -1023,11 +1023,12 @@ class QuestionApiTest {
                 .andExpect(jsonPath("$.organizationType").value(nullValue()))
                 .andExpect(jsonPath("$.jobRole").value(nullValue()));
 
-        // 매칭 요청에는 종류 · 직무가 없다(S-42) — PATCH 로도 다시 돌지 않았다
+        // 매칭 요청에 종류는 없고, 직무는 있을 때만 맥락으로 실린다(S-42 · ETC#326) — PATCH 로도 다시 돌지 않았다
         assertThat(RECEIVED).hasSize(3);
         assertThat(RECEIVED).allSatisfy(sent -> assertThat(sent)
-                .doesNotContain("organizationType").doesNotContain("jobRole")
-                .doesNotContain("BOOTCAMP").doesNotContain("CLUB").doesNotContain("BACKEND"));
+                .doesNotContain("organizationType").doesNotContain("BOOTCAMP").doesNotContain("CLUB"));
+        assertThat(RECEIVED).filteredOn(sent -> sent.contains("\"jobRole\":\"BACKEND\"")).hasSize(1);
+        assertThat(RECEIVED).filteredOn(sent -> sent.contains("jobRole")).hasSize(1);
     }
 
     @Test

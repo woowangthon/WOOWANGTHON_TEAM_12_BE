@@ -35,10 +35,12 @@ public class ApplicationService {
     private final DraftRepository drafts;
     private final GroundingCheckRepository groundingChecks;
     private final AnswerRepository answers;
+    private final PostingMatchService postingMatches;
 
     public ApplicationService(ApplicationRepository applications, QuestionRepository questions, UsageLimiter limiter,
             ClarificationRepository clarifications, DraftRepository drafts, GroundingCheckRepository groundingChecks,
-            AnswerRepository answers) {
+            AnswerRepository answers, PostingMatchService postingMatches) {
+        this.postingMatches = postingMatches;
         this.applications = applications;
         this.questions = questions;
         this.limiter = limiter;
@@ -108,9 +110,11 @@ public class ApplicationService {
             application.getPostingLines().add(new ApplicationPostingLine(application,
                     application.getPostingLines().size(), section, line.text(), ksa, readFrom));
         }
-        // 공고 기준 경험 찾기의 1회는 BE#174에서 실제 작업 시작과 함께 더한다.
-        if (!texts.isEmpty()) {
-            limiter.consume(userId, texts.size());
+        // 문항마다 1회 + 공고 요건 줄이 있으면 공고 기준 경험 찾기 1회(S-93) — 모자라면 아무것도 저장하지 않고 429
+        boolean postingMatch = !lines.isEmpty();
+        limiter.consume(userId, texts.size() + (postingMatch ? 1 : 0));
+        if (postingMatch) {
+            application.startPostingMatch();
         }
         applications.save(application);
         // 하나씩 저장해 ID 가 넣은 순서대로 커지게 한다 — 지원 안의 문항 순서는 ID 순서다
@@ -118,7 +122,7 @@ public class ApplicationService {
         for (String text : texts) {
             questionIds.add(questions.saveAndFlush(new Question(application, text)).getId());
         }
-        return new QuestionResponses.ApplicationSubmitted(application.getId(), questionIds);
+        return new QuestionResponses.ApplicationSubmitted(application.getId(), questionIds, postingMatch);
     }
 
     /** 지원에 문항 하나를 더한다 — 지원처 이름은 그 지원의 것. */
@@ -165,19 +169,29 @@ public class ApplicationService {
             }
             application.changeSubmittedMonth(month.get());
         }
-        return QuestionResponses.ApplicationResponse.from(application);
+        return response(application);
     }
 
     @Transactional(readOnly = true)
     public QuestionResponses.Applications list() {
         return new QuestionResponses.Applications(applications.findByUserIdOrderByCreatedAtDescIdDesc(CurrentUser.id())
-                .stream().map(QuestionResponses.ApplicationResponse::from).toList());
+                .stream().map(this::response).toList());
     }
 
     @Transactional(readOnly = true)
     public QuestionResponses.ApplicationResponse get(long applicationId) {
-        return QuestionResponses.ApplicationResponse.from(applications.findByIdAndUserId(applicationId, CurrentUser.id())
+        return response(applications.findByIdAndUserId(applicationId, CurrentUser.id())
                 .orElseThrow(() -> notFound(applicationId)));
+    }
+
+    /** 공고 기준 경험 찾기 다시 시도 · 경험 다시 찾기(S-93) — 작업은 이 트랜잭션이 끝난 뒤 따로 시작한다(ApplicationController). */
+    @Transactional
+    public QuestionResponses.ApplicationResponse retryPostingMatch(long applicationId) {
+        return response(postingMatches.retry(applicationId));
+    }
+
+    private QuestionResponses.ApplicationResponse response(Application application) {
+        return QuestionResponses.ApplicationResponse.from(application, postingMatches.view(application));
     }
 
     /** 지원들의 지금 상태 — 지워진 지원은 결과에 없다. */

@@ -214,9 +214,14 @@ public class QuestionService {
     @Transactional(readOnly = true)
     public MatchRequest matchRequest(long questionId) {
         Question question = questions.findById(questionId).orElseThrow();
-        // 지원처 종류 · 직무는 싣지 않는다 — 추천 · 되묻기가 그 칸으로 바뀌지 않는다(S-42)
-        return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText()),
-                experienceParts(question.getUserId()));
+        // 지원의 직무 · 공고 요건 줄 전부를 맥락으로 싣는다(S-20 · S-42 · ETC#326) — 기존 · 새 · 더한 문항 · 다시 시도 모두. 지원처 종류는 싣지 않는다
+        Application application = question.getApplication();
+        JobRole jobRole = application == null ? null : application.getJobRole();
+        List<MatchRequest.PostingLinePart> postingLines = application == null ? List.of()
+                : application.getPostingLines().stream()
+                        .map(l -> new MatchRequest.PostingLinePart(l.getSection(), l.getText(), l.getKsa())).toList();
+        return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText(), jobRole,
+                postingLines), experienceParts(question.getUserId()));
     }
 
     /** 사용자의 경험 전부를 ai-api.md 「POST /match」 experiences 모양으로 — 매칭과 꺼내기(/ask, S-29)가 같이 쓴다. */

@@ -10,8 +10,20 @@ import org.springframework.data.jpa.repository.Query;
 public interface ClarificationRepository extends JpaRepository<Clarification, Long> {
 
     // 다른 사용자의 되묻기는 없는 것으로 본다
-    @Query("select c from Clarification c join fetch c.question q where c.id = :id and q.userId = :userId")
+    // 문항 되묻기는 문항, 공고 되묻기는 그 줄의 지원으로 주인을 본다
+    @Query("select c from Clarification c left join c.question q left join c.postingLine l left join l.application a "
+            + "where c.id = :id and (q.userId = :userId or a.userId = :userId)")
     Optional<Clarification> findOwned(Long id, Long userId);
+
+    // 지원의 공고 되묻기 — 넣은 순서
+    @Query("select c from Clarification c join c.postingLine l where l.application.id = :applicationId order by c.position")
+    List<Clarification> findByApplicationPosting(Long applicationId);
+
+    // 공고 기준 경험 찾기를 다시 돌릴 때 — 답한 보완은 clarification_id 만 null 이 되고 남는다
+    @Modifying(flushAutomatically = true, clearAutomatically = false)
+    @Query("delete from Clarification c where c.postingLine.id in "
+            + "(select l.id from ApplicationPostingLine l where l.application.id = :applicationId)")
+    void deleteByApplicationPosting(Long applicationId);
 
     // 되묻기에 답이 있는 문항 — 보완을 지우면 답이 없는 것으로 돌아간다(S-24)
     @Query("select distinct c.question.id from Clarification c where c.question.id in :questionIds "

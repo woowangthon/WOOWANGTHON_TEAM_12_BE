@@ -22,9 +22,11 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
     private final GroundingCheckRepository checks;
     private final DraftRepository drafts;
     private final AnswerRepository answers;
+    private final ApplicationRepository applications;
 
     public InterruptedQuestionCleaner(QuestionRepository questions, GroundingCheckRepository checks,
-            DraftRepository drafts, AnswerRepository answers) {
+            DraftRepository drafts, AnswerRepository answers, ApplicationRepository applications) {
+        this.applications = applications;
         this.questions = questions;
         this.checks = checks;
         this.drafts = drafts;
@@ -56,6 +58,12 @@ public class InterruptedQuestionCleaner implements ApplicationRunner {
         interruptedAnswers.forEach(a -> a.fail("INTERNAL_ERROR", "서버가 다시 시작되어 새 경험 후보 찾기가 끊겼습니다"));
         if (!interruptedAnswers.isEmpty()) {
             log.warn("찾는 중에 끊긴 새 경험 후보 찾기 {}개를 실패로 돌렸습니다", interruptedAnswers.size());
+        }
+        // 공고 기준 경험 찾기도 같다(S-93) — 다시 시도는 …/posting-match/retry
+        List<Application> interruptedPostings = applications.findByPostingMatchStatus(JobStatus.ANALYZING);
+        interruptedPostings.forEach(a -> a.failPostingMatch("INTERNAL_ERROR", "서버가 다시 시작되어 공고 기준 경험 찾기가 끊겼습니다"));
+        if (!interruptedPostings.isEmpty()) {
+            log.warn("찾는 중에 끊긴 공고 기준 경험 찾기 {}개를 실패로 돌렸습니다", interruptedPostings.size());
         }
     }
 }

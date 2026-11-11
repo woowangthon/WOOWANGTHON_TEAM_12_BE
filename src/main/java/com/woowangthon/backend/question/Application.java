@@ -1,6 +1,7 @@
 package com.woowangthon.backend.question;
 
 import com.woowangthon.backend.common.Times;
+import com.woowangthon.backend.job.JobStatus;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -45,6 +46,14 @@ public class Application {
     private String submittedMonth;
 
     private String postingUrl;
+
+    // 공고 기준 경험 찾기(S-93) — 공고 요건 줄이 없으면 null(작업이 없다)
+    @Enumerated(EnumType.STRING)
+    private JobStatus postingMatchStatus;
+
+    private String postingMatchErrorCode;
+
+    private String postingMatchErrorMessage;
 
     @OneToMany(mappedBy = "application")
     @OrderBy("id asc")
@@ -107,6 +116,39 @@ public class Application {
     /** 낸 달을 고친다(S-37) — 예전에 낸 지원을 나중에 넣었을 때 그해 자리에 놓이게. */
     public void changeSubmittedMonth(String submittedMonth) {
         this.submittedMonth = submittedMonth;
+    }
+
+    /** 공고 기준 경험 찾기를 (다시) 시작한다 — 옛 줄 판정 · 오류를 지운다. 옛 공고 되묻기는 부르는 쪽이 지운다. */
+    public void startPostingMatch() {
+        this.postingMatchStatus = JobStatus.ANALYZING;
+        this.postingMatchErrorCode = null;
+        this.postingMatchErrorMessage = null;
+        postingLines.forEach(ApplicationPostingLine::clearMatch);
+    }
+
+    /** 줄 판정은 부르는 쪽이 줄마다 남긴 뒤 부른다. */
+    public void completePostingMatch() {
+        this.postingMatchStatus = JobStatus.COMPLETED;
+    }
+
+    /** 실패 + 이유. 정해진 판정으로 채우지 않는다(대회 규칙 2). */
+    public void failPostingMatch(String code, String message) {
+        this.postingMatchStatus = JobStatus.FAILED;
+        this.postingMatchErrorCode = code;
+        this.postingMatchErrorMessage = message;
+        postingLines.forEach(ApplicationPostingLine::clearMatch);
+    }
+
+    public JobStatus getPostingMatchStatus() {
+        return postingMatchStatus;
+    }
+
+    public String getPostingMatchErrorCode() {
+        return postingMatchErrorCode;
+    }
+
+    public String getPostingMatchErrorMessage() {
+        return postingMatchErrorMessage;
     }
 
     public Long getId() {
