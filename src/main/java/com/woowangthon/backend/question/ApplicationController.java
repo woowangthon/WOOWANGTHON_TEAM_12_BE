@@ -20,19 +20,33 @@ public class ApplicationController {
 
     private final ApplicationService service;
     private final MatchRunner runner;
+    private final PostingMatchRunner postingRunner;
 
-    public ApplicationController(ApplicationService service, MatchRunner runner) {
+    public ApplicationController(ApplicationService service, MatchRunner runner, PostingMatchRunner postingRunner) {
         this.service = service;
         this.runner = runner;
+        this.postingRunner = postingRunner;
     }
 
-    // 문항마다 추천 작업 하나 — 비동기 실행기의 스레드 수만큼 동시에 돈다
+    // 문항마다 추천 작업 하나 + 공고 요건 줄이 있으면 공고 기준 경험 찾기 하나 — 비동기 실행기의 스레드 수만큼 동시에 돈다
     @PostMapping
     @ResponseStatus(HttpStatus.ACCEPTED)
     public QuestionResponses.ApplicationSubmitted submit(@RequestBody ApplicationService.ApplicationRequest request) {
         QuestionResponses.ApplicationSubmitted submitted = service.submit(request);
         submitted.questionIds().forEach(runner::run);
+        if (submitted.postingMatch()) {
+            postingRunner.run(submitted.applicationId());
+        }
         return submitted;
+    }
+
+    // 다시 시도 · 경험 다시 찾기(S-93) — 저장 트랜잭션이 끝난 뒤 작업을 돌린다
+    @PostMapping("/{applicationId}/posting-match/retry")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public QuestionResponses.ApplicationResponse retryPostingMatch(@PathVariable long applicationId) {
+        QuestionResponses.ApplicationResponse application = service.retryPostingMatch(applicationId);
+        postingRunner.run(applicationId);
+        return application;
     }
 
     @PostMapping("/{applicationId}/questions")

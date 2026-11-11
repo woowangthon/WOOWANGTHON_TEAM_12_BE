@@ -1,5 +1,6 @@
 package com.woowangthon.backend.question;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.common.ErrorResponse;
@@ -22,8 +23,8 @@ public final class QuestionResponses {
     public record Submitted(Long questionId, Long applicationId, JobStatus status) {
     }
 
-    // 지원 넣기 — questionIds 는 넣은 순서
-    public record ApplicationSubmitted(Long applicationId, List<Long> questionIds) {
+    // 지원 넣기 — questionIds 는 넣은 순서. postingMatch — 공고 기준 경험 찾기를 시작했다(응답엔 싣지 않는다 — 부르는 쪽이 작업을 돌린다)
+    public record ApplicationSubmitted(Long applicationId, List<Long> questionIds, @JsonIgnore boolean postingMatch) {
     }
 
     public record Summary(Long id, Long applicationId, String organization, String text, QuestionType questionType,
@@ -39,14 +40,22 @@ public final class QuestionResponses {
     // questions — 넣은 순서(지원서의 문항 순서)
     public record ApplicationResponse(Long id, String organization, OrganizationType organizationType, JobRole jobRole,
             String postingUrl, ApplicationStatus applicationStatus, String submittedMonth, List<Summary> questions,
-            OffsetDateTime createdAt, List<PostingLineResponse> postingLines) {
+            OffsetDateTime createdAt, List<PostingLineResponse> postingLines, PostingMatchView postingMatch) {
 
-        static ApplicationResponse from(Application a) {
+        static ApplicationResponse from(Application a, PostingMatchView postingMatch) {
             return new ApplicationResponse(a.getId(), a.getOrganization(), a.getOrganizationType(), a.getJobRole(),
                     a.getPostingUrl(), a.getApplicationStatus(), a.getSubmittedMonth(),
                     a.getQuestions().stream().map(Summary::from).toList(), Times.seoul(a.getCreatedAt()),
-                    a.getPostingLines().stream().map(PostingLineResponse::from).toList());
+                    a.getPostingLines().stream().map(PostingLineResponse::from).toList(), postingMatch);
         }
+    }
+
+    // 공고 기준 경험 찾기(S-93) — ANALYZING · FAILED 면 lines · clarifications 는 [], FAILED 면 error
+    public record PostingMatchView(JobStatus status, ErrorResponse.Error error, List<PostingLineMatch> lines,
+            List<ClarificationResponse> clarifications) {
+    }
+
+    public record PostingLineMatch(Long postingLineId, RequirementStatus status, List<Long> experienceIds) {
     }
 
     public record PostingLineResponse(Long id, PostingSection section, String text, Ksa ksa, ReadFrom readFrom) {
@@ -83,8 +92,10 @@ public final class QuestionResponses {
             List<String> gaps) {
     }
 
-    // supplementId — 답했으면 그 보완(experience.supplements[] 에 있다), 아직이면 null
-    public record ClarificationResponse(Long id, Long experienceId, String question, Long supplementId) {
+    // supplementId — 답했으면 그 보완(experience.supplements[] 에 있다), 아직이면 null.
+    // postingLineId — 공고 기준 경험 찾기(S-93)의 되묻기면 그 줄, 문항 되묻기면 null
+    public record ClarificationResponse(Long id, Long experienceId, String question, Long supplementId,
+            Long postingLineId) {
     }
 
     public record Detail(
@@ -137,7 +148,7 @@ public final class QuestionResponses {
                     .map(c -> new ClarificationResponse(c.getId(), c.getExperienceId(), c.getText(),
                             existing.get(c.getExperienceId()).getSupplements().stream()
                                     .filter(s -> c.getId().equals(s.getClarificationId()))
-                                    .map(Supplement::getId).findFirst().orElse(null)))
+                                    .map(Supplement::getId).findFirst().orElse(null), null))
                     .toList();
             return new Detail(q.getId(), q.getApplication().getId(), q.getOrganization(), q.getText(), q.getQuestionType(),
                     q.getQuestionTypeBy(), q.getTargetLength(), q.getStatus(), error, requirements, recommendations, clarifications, draft, answer,

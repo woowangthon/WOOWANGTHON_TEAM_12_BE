@@ -79,6 +79,11 @@ public class AiClient {
         return post(job, "/match", request, MatchResponse.class);
     }
 
+    /** 공고 기준 경험 찾기(S-93) — 뒤에서 도는 작업이라 match 와 같은 제한 시간. */
+    public PostingMatchResponse postingMatch(PostingMatchRequest request) {
+        return post(job, "/posting-match", request, PostingMatchResponse.class);
+    }
+
     /** 내가 쓴 답 근거 점검 — 작업(question-api 「근거 점검」). */
     public GroundCheckResponse groundCheck(GroundCheckRequest request) {
         return post(job, "/ground-check", request, GroundCheckResponse.class);

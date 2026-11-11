@@ -7,6 +7,7 @@ import com.woowangthon.backend.question.ApplicationService;
 import com.woowangthon.backend.question.JobRole;
 import com.woowangthon.backend.question.MatchRunner;
 import com.woowangthon.backend.question.OrganizationType;
+import com.woowangthon.backend.question.PostingMatchRunner;
 import com.woowangthon.backend.question.QuestionResponses;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,13 +35,15 @@ public class CreateApplicationTool implements McpWriteTool {
 
     private final ApplicationService applications;
     private final MatchRunner matches;
+    private final PostingMatchRunner postingMatches;
     private final McpWriteService writes;
     private final JsonMapper json;
 
-    public CreateApplicationTool(ApplicationService applications, MatchRunner matches, McpWriteService writes,
-            JsonMapper json) {
+    public CreateApplicationTool(ApplicationService applications, MatchRunner matches,
+            PostingMatchRunner postingMatches, McpWriteService writes, JsonMapper json) {
         this.applications = applications;
         this.matches = matches;
+        this.postingMatches = postingMatches;
         this.writes = writes;
         this.json = json;
     }
@@ -103,7 +106,7 @@ public class CreateApplicationTool implements McpWriteTool {
         McpWriteService.CreatedApplication created = writes.createApplication(caller.userId(), caller.client(),
                 request(arguments));
         QuestionResponses.ApplicationSubmitted submitted = created.submitted();
-        submitted.questionIds().forEach(matches::run); // 위 트랜잭션이 끝난 뒤 — 추천은 뒤에서 돈다
+        start(submitted); // 위 트랜잭션이 끝난 뒤 — 추천은 뒤에서 돈다
         return Map.of("changeId", created.changeId(), "applicationId", submitted.applicationId(),
                 "questionIds", submitted.questionIds(), "status", JobStatus.ANALYZING, "notice", McpNotice.CREATE_APPLICATION);
     }
@@ -113,7 +116,15 @@ public class CreateApplicationTool implements McpWriteTool {
         QuestionResponses.ApplicationSubmitted submitted = applications.submit(request(arguments));
         return new Written(
                 Map.of("applicationId", submitted.applicationId(), "questionIds", submitted.questionIds()),
-                () -> submitted.questionIds().forEach(matches::run));
+                () -> start(submitted));
+    }
+
+    // 문항마다 추천 + 공고 요건 줄이 있었으면 공고 기준 경험 찾기(S-93) — 웹 지원 넣기와 같다
+    private void start(QuestionResponses.ApplicationSubmitted submitted) {
+        submitted.questionIds().forEach(matches::run);
+        if (submitted.postingMatch()) {
+            postingMatches.run(submitted.applicationId());
+        }
     }
 
     private ApplicationService.ApplicationRequest request(JsonNode arguments) {

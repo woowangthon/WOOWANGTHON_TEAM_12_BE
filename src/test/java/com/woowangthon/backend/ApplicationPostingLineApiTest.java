@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import com.woowangthon.backend.question.MatchRunner;
+import com.woowangthon.backend.question.PostingMatchRunner;
 import jakarta.persistence.EntityManager;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -25,7 +26,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
-/** S-18 · S-91: 영속성 · 소유자 격리 · 검증과 분석 횟수의 원자성. AI 매칭은 별도 테스트에서 검증한다. */
+/** S-18 · S-91: 영속성 · 소유자 격리 · 검증과 분석 횟수의 원자성. AI 매칭 · 공고 기준 경험 찾기는 별도 테스트(PostingMatchApiTest)에서 검증한다. */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
 @Transactional
@@ -34,6 +35,7 @@ class ApplicationPostingLineApiTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired EntityManager em;
     @MockitoBean MatchRunner matches;
+    @MockitoBean PostingMatchRunner postingMatches;
     MockMvc mvc;
 
     static final String LINE = """
@@ -79,7 +81,8 @@ class ApplicationPostingLineApiTest {
                 .andExpect(jsonPath("$.postingLines[0].readFrom").value("IMAGE"));
         mvc.perform(get("/api/applications"))
                 .andExpect(jsonPath("$.applications[0].postingLines.length()").value(2));
-        assertThat(usage()).isEqualTo(used);
+        // 공고 기준 경험 찾기 1회(S-93)
+        assertThat(usage()).isEqualTo(used + 1);
         assertThat(jdbc.queryForList("select position from application_posting_line where application_id=? order by position",
                 Integer.class, id)).containsExactly(0, 1);
     }
@@ -100,7 +103,7 @@ class ApplicationPostingLineApiTest {
         long id = create("[]", "[" + LINE + "]");
         mvc.perform(post("/api/applications/{id}/questions", id).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"text\":\"문제 해결 경험\"}")).andExpect(status().isAccepted());
-        assertThat(usage()).isEqualTo(used + 1);
+        assertThat(usage()).isEqualTo(used + 2);
         em.flush();
         em.clear();
         mvc.perform(delete("/api/applications/{id}", id)).andExpect(status().isNoContent());
@@ -110,12 +113,12 @@ class ApplicationPostingLineApiTest {
     }
 
     @Test
-    void 요건_40줄_300자와_null_분류를_받고_분석은_문항_수만큼만_센다() throws Exception {
+    void 요건_40줄_300자와_null_분류를_받고_분석은_문항_수_더하기_1을_센다() throws Exception {
         String maxLine = LINE.replace("  Spring API 개발 경험  ", "가".repeat(300)).replace("\"SKILL\"", "null");
         int used = usage();
         long id = create("[{\"text\":\"문항 하나\"},{\"text\":\"문항 둘\"}]",
                 "[" + (maxLine + ",").repeat(39) + maxLine + "]");
-        assertThat(usage()).isEqualTo(used + 2);
+        assertThat(usage()).isEqualTo(used + 3);
         mvc.perform(get("/api/applications/{id}", id)).andExpect(jsonPath("$.postingLines.length()").value(40));
     }
 

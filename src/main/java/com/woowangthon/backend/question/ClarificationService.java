@@ -24,13 +24,15 @@ public class ClarificationService {
     private final ExperienceRepository experiences;
     private final SupplementRepository supplements;
     private final QuestionRepository questions;
+    private final ApplicationRepository applications;
 
     public ClarificationService(ClarificationRepository clarifications, ExperienceRepository experiences,
-            SupplementRepository supplements, QuestionRepository questions) {
+            SupplementRepository supplements, QuestionRepository questions, ApplicationRepository applications) {
         this.clarifications = clarifications;
         this.experiences = experiences;
         this.supplements = supplements;
         this.questions = questions;
+        this.applications = applications;
     }
 
     public record AnswerRequest(String answer) {
@@ -51,8 +53,14 @@ public class ClarificationService {
         Clarification clarification = clarifications.findOwned(clarificationId, userId)
                 .orElseThrow(() -> ApiException.notFound("CLARIFICATION_NOT_FOUND",
                         "되묻기 " + clarificationId + " 이(가) 없습니다"));
-        // 초안 다시 만들기(DraftService.start)와 같은 문항 행을 잠근다 — 그쪽이 먼저 이 되묻기를 지웠으면 404
-        questions.findForUpdate(clarification.getQuestion().getId(), userId);
+        // 문항 되묻기는 초안 다시 만들기(DraftService.start)와 같은 문항 행을, 공고 되묻기(S-93)는 경험 다시 찾기와 같은 지원 행을
+        // 잠근다 — 그쪽이 먼저 이 되묻기를 지웠으면 404
+        Long questionId = clarification.getQuestion() == null ? null : clarification.getQuestion().getId();
+        if (questionId != null) {
+            questions.findForUpdate(questionId, userId);
+        } else {
+            applications.findForUpdate(clarification.getPostingLine().getApplication().getId(), userId);
+        }
         if (!clarifications.existsById(clarificationId)) {
             throw ApiException.notFound("CLARIFICATION_NOT_FOUND", "되묻기 " + clarificationId + " 이(가) 없습니다");
         }
@@ -66,7 +74,7 @@ public class ClarificationService {
         Supplement supplement;
         try {
             supplement = supplements.saveAndFlush(new Supplement(experience, clarificationId,
-                    clarification.getQuestion().getId(), clarification.getText(), answer));
+                    questionId, clarification.getText(), answer));
         } catch (DataIntegrityViolationException e) {
             // 같은 되묻기에 동시에 두 번 답한 경우 — clarification_id unique 가 막는다
             throw alreadyAnswered(clarificationId);

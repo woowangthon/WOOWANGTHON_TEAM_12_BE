@@ -1,5 +1,6 @@
 package com.woowangthon.backend.question;
 
+import com.woowangthon.backend.job.JobStatus;
 import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
@@ -19,6 +20,13 @@ public interface ApplicationRepository extends JpaRepository<Application, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Application a where a.id = :id and a.userId = :userId")
     Optional<Application> findForUpdate(Long id, Long userId);
+
+    // 뒤에서 도는 작업이 결과를 저장할 때 — 사용자 세션이 없다
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from Application a where a.id = :id")
+    Optional<Application> lockById(Long id);
+
+    List<Application> findByPostingMatchStatus(JobStatus status);
 
     @Query("select distinct a from Application a left join fetch a.questions where a.id in :ids and a.userId = :userId")
     List<Application> findAllWithQuestions(Collection<Long> ids, Long userId);
