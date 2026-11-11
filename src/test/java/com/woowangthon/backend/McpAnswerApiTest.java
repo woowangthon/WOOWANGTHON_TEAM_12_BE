@@ -130,6 +130,7 @@ class McpAnswerApiTest {
         long changeId = result.get("changeId").asLong();
         long supplementId = result.get("supplementId").asLong();
         assertThat(result.get("experienceId").asLong()).isEqualTo(experienceId);
+        assertThat(result.get("notice").asString()).contains("‘맞아요’를 누르기 전까지");
         assertThat(jdbc.queryForMap("select content, source_status from experience where id = ?", experienceId)).isEqualTo(before);
         assertThat(jdbc.queryForObject("select coalesce(sum(count), 0) from analysis_usage where user_id = ?", Integer.class, userId))
                 .isEqualTo(analysesBefore);

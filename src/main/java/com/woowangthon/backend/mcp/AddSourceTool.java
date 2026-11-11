@@ -77,7 +77,7 @@ public class AddSourceTool implements McpWriteTool {
         McpWriteService.AddedSource added = writes.addSource(caller.userId(), caller.client(), text);
         extractions.run(added.submitted().jobId()); // 위 트랜잭션이 끝난 뒤 — 분석은 뒤에서 돈다
         return Map.of("changeId", added.changeId(), "sourceId", added.submitted().sourceId(),
-                "jobId", added.submitted().jobId(), "status", added.submitted().status());
+                "jobId", added.submitted().jobId(), "status", added.submitted().status(), "notice", McpNotice.ADD_SOURCE);
     }
 
     @Override
