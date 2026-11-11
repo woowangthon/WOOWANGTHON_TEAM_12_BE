@@ -18,6 +18,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -36,6 +39,7 @@ import org.springframework.web.context.WebApplicationContext;
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(properties = "app.ai.sync-timeout-seconds=1")
+@ExtendWith(OutputCaptureExtension.class)
 class EntranceApiTest {
 
     record FakeReply(int status, String body, long delayMillis) {
@@ -203,7 +207,7 @@ class EntranceApiTest {
         int applicationsBefore = jdbc.queryForObject("select count(*) from application", Integer.class);
         reply = new FakeReply(200, """
                 {"organization": "OO 부트캠프", "organizationType": "BOOTCAMP", "jobRole": "BACKEND",
-                 "questions": ["해결한 문제를 적어 주세요.", "지원 동기를 적어 주세요."], "model": "gpt-test"}""", 0);
+                 "postingLines": [], "readFrom": "TEXT", "questions": ["해결한 문제를 적어 주세요.", "지원 동기를 적어 주세요."], "model": "gpt-test"}""", 0);
 
         parse(textBody(POSTING))
                 .andExpect(status().isOk())
@@ -224,7 +228,7 @@ class EntranceApiTest {
     @Test
     void 문항을_못_찾으면_빈_배열과_null_을_그대로_돌려준다() throws Exception {
         reply = new FakeReply(200, """
-                {"organization": null, "organizationType": null, "jobRole": null, "questions": []}""", 0);
+                {"organization": null, "organizationType": null, "jobRole": null, "postingLines": [], "readFrom": "TEXT", "questions": []}""", 0);
 
         parse(textBody(POSTING))
                 .andExpect(status().isOk())
@@ -240,7 +244,7 @@ class EntranceApiTest {
         expectError(parse(textBody("가".repeat(20_001))), 413, "TEXT_TOO_LONG");
         assertThat(RECEIVED).isEmpty();
 
-        reply = new FakeReply(200, "{\"questions\": []}", 0);
+        reply = new FakeReply(200, "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": []}", 0);
         parse(textBody("가".repeat(20_000))).andExpect(status().isOk());
     }
 
@@ -260,7 +264,7 @@ class EntranceApiTest {
     void 종류나_직무가_목록_밖이면_null_로_바꾸지_않고_AI_FAILED() throws Exception {
         for (String field : List.of("\"organizationType\": \"COMPANY\"", "\"jobRole\": \"SERVER\"",
                 "\"organizationType\": \"\"", "\"jobRole\": \"\"")) {
-            reply = new FakeReply(200, "{" + field + ", \"questions\": []}", 0);
+            reply = new FakeReply(200, "{" + field + ", \"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": []}", 0);
             expectError(parse(textBody(POSTING)), 502, "AI_FAILED");
         }
     }
@@ -270,13 +274,13 @@ class EntranceApiTest {
         String tooMany = "[" + "\"문항\",".repeat(10) + "\"문항\"]";
         for (String body : List.of(
                 "{}",
-                "{\"organization\": \" \", \"questions\": []}",
-                "{\"organization\": \"" + "가".repeat(101) + "\", \"questions\": []}",
-                "{\"questions\": " + tooMany + "}",
-                "{\"questions\": [\" \"]}",
-                "{\"questions\": [null]}",
-                "{\"questions\": [\"같은 문항\", \"같은 문항\"]}",
-                "{\"questions\": [\"" + "가".repeat(5_001) + "\"]}")) {
+                "{\"organization\": \" \", \"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": []}",
+                "{\"organization\": \"" + "가".repeat(101) + "\", \"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": []}",
+                "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": " + tooMany + "}",
+                "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": [\" \"]}",
+                "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": [null]}",
+                "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": [\"같은 문항\", \"같은 문항\"]}",
+                "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": [\"" + "가".repeat(5_001) + "\"]}")) {
             reply = new FakeReply(200, body, 0);
             expectError(parse(textBody(POSTING)), 502, "AI_FAILED");
         }
@@ -284,7 +288,7 @@ class EntranceApiTest {
 
     @Test
     void 지원_나누기_제한_시간을_넘기면_504_AI_TIMEOUT() throws Exception {
-        reply = new FakeReply(200, "{\"questions\": []}", 2_000);
+        reply = new FakeReply(200, "{\"postingLines\": [], \"readFrom\": \"TEXT\", \"questions\": []}", 2_000);
         expectError(parse(textBody(POSTING)), 504, "AI_TIMEOUT");
     }
 
@@ -308,7 +312,7 @@ class EntranceApiTest {
     void 링크로_부르면_AI_에_url_만_넘기고_같은_모양으로_돌려준다() throws Exception {
         reply = new FakeReply(200, """
                 {"organization": "OO 부트캠프", "organizationType": "BOOTCAMP", "jobRole": null,
-                 "questions": ["해결한 문제를 적어 주세요."]}""", 0);
+                 "postingLines": [], "readFrom": "URL", "questions": ["해결한 문제를 적어 주세요."]}""", 0);
 
         parse(urlBody(POSTING_URL))
                 .andExpect(status().isOk())
@@ -320,6 +324,7 @@ class EntranceApiTest {
         assertThat((String) JsonPath.read(RECEIVED.getFirst(), "$.url")).isEqualTo(POSTING_URL);
         assertThat(RECEIVED.getFirst()).doesNotContain("\"text\"");
         // 붙여 넣은 글로 부르면 url 을 싣지 않는다
+        reply = new FakeReply(200, reply.body().replace("\"URL\"", "\"TEXT\""), 0);
         parse(textBody(POSTING)).andExpect(status().isOk());
         assertThat(RECEIVED.get(1)).doesNotContain("\"url\"");
     }
@@ -362,7 +367,97 @@ class EntranceApiTest {
         }
         assertThat(RECEIVED).isEmpty();
 
-        reply = new FakeReply(200, "{\"questions\": []}", 0);
+        reply = new FakeReply(200, "{\"postingLines\": [], \"readFrom\": \"URL\", \"questions\": []}", 0);
         parse(urlBody("HTTP://example.com/" + "a".repeat(1_981))).andExpect(status().isOk());
+    }
+
+    private static String image(String mediaType, String data) {
+        return "{\"mediaType\":\"" + mediaType + "\",\"data\":\"" + data + "\"}";
+    }
+
+    @Test
+    void 캡처를_그대로_넘기고_요건_줄과_출처를_반환하며_저장과_로그를_남기지_않는다(CapturedOutput output) throws Exception {
+        String imageData = "Y2FwdHVyZS1zZWNyZXQtMTcz";
+        String ocr = "private-ocr-line-173";
+        int used = usedToday();
+        int applications = jdbc.queryForObject("select count(*) from application", Integer.class);
+        int lines = jdbc.queryForObject("select count(*) from application_posting_line", Integer.class);
+        reply = new FakeReply(200, """
+                {"questions":[],"postingLines":[{"section":"REQUIRED","text":"%s","ksa":"SKILL"}],
+                 "readFrom":"IMAGE","model":"gpt-test"}
+                """.formatted(ocr), 0);
+
+        parse("{\"images\":[" + image("image/png", imageData) + "]}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.postingLines[0].text").value(ocr))
+                .andExpect(jsonPath("$.postingLines[0].section").value("REQUIRED"))
+                .andExpect(jsonPath("$.postingLines[0].ksa").value("SKILL"))
+                .andExpect(jsonPath("$.readFrom").value("IMAGE"))
+                .andExpect(jsonPath("$.model").doesNotExist());
+        assertThat(JsonPath.<String>read(RECEIVED.getFirst(), "$.images[0].data")).isEqualTo(imageData);
+        assertThat(RECEIVED.getFirst()).doesNotContain("\"text\"", "\"url\"");
+        assertThat(usedToday()).isEqualTo(used);
+        assertThat(jdbc.queryForObject("select count(*) from application", Integer.class)).isEqualTo(applications);
+        assertThat(jdbc.queryForObject("select count(*) from application_posting_line", Integer.class)).isEqualTo(lines);
+        assertThat(output.getAll()).doesNotContain(imageData, ocr);
+    }
+
+    @Test
+    void 이미지_검증과_입력_배타성은_AI_호출_전에_확인한다() throws Exception {
+        String valid = image("image/png", "YWJj");
+        for (String body : List.of("{\"text\":\"공고\",\"images\":[" + valid + "]}",
+                "{\"url\":\"https://example.com\",\"images\":[" + valid + "]}")) {
+            expectError(parse(body), 400, "INVALID_REQUEST");
+        }
+        for (String images : List.of("[]", "[null]", "[{}]", "[" + (valid + ",").repeat(5) + valid + "]",
+                "[" + image("image/gif", "YWJj") + "]", "[" + image("image/png", "not base64!") + "]",
+                "[" + image("image/png", "") + "]", "[" + image("image/png", "A".repeat(4 * 1024 * 1024 + 4)) + "]")) {
+            expectError(parse("{\"images\":" + images + "}"), 400, "INVALID_IMAGE");
+        }
+        assertThat(RECEIVED).isEmpty();
+    }
+
+    @Test
+    void 장당_4MB_5장이_통과하고_전체_25MB_초과는_413() throws Exception {
+        String full = image("image/webp", "A".repeat(4 * 1024 * 1024));
+        reply = new FakeReply(200, "{\"questions\":[],\"postingLines\":[],\"readFrom\":\"IMAGE\"}", 0);
+        parse("{\"images\":[" + (full + ",").repeat(4) + full + "]}").andExpect(status().isOk());
+        assertThat(JsonPath.<List<?>>read(RECEIVED.getFirst(), "$.images")).hasSize(5);
+        RECEIVED.clear();
+        expectError(parse("{\"images\":[],\"padding\":\"" + "A".repeat(25 * 1024 * 1024) + "\"}"),
+                413, "INVALID_IMAGE");
+        assertThat(RECEIVED).isEmpty();
+    }
+
+    @Test
+    void 이미지_못_읽음은_422_그대로_그밖의_오류는_본문을_노출하지_않는다(CapturedOutput output) throws Exception {
+        String request = "{\"images\":[" + image("image/jpeg", "YWJj") + "]}";
+        String message = "캡처에서 글자를 거의 읽지 못했어요 — 더 크게 찍어 주세요";
+        reply = new FakeReply(422, "{\"error\":{\"code\":\"IMAGE_UNREADABLE\",\"message\":\"" + message + "\"}}", 0);
+        parse(request).andExpect(status().is(422))
+                .andExpect(jsonPath("$.error.code").value("IMAGE_UNREADABLE"))
+                .andExpect(jsonPath("$.error.message").value(message));
+        String privateText = "private-ocr-invalid-enum-173";
+        for (FakeReply error : List.of(
+                new FakeReply(200, "{\"questions\":[],\"postingLines\":[],\"readFrom\":\"" + privateText + "\"}", 0),
+                new FakeReply(502, "{\"error\":{\"code\":\"LLM_ERROR\",\"message\":\"" + privateText + "\"}}", 0))) {
+            reply = error;
+            String body = parse(request).andExpect(status().isBadGateway()).andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain(privateText);
+        }
+        assertThat(output.getAll()).doesNotContain(privateText, "YWJj");
+    }
+
+    @Test
+    void 요건_줄_응답_규칙과_출처를_어기면_AI_FAILED() throws Exception {
+        String line = "{\"section\":\"DUTY\",\"text\":\"공고 줄\",\"ksa\":null}";
+        for (String lines : List.of("null", "[null]", "[{}]", "[" + line + "," + line + "]",
+                "[" + line.replace("DUTY", "OTHER") + "]", "[" + line.replace("공고 줄", " ") + "]",
+                "[" + line.replace("공고 줄", "가".repeat(301)) + "]")) {
+            reply = new FakeReply(200, "{\"questions\":[],\"postingLines\":" + lines + ",\"readFrom\":\"TEXT\"}", 0);
+            expectError(parse(textBody(POSTING)), 502, "AI_FAILED");
+        }
+        reply = new FakeReply(200, "{\"questions\":[],\"postingLines\":[],\"readFrom\":\"IMAGE\"}", 0);
+        expectError(parse(textBody(POSTING)), 502, "AI_FAILED");
     }
 }

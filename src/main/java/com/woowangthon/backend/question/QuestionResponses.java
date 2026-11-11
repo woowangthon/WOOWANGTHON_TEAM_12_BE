@@ -39,12 +39,19 @@ public final class QuestionResponses {
     // questions — 넣은 순서(지원서의 문항 순서)
     public record ApplicationResponse(Long id, String organization, OrganizationType organizationType, JobRole jobRole,
             String postingUrl, ApplicationStatus applicationStatus, String submittedMonth, List<Summary> questions,
-            OffsetDateTime createdAt) {
+            OffsetDateTime createdAt, List<PostingLineResponse> postingLines) {
 
         static ApplicationResponse from(Application a) {
             return new ApplicationResponse(a.getId(), a.getOrganization(), a.getOrganizationType(), a.getJobRole(),
                     a.getPostingUrl(), a.getApplicationStatus(), a.getSubmittedMonth(),
-                    a.getQuestions().stream().map(Summary::from).toList(), Times.seoul(a.getCreatedAt()));
+                    a.getQuestions().stream().map(Summary::from).toList(), Times.seoul(a.getCreatedAt()),
+                    a.getPostingLines().stream().map(PostingLineResponse::from).toList());
+        }
+    }
+
+    public record PostingLineResponse(Long id, PostingSection section, String text, Ksa ksa, ReadFrom readFrom) {
+        static PostingLineResponse from(ApplicationPostingLine line) {
+            return new PostingLineResponse(line.getId(), line.getSection(), line.getText(), line.getKsa(), line.getReadFrom());
         }
     }
 

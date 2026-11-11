@@ -1,6 +1,7 @@
 package com.woowangthon.backend.question;
 
 import com.woowangthon.backend.common.Times;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -48,6 +49,10 @@ public class Application {
     @OneToMany(mappedBy = "application")
     @OrderBy("id asc")
     private List<Question> questions = new ArrayList<>();
+
+    @OneToMany(mappedBy = "application", cascade = CascadeType.ALL)
+    @OrderBy("position asc")
+    private List<ApplicationPostingLine> postingLines = new ArrayList<>();
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
@@ -138,6 +143,10 @@ public class Application {
 
     public List<Question> getQuestions() {
         return questions;
+    }
+
+    public List<ApplicationPostingLine> getPostingLines() {
+        return postingLines;
     }
 
     public OffsetDateTime getCreatedAt() {

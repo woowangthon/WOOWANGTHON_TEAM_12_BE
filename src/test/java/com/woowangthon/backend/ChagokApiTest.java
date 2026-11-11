@@ -492,6 +492,13 @@ class ChagokApiTest {
                 {"organization":"OO 부트캠프","questions":[{"text":"문제를 해결한 경험"}]}"""))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         long questionId = ((Number) JsonPath.read(submitted, "$.questionIds[0]")).longValue();
+        // /match 테스트 서버는 500을 준다. 그 비동기 실패가 끝나야 아래 추천 fixture를 지우지 않는다.
+        for (int i = 0; i < 500 && "ANALYZING".equals(jdbc.queryForObject(
+                "select status from question where id = ?", String.class, questionId)); i++) {
+            Thread.sleep(10);
+        }
+        assertThat(jdbc.queryForObject("select status from question where id = ?", String.class, questionId))
+                .isEqualTo("FAILED");
         long activity = jdbc.queryForObject("insert into activity (user_id, name) values (?, '바꿔요') returning id",
                 Long.class, TestLogin.USER_ID);
         String insert = "insert into experience (activity_id, content, actor, source_status, competencies_by, position) "

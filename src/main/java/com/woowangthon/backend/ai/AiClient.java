@@ -35,8 +35,8 @@ public class AiClient {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Pattern ERROR_CODE = Pattern.compile("\"code\"\\s*:\\s*\"([A-Za-z_]+)\"");
-    /** ai-api.md 「POST /parse-application」 422 — FE 에 그대로 넘기는 링크 못 읽음(S-46). */
-    private static final Set<String> URL_REJECTED_CODES = Set.of("URL_BLOCKED", "URL_UNREADABLE");
+    /** ai-api.md 「POST /parse-application」 422 — 링크 · 캡처 못 읽음(S-46 · S-92). */
+    private static final Set<String> PARSE_REJECTED_CODES = Set.of("URL_BLOCKED", "URL_UNREADABLE", "IMAGE_UNREADABLE");
 
     /** 제한 시간이 다른 두 갈래 — 작업(추출 · 매칭)과 사용자가 화면에서 기다리는 동기 호출(입구 셋, ai-api.md). */
     private record Caller(RestClient rest, long timeoutSeconds) {
@@ -159,7 +159,10 @@ public class AiClient {
         } catch (ResourceAccessException e) {
             throw classify(e, caller.timeoutSeconds());
         } catch (RestClientException e) {
-            throw AiCallException.invalidResponse("JSON 을 읽지 못했습니다 — " + e.getMessage());
+            // 파서 오류에 이미지에서 읽은 본문이 섞일 수 있으므로 이 경로는 원래 예외를 노출하지 않는다.
+            throw AiCallException.invalidResponse("/parse-application".equals(uri)
+                    ? "JSON 을 읽지 못했습니다"
+                    : "JSON 을 읽지 못했습니다 — " + e.getMessage());
         }
         if (body == null) {
             throw AiCallException.invalidResponse("본문이 비었습니다");
@@ -186,7 +189,7 @@ public class AiClient {
     }
 
     // 오류 본문 { "error": { "code": "LLM_ERROR", "message": ... } } 에서 code 를 꺼낸다. 모양이 다르면 UNKNOWN.
-    // 422 URL_BLOCKED · URL_UNREADABLE(S-46)만 message 까지 꺼내 그대로 넘긴다 — 그 밖은 AI_FAILED 로 뭉친다
+    // 링크 · 캡처 못 읽음 422만 message 까지 꺼내 그대로 넘긴다 — 그 밖은 AI_FAILED 로 뭉친다
     private AiCallException aiError(int status, InputStream body) {
         String text;
         try (body) {
@@ -196,7 +199,7 @@ public class AiClient {
         }
         Matcher m = ERROR_CODE.matcher(text);
         String code = m.find() ? m.group(1) : "UNKNOWN";
-        if (status == 422 && URL_REJECTED_CODES.contains(code)) {
+        if (status == 422 && PARSE_REJECTED_CODES.contains(code)) {
             String message = rejectedMessage(text);
             if (message != null) {
                 return new AiRejectedUrlException(code, message);
