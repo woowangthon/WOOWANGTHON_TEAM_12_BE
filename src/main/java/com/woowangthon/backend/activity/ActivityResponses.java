@@ -8,6 +8,7 @@ import com.woowangthon.backend.experience.Competency;
 import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceResponse;
 import com.woowangthon.backend.experience.SourceStatus;
+import com.woowangthon.backend.experience.StarView;
 import com.woowangthon.backend.question.ApplicationStatus;
 import com.woowangthon.backend.question.RecommendationRepository.UsedInRow;
 import java.time.OffsetDateTime;
@@ -31,11 +32,13 @@ public final class ActivityResponses {
     }
 
     public record Summary(Long id, String name, Period period, int experienceCount, ActivityCategory category,
-            CategoryBy categoryBy, String note, MergeSuggestion mergeSuggestion) {
+            CategoryBy categoryBy, String note, MergeSuggestion mergeSuggestion, int starGapCount,
+            int starUnsortedCount) {
 
         public static Summary from(Activity a, Activity suggested) {
             return new Summary(a.getId(), a.getName(), a.getPeriod(), a.getExperienceCount(), a.getCategory(),
-                    a.getCategoryBy(), a.getNote(), MergeSuggestion.of(suggested));
+                    a.getCategoryBy(), a.getNote(), MergeSuggestion.of(suggested), a.getStarGapCount(),
+                    a.getStarUnsortedCount());
         }
     }
 
@@ -65,8 +68,8 @@ public final class ActivityResponses {
     public record UsedInQuestion(Long id, String text) {
     }
 
-    /** 활동 세부의 경험 — Experience 모양에 usedIn 만 더한다. 그 밖의 응답엔 싣지 않으려고 ExperienceResponse 와 나눈다. */
-    public record DetailExperience(@JsonUnwrapped ExperienceResponse experience, List<UsedIn> usedIn) {
+    /** 활동 세부의 경험 — Experience 모양에 usedIn · star(S-95)를 더한다. 그 밖의 응답엔 싣지 않으려고 ExperienceResponse 와 나눈다. */
+    public record DetailExperience(@JsonUnwrapped ExperienceResponse experience, List<UsedIn> usedIn, StarView star) {
     }
 
     /** 이어짐(S-35, 계약 「이어짐 ActivityLink」) — 활동 이름은 지금 값. */
@@ -94,7 +97,8 @@ public final class ActivityResponses {
         }
 
         private static DetailExperience detailExperience(Experience e, Map<Long, List<UsedIn>> usedIn) {
-            return new DetailExperience(ExperienceResponse.from(e), usedIn.getOrDefault(e.getId(), List.of()));
+            return new DetailExperience(ExperienceResponse.from(e), usedIn.getOrDefault(e.getId(), List.of()),
+                    StarView.from(e));
         }
     }
 

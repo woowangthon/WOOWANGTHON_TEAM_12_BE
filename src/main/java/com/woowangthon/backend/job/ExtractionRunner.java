@@ -4,7 +4,7 @@ import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.AiClient;
 import com.woowangthon.backend.ai.ExtractRequest;
 import com.woowangthon.backend.ai.ExtractResponse;
-import java.util.List;
+import com.woowangthon.backend.experience.StarRunner;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,10 +22,12 @@ public class ExtractionRunner {
 
     private final AnalysisService service;
     private final AiClient ai;
+    private final StarRunner starRunner;
 
-    public ExtractionRunner(AnalysisService service, AiClient ai) {
+    public ExtractionRunner(AnalysisService service, AiClient ai, StarRunner starRunner) {
         this.service = service;
         this.ai = ai;
+        this.starRunner = starRunner;
     }
 
     /** 원본 저장 트랜잭션이 끝난 뒤에 부른다(JobController 등). 끝나면 이 사용자의 다음 QUEUED 를 이어 돌린다(S-59). */
@@ -52,8 +54,12 @@ public class ExtractionRunner {
         try {
             ExtractRequest request = service.extractRequest(jobId);
             ExtractResponse result = ai.extract(request);
-            List<Long> activityIds = service.complete(jobId, request, result);
-            log.info("분석 작업 {} 완료 — 활동 {}개, 모델 {}", jobId, activityIds.size(), result.model());
+            AnalysisService.Completed completed = service.complete(jobId, request, result);
+            log.info("분석 작업 {} 완료 — 활동 {}개, 모델 {}", jobId, completed.activityIds().size(), result.model());
+            // 작업은 이미 끝났다 — STAR 는 기다리지 않고 뒤에서 이어 정리한다(횟수 안 셈 · 실패해도 분석은 성공)
+            if (!completed.starGroups().isEmpty()) {
+                starRunner.run(completed.starGroups());
+            }
         } catch (AiCallException e) {
             log.warn("분석 작업 {} 실패 — {} {}", jobId, e.code(), e.getMessage());
             fail(jobId, e.code(), e.getMessage());

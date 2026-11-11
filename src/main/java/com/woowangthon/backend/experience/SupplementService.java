@@ -28,7 +28,10 @@ public class SupplementService {
         String answer = Supplement.checkAnswer(request == null ? null : request.answer());
         Supplement supplement = supplements.findOwnedForUpdate(supplementId, CurrentUser.id())
                 .orElseThrow(() -> notFound(supplementId));
+        String before = supplement.getAnswer();
         supplement.changeAnswer(answer);
+        // STAR 칸이 가리키던 보완이면 칸이 새 답을 따르거나 「다시 정리」가 된다(계약 「다른 동작과의 관계」)
+        supplement.getExperience().onSupplementChanged(supplementId, before, answer, null);
         // 응답의 updatedAt 이 바뀐 시각이 되게 지금 저장한다
         supplements.flush();
         return ExperienceResponse.SupplementResponse.from(supplement);
@@ -49,6 +52,8 @@ public class SupplementService {
     public void delete(long userId, long supplementId) {
         Supplement supplement = supplements.findOwned(supplementId, userId).orElseThrow(() -> notFound(supplementId));
         Experience experience = supplement.getExperience();
+        // 그 보완을 가리키던 STAR 칸은 빈칸이 되고 경험은 「다시 정리」
+        experience.onSupplementDeleted(supplementId);
         supplements.delete(supplement);
         // 같은 요청 · 같은 영속성 컨텍스트에서 경험을 다시 읽어도 안 보이게
         if (Hibernate.isInitialized(experience.getSupplements())) {

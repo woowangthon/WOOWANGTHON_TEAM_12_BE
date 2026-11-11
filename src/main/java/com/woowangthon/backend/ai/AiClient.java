@@ -84,6 +84,11 @@ public class AiClient {
         return post(job, "/posting-match", request, PostingMatchResponse.class);
     }
 
+    /** 경험 STAR 칸 나누기(S-95) — 뒤에서 도는 작업이라 match 와 같은 제한 시간. */
+    public StarResponse star(StarRequest request) {
+        return post(job, "/star", request, StarResponse.class);
+    }
+
     /** 내가 쓴 답 근거 점검 — 작업(question-api 「근거 점검」). */
     public GroundCheckResponse groundCheck(GroundCheckRequest request) {
         return post(job, "/ground-check", request, GroundCheckResponse.class);

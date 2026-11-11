@@ -378,9 +378,9 @@ class McpApiTest {
         activities.findById(appId).orElseThrow().categorizeByAi(ActivityCategory.PROJECT);
         String rest = web.perform(get("/api/activities")).andReturn().getResponse().getContentAsString();
 
-        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안) · note(S-34) · 분류(S-57 — 화면 정리용)는 MCP 에 싣지 않는다
+        // mergeSuggestion(S-44 — 화면에서 사용자가 정할 AI 제안) · note(S-34) · 분류(S-57 — 화면 정리용) · STAR 빈칸 수(S-97)는 MCP 에 싣지 않는다
         JsonNode expected = json.readTree(rest);
-        expected.get("activities").forEach(a -> ((ObjectNode) a).remove(List.of("mergeSuggestion", "note", "category", "categoryBy")));
+        expected.get("activities").forEach(a -> ((ObjectNode) a).remove(List.of("mergeSuggestion", "note", "category", "categoryBy", "starGapCount", "starUnsortedCount")));
         JsonNode result = toolResult(call(token, "list_activities", "{}"));
 
         assertThat(result).isEqualTo(expected);
@@ -402,10 +402,11 @@ class McpApiTest {
         ObjectNode expected = (ObjectNode) json.readTree(rest);
         expected.remove(List.of("mergeSuggestion", "note", "links", "category", "categoryBy"));
         // 쓰인 지원(S-38)은 활동 세부 화면의 것, 공개 프로필 선택(S-65) · 저장(S-71)은 웹에서만 — MCP 경험엔 없다
-        expected.get("experiences").forEach(e -> ((ObjectNode) e).remove(List.of("usedIn", "shared", "saved")));
+        expected.get("experiences").forEach(e -> ((ObjectNode) e).remove(List.of("usedIn", "shared", "saved", "star")));
 
         assertThat(result).isEqualTo(expected);
         assertThat(result.get("experiences").get(0).has("usedIn")).isFalse();
+        assertThat(result.get("experiences").get(0).has("star")).isFalse();
         assertThat(result.get("experiences").get(0).has("shared")).isFalse();
         assertThat(result.has("mergeSuggestion")).isFalse();
         assertThat(result.has("note")).isFalse();

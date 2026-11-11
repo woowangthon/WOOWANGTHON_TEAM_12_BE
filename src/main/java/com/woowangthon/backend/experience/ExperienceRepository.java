@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface ExperienceRepository extends JpaRepository<Experience, Long> {
@@ -46,6 +47,12 @@ public interface ExperienceRepository extends JpaRepository<Experience, Long> {
     @Query("select count(e) from Experience e where e.activity.userId = :userId and e.shared = true "
             + "and e.sourceStatus <> com.woowangthon.backend.experience.SourceStatus.NEEDS_REVIEW")
     long countVisible(Long userId);
+
+    // 서버가 꺼지며 끊긴 STAR 정리(S-95) — 실패로 돌린다
+    @Modifying
+    @Query("update Experience e set e.starStatus = com.woowangthon.backend.experience.StarStatus.FAILED "
+            + "where e.starStatus = com.woowangthon.backend.experience.StarStatus.ANALYZING")
+    int failInterruptedStar();
 
     // 활동의 경험 맨 뒤 자리 — 경험이 없으면 -1
     @Query("select coalesce(max(e.position), -1) from Experience e where e.activity.id = :activityId")

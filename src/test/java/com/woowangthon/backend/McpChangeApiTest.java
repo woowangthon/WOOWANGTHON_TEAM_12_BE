@@ -463,7 +463,7 @@ class McpChangeApiTest {
                     List.of(new ExtractResponse.CitationResult("글", true, null))));
         }
         long activityId = analyses.complete(jobId, analyses.extractRequest(jobId), new ExtractResponse(
-                List.of(new ExtractResponse.ActivityResult("넣은 활동", null, null, null, extracted)), "test-model")).getFirst();
+                List.of(new ExtractResponse.ActivityResult("넣은 활동", null, null, null, extracted)), "test-model")).activityIds().getFirst();
         settle();
         List<Long> ids = jdbc.queryForList("select id from experience where activity_id = ? order by position", Long.class, activityId);
         return new Added(added.changeId(), added.submitted().sourceId(), jobId, activityId, ids);
