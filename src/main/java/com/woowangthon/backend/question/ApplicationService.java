@@ -53,7 +53,10 @@ public class ApplicationService {
 
     // organizationType · jobRole — 선택. 문자열로 받아 목록 밖이면 400(S-42). postingUrl — 선택, 빼면 null(S-46)
     public record ApplicationRequest(String organization, String organizationType, String jobRole, String postingUrl,
-            List<QuestionText> questions) {
+            List<QuestionText> questions, List<PostingLineInput> postingLines) {
+    }
+
+    public record PostingLineInput(String section, String text, String ksa, String readFrom) {
     }
 
     /** 외부 AI 가 만든 지원을 되돌려도 되나 볼 때 쓰는 지금 상태. touched — 사용자가 손댔다(계약 「변경 기록」 CHANGED_AFTER). */
@@ -69,8 +72,14 @@ public class ApplicationService {
     @Transactional
     public QuestionResponses.ApplicationSubmitted submit(long userId, ApplicationRequest request) {
         List<QuestionText> asked = request.questions();
-        if (asked == null || asked.isEmpty() || asked.size() > MAX_QUESTIONS_PER_SUBMIT) {
-            throw ApiException.invalidRequest("questions 는 1 ~ " + MAX_QUESTIONS_PER_SUBMIT + "개여야 합니다");
+        List<PostingLineInput> lines = request.postingLines() == null ? List.of() : request.postingLines();
+        if (asked == null || asked.size() > MAX_QUESTIONS_PER_SUBMIT
+                || (asked.isEmpty() && lines.isEmpty())) {
+            throw ApiException.invalidRequest("questions 는 0 ~ " + MAX_QUESTIONS_PER_SUBMIT
+                    + "개이며 문항 또는 공고 요건 줄이 있어야 합니다");
+        }
+        if (lines.size() > 40) {
+            throw ApiException.invalidRequest("postingLines 는 40줄까지입니다");
         }
         List<String> texts = new ArrayList<>();
         for (QuestionText q : asked) {
@@ -85,10 +94,25 @@ public class ApplicationService {
             throw ApiException.invalidRequest(
                     "postingUrl 은 " + PostingUrls.MAX_LENGTH + "자 이하의 http(s):// 주소여야 합니다");
         }
-        limiter.consume(userId, texts.size());
-
-        Application application = applications.save(
-                new Application(userId, organization, organizationType, jobRole, postingUrl));
+        Application application = new Application(userId, organization, organizationType, jobRole, postingUrl);
+        for (PostingLineInput line : lines) {
+            if (line == null || line.text() == null || line.text().isBlank() || line.text().length() > 300) {
+                throw ApiException.invalidRequest("postingLines[].text 는 1 ~ 300자여야 합니다");
+            }
+            PostingSection section = QuestionService.value(PostingSection.class, line.section(), "section");
+            Ksa ksa = QuestionService.value(Ksa.class, line.ksa(), "ksa");
+            ReadFrom readFrom = QuestionService.value(ReadFrom.class, line.readFrom(), "readFrom");
+            if (section == null || readFrom == null) {
+                throw ApiException.invalidRequest("postingLines[].section · readFrom 이 필요합니다");
+            }
+            application.getPostingLines().add(new ApplicationPostingLine(application,
+                    application.getPostingLines().size(), section, line.text(), ksa, readFrom));
+        }
+        // 공고 기준 경험 찾기의 1회는 BE#174에서 실제 작업 시작과 함께 더한다.
+        if (!texts.isEmpty()) {
+            limiter.consume(userId, texts.size());
+        }
+        applications.save(application);
         // 하나씩 저장해 ID 가 넣은 순서대로 커지게 한다 — 지원 안의 문항 순서는 ID 순서다
         List<Long> questionIds = new ArrayList<>();
         for (String text : texts) {

@@ -193,7 +193,7 @@ class DraftFreeRegenerateApiTest {
         jdbc.execute("truncate table new_fact_candidate, answer_dismissed, answer, answer_draft, draft_sentence_evidence, draft_sentence, draft_omitted, draft_guideline, draft_experience, draft, "
                 + "grounding_sentence_evidence, grounding_sentence, grounding_check, "
                 + "question_recommendation_evidence, question_recommendation, question_requirement, supplement, clarification, "
-                + "question, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
+                + "question, application_posting_line, application, analysis_usage, analysis_job_activity, analysis_job, citation, experience, activity_link, activity, source_section, source");
     }
 
     // --- freeRegenerate 와 실제 횟수 ---
