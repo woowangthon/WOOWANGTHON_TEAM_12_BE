@@ -25,8 +25,8 @@ public class RevisionController {
     @GetMapping
     public RevisionService.Page list(@RequestParam(required = false) String targetType,
             @RequestParam(required = false) Long targetId, @RequestParam(required = false) String cursor,
-            @RequestParam(required = false) Integer limit) {
-        return service.list(targetType, targetId, cursor, limit);
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Long activityId) {
+        return service.list(targetType, targetId, activityId, cursor, limit);
     }
 
     @PostMapping("/{revisionId}/restore")
