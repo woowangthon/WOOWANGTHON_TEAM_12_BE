@@ -10,7 +10,8 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * get_question — GET /api/questions/{questionId} 에서 draft · answer 를 뺀 응답(계약 「외부 쓰기 도구」 · S-55).
+ * get_question — GET /api/questions/{questionId} 에서 draft · answer · answerDraft(쓰는 중인 답 · S-72)를 뺀 응답
+ * (계약 「외부 쓰기 도구」 · S-55) — 사용자가 웹에서 쓰는 글은 외부 AI 로 나가지 않는다(ETC#316).
  * 문항 · 추천은 지금 연결의 전송 범위보다 넓어서 읽기 도구지만 READ_WRITE 에만 보인다(ADR-011) — 차곡이 도구 목록도 그대로다.
  */
 @Component
@@ -42,7 +43,7 @@ public class GetQuestionTool implements McpTool {
                 "description", """
                         문항 하나의 요구사항 · 추천 · 되묻기를 돌려준다. questionId 는 create_application 결과의 questionIds. \
                         status 가 ANALYZING 이면 아직 분석 중이라 비어 있다 — 잠시 뒤 다시 부른다. \
-                        FAILED 면 실패했다고 말하고 추천을 지어내지 않는다. 초안 · 확정 답변은 싣지 않는다 — 웹에서 한다.""",
+                        FAILED 면 실패했다고 말하고 추천을 지어내지 않는다. 초안 · 쓰는 중인 답 · 확정 답변은 싣지 않는다 — 웹에서 한다.""",
                 "inputSchema", Map.of(
                         "type", "object",
                         "properties", Map.of("questionId", Map.of("type", "integer", "description", "문항 id")),
@@ -58,6 +59,7 @@ public class GetQuestionTool implements McpTool {
         ObjectNode question = json.valueToTree(questions.get(caller.userId(), questionId));
         question.remove("draft");
         question.remove("answer");
+        question.remove("answerDraft");
         return question;
     }
 }

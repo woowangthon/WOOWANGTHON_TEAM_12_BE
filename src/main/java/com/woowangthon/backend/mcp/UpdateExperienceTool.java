@@ -72,6 +72,6 @@ public class UpdateExperienceTool implements McpTool {
         McpWriteService.UpdatedExperience updated = writes.updateExperience(caller.userId(), caller.client(), experienceId,
                 expected, content, reason);
         return Map.of("changeId", updated.changeId(), "experienceId", updated.experienceId(),
-                "sourceStatus", updated.sourceStatus());
+                "sourceStatus", updated.sourceStatus(), "notice", McpNotice.UPDATE_EXPERIENCE);
     }
 }

@@ -105,7 +105,7 @@ public class CreateApplicationTool implements McpWriteTool {
         QuestionResponses.ApplicationSubmitted submitted = created.submitted();
         submitted.questionIds().forEach(matches::run); // 위 트랜잭션이 끝난 뒤 — 추천은 뒤에서 돈다
         return Map.of("changeId", created.changeId(), "applicationId", submitted.applicationId(),
-                "questionIds", submitted.questionIds(), "status", JobStatus.ANALYZING);
+                "questionIds", submitted.questionIds(), "status", JobStatus.ANALYZING, "notice", McpNotice.CREATE_APPLICATION);
     }
 
     @Override

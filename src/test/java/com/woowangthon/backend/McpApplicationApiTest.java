@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -158,6 +159,7 @@ class McpApplicationApiTest {
         long first = result.get("questionIds").get(0).asLong();
         long second = result.get("questionIds").get(1).asLong();
         assertThat(result.get("status").asString()).isEqualTo("ANALYZING");
+        assertThat(result.get("notice").asString()).startsWith("추천을 만드는 중이에요");
         verify(matches).run(first);
         verify(matches).run(second);
         em.flush();
@@ -252,7 +254,7 @@ class McpApplicationApiTest {
     // --- get_question ---
 
     @Test
-    void 분석_중이면_비어_있고_끝나면_추천을_읽고_draft_answer_는_싣지_않는다() throws Exception {
+    void 분석_중이면_비어_있고_끝나면_추천을_읽고_draft_answer_쓰는_중인_답은_싣지_않는다() throws Exception {
         Created created = create(ONE_QUESTION);
         long questionId = created.firstQuestion();
 
@@ -263,6 +265,9 @@ class McpApplicationApiTest {
         assertThat(analyzing.has("answer")).isFalse();
 
         finish(questionId);
+        // 웹에서 쓰는 중인 답(S-72)은 외부 AI 로 나가지 않는다(ETC#316)
+        web.perform(put("/api/questions/{id}/answer-draft", questionId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\": \"웹에서 쓰는 중인 답\"}")).andExpect(status().isOk());
 
         JsonNode done = toolResult(call(token, "get_question", "{\"questionId\":\"" + questionId + "\"}"));
         assertThat(done.get("status").asString()).isEqualTo("COMPLETED");
@@ -272,11 +277,14 @@ class McpApplicationApiTest {
         assertThat(done.get("clarifications").get(0).get("question").asString()).isEqualTo("어떻게 확인했나요?");
         assertThat(done.has("draft")).isFalse();
         assertThat(done.has("answer")).isFalse();
+        assertThat(done.has("answerDraft")).isFalse();
+        assertThat(done.toString()).doesNotContain("웹에서 쓰는 중인 답");
 
         // 나머지는 GET /api/questions/{id} 와 같다
         JsonNode api = json.readTree(web.perform(get("/api/questions/{id}", questionId)).andReturn().getResponse()
                 .getContentAsString());
-        ((ObjectNode) api).remove(List.of("draft", "answer"));
+        assertThat(api.get("answerDraft").get("text").asString()).isEqualTo("웹에서 쓰는 중인 답");
+        ((ObjectNode) api).remove(List.of("draft", "answer", "answerDraft"));
         assertThat(done).isEqualTo(api);
     }
 

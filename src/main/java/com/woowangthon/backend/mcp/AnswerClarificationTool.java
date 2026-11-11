@@ -58,6 +58,6 @@ public class AnswerClarificationTool implements McpTool {
         McpWriteService.AnsweredClarification answered = writes.answerClarification(caller.userId(), caller.client(),
                 clarificationId, answer);
         return Map.of("changeId", answered.changeId(), "supplementId", answered.supplementId(),
-                "experienceId", answered.experienceId());
+                "experienceId", answered.experienceId(), "notice", McpNotice.ANSWER_CLARIFICATION);
     }
 }

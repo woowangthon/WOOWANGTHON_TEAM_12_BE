@@ -217,6 +217,7 @@ class McpWriteApiTest {
         long sourceId = result.get("sourceId").asLong();
         long jobId = result.get("jobId").asLong();
         assertThat(result.get("status").asString()).isEqualTo("ANALYZING");
+        assertThat(result.get("notice").asString()).startsWith("분석 중이에요");
         verify(extractions).run(jobId);
         em.flush();
         assertThat(jdbc.queryForMap("select kind, text from source where id = ?", sourceId))
@@ -309,6 +310,7 @@ class McpWriteApiTest {
         long changeId = result.get("changeId").asLong();
         assertThat(result.get("experienceId").asLong()).isEqualTo(id);
         assertThat(result.get("sourceStatus").asString()).isEqualTo("NEEDS_REVIEW");
+        assertThat(result.get("notice").asString()).startsWith("고친 글은 ‘확인 필요’ 상태예요");
         em.flush();
         assertThat(untouchedColumns(id)).isEqualTo(otherBefore);
         assertThat(jdbc.queryForMap("select type, client, status, reason, experience_id, activity_id, before_content, "
