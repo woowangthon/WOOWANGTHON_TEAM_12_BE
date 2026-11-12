@@ -3,6 +3,8 @@ package com.woowangthon.backend.experience;
 import com.woowangthon.backend.common.ApiException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -44,6 +46,11 @@ public class Supplement {
     @Column(nullable = false)
     private String answer;
 
+    // 칸 비우기는 STAR 에서 생긴 글만 지운다. 되묻기 · 외부 AI 연결이 사라져도 출처는 남는다(BE#190).
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private SupplementOrigin origin = SupplementOrigin.CLARIFICATION;
+
     // 외부 AI 가 전해 사용자가 아직 정하지 않았을 때만 찬다(S-56 · 계약 mcpChange). 찬 동안은 근거가 아니다
     private Long mcpChangeId;
 
@@ -66,6 +73,16 @@ public class Supplement {
         this.questionId = questionId;
         this.question = question;
         this.answer = answer;
+    }
+
+    public static Supplement fromStar(Experience experience, String question, String answer) {
+        Supplement supplement = new Supplement(experience, null, null, question, answer);
+        supplement.origin = SupplementOrigin.STAR;
+        return supplement;
+    }
+
+    public boolean isFromStar() {
+        return origin == SupplementOrigin.STAR;
     }
 
     /**
@@ -93,6 +110,7 @@ public class Supplement {
 
     /** 외부 AI 가 전한 답이다 — 사용자가 맞아요를 누르거나 웹에서 고칠 때까지 근거가 아니다(S-56). */
     public void markFromExternalAi(long changeId, String client) {
+        origin = SupplementOrigin.EXTERNAL_AI;
         mcpChangeId = changeId;
         mcpClient = client;
     }

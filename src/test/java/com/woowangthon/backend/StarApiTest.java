@@ -379,7 +379,7 @@ class StarApiTest {
                 .andExpect(jsonPath("$.supplements.length()").value(3))
                 .andExpect(jsonPath("$.star.status").value("READY"));
 
-        // 빈 글 — 칸만 비운다(보완은 남고 질문은 그대로)
+        // 되묻기 답을 가리킨 칸은 비워도 보완이 남는다
         edit(chat, "A", " ").andExpect(status().isOk())
                 .andExpect(jsonPath("$.star.slots[2].sourceType").value(nullValue()))
                 .andExpect(jsonPath("$.supplements.length()").value(3));
@@ -389,6 +389,116 @@ class StarApiTest {
                 .andExpect(jsonPath("$.supplements[3].question").value("바꾼 뒤 무엇이 달라졌나요?"));
         edit(chat, "S", "가".repeat(1001)).andExpect(status().isBadRequest());
         edit(chat, "Q", "칸 밖").andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 칸을_비우면_칸에서_만든_보완과_추천_근거도_지워지고_질문은_남는다() throws Exception {
+        sort();
+        awaitNotAnalyzing();
+        int calls = STARRED.size();
+        String filled = answer(chat, "T", "제가 맡았어요").andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long supplement = ((Number) JsonPath.read(filled, "$.star.slots[1].sourceId")).longValue();
+        Question question = questions.save(new Question(applications.save(new Application(TestLogin.USER_ID, "지원")),
+                "문항"));
+        long recommendation = jdbc.queryForObject("insert into question_recommendation "
+                + "(question_id, position, experience_id, reason, emphasis) values (?, 0, ?, '이유', '강조') returning id",
+                Long.class, question.getId(), chat);
+        jdbc.update("insert into question_recommendation_evidence (recommendation_id, position, type, ref_id) "
+                + "values (?, 0, 'CITATION', ?), (?, 1, 'SUPPLEMENT', ?), (?, 2, 'SUPPLEMENT', ?)",
+                recommendation, chatCitation, recommendation, supplement, recommendation, chatSupplement);
+
+        edit(chat, "T", "  ").andExpect(status().isOk())
+                .andExpect(jsonPath("$.star.status").value("READY"))
+                .andExpect(jsonPath("$.star.hasNew").value(false))
+                .andExpect(jsonPath("$.star.slots[1].sourceType").value(nullValue()))
+                .andExpect(jsonPath("$.star.slots[1].sourceId").value(nullValue()))
+                .andExpect(jsonPath("$.star.slots[1].text").value(nullValue()))
+                .andExpect(jsonPath("$.star.slots[1].question").value("이 문제를 고치는 일은 누가 맡았나요?"))
+                .andExpect(jsonPath("$.supplements.length()").value(2))
+                .andExpect(jsonPath("$.supplements[?(@.id == " + supplement + ")]").isEmpty())
+                .andExpect(jsonPath("$.supplements[0].origin").doesNotExist())
+                .andExpect(jsonPath("$.citations[0].quote").value(CHAT_QUOTE));
+        assertThat(supplements.existsById(supplement)).isFalse();
+        assertThat(jdbc.queryForList("select ref_id from question_recommendation_evidence "
+                + "where recommendation_id = ? order by position", Long.class, recommendation))
+                .containsExactly(chatCitation, chatSupplement);
+        assertThat(jdbc.queryForList("select position from question_recommendation_evidence "
+                + "where recommendation_id = ? order by position", Integer.class, recommendation))
+                .containsExactly(0, 1);
+        mvc.perform(get("/api/activities/{id}", app))
+                .andExpect(jsonPath("$.experiences[0].star.slots[1].sourceType").value(nullValue()))
+                .andExpect(jsonPath("$.experiences[0].star.slots[1].question").value("이 문제를 고치는 일은 누가 맡았나요?"))
+                .andExpect(jsonPath("$.experiences[0].supplements.length()").value(2));
+        edit(chat, "T", "").andExpect(status().isOk());
+        assertThat(STARRED).hasSize(calls);
+        assertThat(usage()).isZero();
+    }
+
+    @Test
+    void 근거_칸을_고친_보완과_빈칸을_고친_보완도_비우면_지운다() throws Exception {
+        sort();
+        awaitNotAnalyzing();
+        for (String slot : List.of("S", "R")) {
+            edit(chat, slot, "그 자리에서 고친 글").andExpect(status().isOk());
+            edit(chat, slot, "고친 글을 다시 고침").andExpect(status().isOk());
+            edit(chat, slot, "").andExpect(status().isOk())
+                    .andExpect(jsonPath("$.supplements.length()").value(2))
+                    .andExpect(jsonPath("$.citations[0].quote").value(CHAT_QUOTE));
+        }
+        mvc.perform(get("/api/activities/{id}", app))
+                .andExpect(jsonPath("$.experiences[0].star.slots[0].sourceType").value(nullValue()))
+                .andExpect(jsonPath("$.experiences[0].star.slots[3].sourceType").value(nullValue()))
+                .andExpect(jsonPath("$.experiences[0].supplements.length()").value(2))
+                .andExpect(jsonPath("$.experiences[0].citations[0].quote").value(CHAT_QUOTE));
+    }
+
+    @Test
+    void 다른_칸이_같은_보완을_가리키면_마지막_칸을_비울_때_지운다() throws Exception {
+        sort();
+        awaitNotAnalyzing();
+        String filled = answer(chat, "T", "제가 맡았어요").andReturn().getResponse().getContentAsString();
+        long supplement = ((Number) JsonPath.read(filled, "$.star.slots[1].sourceId")).longValue();
+        jdbc.update("update experience_star_slot set source_type = 'SUPPLEMENT', source_id = ?, text = ? "
+                + "where experience_id = ? and slot = 'R'", supplement, "제가 맡았어요", chat);
+        edit(chat, "T", "").andExpect(status().isOk())
+                .andExpect(jsonPath("$.star.slots[3].sourceId").value(supplement))
+                .andExpect(jsonPath("$.supplements.length()").value(3));
+        assertThat(supplements.existsById(supplement)).isTrue();
+        edit(chat, "R", "").andExpect(status().isOk())
+                .andExpect(jsonPath("$.supplements.length()").value(2));
+        assertThat(supplements.existsById(supplement)).isFalse();
+    }
+
+    @Test
+    void 되묻기_연결을_잃거나_외부_AI_답을_확인한_뒤에도_칸을_비우면_보완은_남는다() throws Exception {
+        sort();
+        awaitNotAnalyzing();
+        Question question = questions.save(new Question(applications.save(new Application(TestLogin.USER_ID, "지원")),
+                "문항"));
+        long asked = clarification(question, "결과는 어땠나요?");
+        mvc.perform(post("/api/clarifications/{id}/answer", asked).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"answer\":\"지연이 사라졌어요\"}")).andExpect(status().isCreated());
+        long webSupplement = supplements.findByClarificationIdIn(List.of(asked)).getFirst().getId();
+        long change = mcpWrites.answerClarification(TestLogin.USER_ID, "claude-ai",
+                clarification(question, "어떻게 확인했나요?"), "반복 테스트했어요").changeId();
+        mcpChanges.confirm(TestLogin.USER_ID, change);
+        long externalSupplement = jdbc.queryForObject("select id from supplement where answer = '반복 테스트했어요'",
+                Long.class);
+        jdbc.update("delete from clarification where question_id = ?", question.getId());
+        jdbc.update("update supplement set question_id = null where experience_id = ?", chat);
+        for (long supplement : List.of(webSupplement, externalSupplement)) {
+            jdbc.update("update experience_star_slot set source_type = 'SUPPLEMENT', source_id = ?, "
+                    + "text = (select answer from supplement where id = ?) where experience_id = ? and slot = 'R'",
+                    supplement, supplement, chat);
+            edit(chat, "R", "").andExpect(status().isOk())
+                    .andExpect(jsonPath("$.star.slots[3].sourceType").value(nullValue()))
+                    .andExpect(jsonPath("$.supplements.length()").value(4));
+            assertThat(supplements.existsById(supplement)).isTrue();
+        }
+        // 근거 칸은 원문을 지우지 않는다
+        edit(chat, "S", "").andExpect(status().isOk())
+                .andExpect(jsonPath("$.citations[0].quote").value(CHAT_QUOTE));
     }
 
     @Test
