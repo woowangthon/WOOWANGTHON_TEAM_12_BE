@@ -113,7 +113,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | API | 하는 일 |
 | --- | --- |
 | `GET /api/mcp/connection` | 연결 상태 — 쓰기를 켰나(`writeEnabled`) · 만든 시각 · 마지막으로 MCP 요청이 온 시각 |
-| `POST /api/mcp/connection` | 연결 주소 만들기 · 다시 만들기(201) — 주소(`url`)는 이 응답에만. 예전 주소는 바로 401, 새 연결은 쓰기가 꺼진 채 시작 |
+| `POST /api/mcp/connection` | 연결 주소 만들기 · 다시 만들기(201) — 주소(`url`)는 이 응답에만. 예전 주소는 바로 404, 새 연결은 쓰기가 꺼진 채 시작 |
 | `PATCH /api/mcp/connection` | 쓰기 켜기 · 끄기(S-52) — 주소는 그대로, 다음 MCP 요청부터 적용 |
 | `DELETE /api/mcp/connection` | 연결 끊기(204) |
 | `POST /mcp/{token}` | MCP 엔드포인트(JSON-RPC, 로그인 세션 무관) — 읽기 도구 `search_experiences` · `list_activities` · `get_activity`. 쓰기를 켠 연결은 `add_source` · `update_experience` 를 바로 실행 — 고친 경험은 `NEEDS_REVIEW`, 변경 기록(`mcp_change`)이 남는다 |

@@ -173,10 +173,10 @@ class ChagokApiTest {
         assertThat((String) JsonPath.read(sent, "$.mcpUrl")).startsWith("http://be.test/mcp/");
         assertThat((Integer) JsonPath.read(sent, "$.maxToolCalls")).isEqualTo(8);
         assertThat((Object) JsonPath.read(sent, "$.context.question")).isNull();
-        // 일이 끝나면 401, 한도는 1회
+        // 일이 끝나면 404, 한도는 1회
         awaitChagokTokensGone();
         mvc.perform(post(path(JsonPath.read(sent, "$.mcpUrl"))).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}")).andExpect(status().isUnauthorized());
+                .content("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}")).andExpect(status().isNotFound());
         assertThat(usage()).isEqualTo(1);
     }
 
@@ -217,14 +217,14 @@ class ChagokApiTest {
     }
 
     @Test
-    void 만료된_토큰은_401() throws Exception {
+    void 만료된_토큰은_404() throws Exception {
         hold = new CountDownLatch(1);
         lines = List.of(MESSAGE);
         long runId = start("찾아 줘");
         awaitReceived();
         jdbc.update("update access_token set expires_at = now() - interval '1 second' where scope = 'CHAGOK'");
         mvc.perform(rpc(path(JsonPath.read(RECEIVED.getFirst(), "$.mcpUrl")), "ping", "{}"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isNotFound());
         mvc.perform(post("/api/chagok/runs/" + runId + "/cancel"));
     }
 
