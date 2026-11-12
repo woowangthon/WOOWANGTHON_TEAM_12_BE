@@ -31,6 +31,7 @@ import com.woowangthon.backend.question.ApplicationRepository;
 import com.woowangthon.backend.question.InterruptedQuestionCleaner;
 import com.woowangthon.backend.question.Question;
 import com.woowangthon.backend.question.QuestionRepository;
+import com.woowangthon.backend.question.QuestionService;
 import com.woowangthon.backend.source.Source;
 import com.woowangthon.backend.source.SourceKind;
 import com.woowangthon.backend.source.SourceRepository;
@@ -144,6 +145,9 @@ class QuestionApiTest {
     InterruptedQuestionCleaner cleaner;
 
     @Autowired
+    QuestionService questionService;
+
+    @Autowired
     EntityManagerFactory entityManagerFactory;
 
     MockMvc mvc;
@@ -225,6 +229,73 @@ class QuestionApiTest {
                   "model": "test-model"
                 }
                 """.formatted(chat, retro, chatCitation, retroCitation);
+    }
+
+    @Test
+    void 같은_지원의_다른_문항_미답변만_싣고_답변과_삭제를_수정_재시도에도_반영한다() throws Exception {
+        long other = submit(QUESTION_A);
+        awaitDone(other);
+        long first = submit(QUESTION_A);
+        String done = awaitDone(first);
+        long applicationId = ((Number) JsonPath.read(done, "$.applicationId")).longValue();
+        // 다른 지원에 같은 경험의 질문이 있어도 첫 문항 · 단독 문항엔 칸을 싣지 않는다.
+        assertThat(JsonPath.<List<?>>read(RECEIVED.getLast(), "$.experiences[*].askedQuestions")).isEmpty();
+
+        String added = addQuestion(applicationId, "{\"text\":\"협업한 경험을 적어 주세요\"}")
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        long second = ((Number) JsonPath.read(added, "$.questionId")).longValue();
+        assertThat((String) JsonPath.read(awaitDone(second), "$.status")).isEqualTo("COMPLETED");
+        String chatQuestion = "폴링을 WebSocket 으로 바꿀 때 직접 고친 부분은 어디였나요?";
+        String retroQuestion = "매주 회고에서 직접 맡은 일이 있었다면 무엇이었나요?";
+        assertThat(askedQuestions(chat)).containsExactly(chatQuestion);
+        assertThat(askedQuestions(retro)).containsExactly(retroQuestion);
+        assertThat(askedQuestions(study)).isEmpty();
+        // 완료한 현재 문항에도 되묻기가 있지만, 요청을 만들 때 자기 질문은 포함하지 않는다.
+        assertThat(questionService.matchRequest(second).experiences().stream().filter(e -> e.id() == chat)
+                .findFirst().orElseThrow().askedQuestions()).containsExactly(chatQuestion);
+
+        long clarificationId = ((Number) JsonPath.read(done, "$.clarifications[0].id")).longValue();
+        long supplementId = answeredSupplement(clarificationId);
+        mvc.perform(post("/api/questions/{id}/retry", second)).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDone(second), "$.status")).isEqualTo("COMPLETED");
+        assertThat(askedQuestions(chat)).isEmpty();
+        assertThat(askedQuestions(retro)).containsExactly(retroQuestion);
+        assertThat(JsonPath.<List<String>>read(RECEIVED.getLast(), "$.experiences[*].supplements[*].answer"))
+                .containsExactly(CHAT_ANSWER);
+
+        mvc.perform(delete("/api/supplements/{id}", supplementId)).andExpect(status().isNoContent());
+        patchQuestion(second, "{\"text\":\"문제를 해결하며 협업한 경험을 적어 주세요\"}")
+                .andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitDone(second), "$.status")).isEqualTo("COMPLETED");
+        assertThat(askedQuestions(chat)).containsExactly(chatQuestion);
+    }
+
+    @Test
+    void 미답변_질문은_경험마다_최근_열_개까지_싣는다() throws Exception {
+        long first = submit(QUESTION_A);
+        String done = awaitDone(first);
+        long applicationId = ((Number) JsonPath.read(done, "$.applicationId")).longValue();
+        Application application = applications.findById(applicationId).orElseThrow();
+        for (int i = 0; i < 4; i++) {
+            Question sibling = new Question(application, "추가 문항 " + i);
+            sibling.complete(null, List.of(), List.of(), List.of());
+            long siblingId = questions.save(sibling).getId();
+            for (int j = 0; j < 3; j++) {
+                jdbc.update("insert into clarification (question_id, position, experience_id, question) values (?, ?, ?, ?)",
+                        siblingId, j, chat, "미답변 " + (i * 3 + j));
+            }
+        }
+        String added = addQuestion(applicationId, "{\"text\":\"새 문항\"}")
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        long current = ((Number) JsonPath.read(added, "$.questionId")).longValue();
+        assertThat((String) JsonPath.read(awaitDone(current), "$.status")).isEqualTo("COMPLETED");
+        assertThat(askedQuestions(chat)).containsExactly("미답변 11", "미답변 10", "미답변 9", "미답변 8", "미답변 7",
+                "미답변 6", "미답변 5", "미답변 4", "미답변 3", "미답변 2");
+        assertThat(askedQuestions(retro)).containsExactly("매주 회고에서 직접 맡은 일이 있었다면 무엇이었나요?");
+    }
+
+    private List<String> askedQuestions(long experienceId) {
+        return JsonPath.read(RECEIVED.getLast(), "$.experiences[?(@.id == " + experienceId + ")].askedQuestions[*]");
     }
 
     // --- 문항 넣기 → 완료 ---

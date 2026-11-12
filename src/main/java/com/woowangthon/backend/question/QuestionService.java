@@ -11,6 +11,7 @@ import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.ExperienceRepository;
 import com.woowangthon.backend.job.JobStatus;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,6 +45,7 @@ public class QuestionService {
     private static final int MAX_RECOMMENDATIONS = 8;
     private static final int MAX_RECOMMENDED_ACTIVITIES = 5;
     private static final int MAX_CLARIFICATIONS = 3;
+    private static final int MAX_ASKED_QUESTIONS = 10;
 
     private final QuestionRepository questions;
     private final ApplicationRepository applications;
@@ -54,11 +56,13 @@ public class QuestionService {
     private final AnswerDraftService answerDrafts;
     private final DraftRepository draftRows;
     private final GroundingCheckRepository checks;
+    private final ClarificationRepository clarifications;
 
     public QuestionService(QuestionRepository questions, ApplicationRepository applications,
             ExperienceRepository experiences, UsageLimiter limiter, DraftService drafts,
             AnswerService answers, AnswerDraftService answerDrafts, DraftRepository draftRows,
-            GroundingCheckRepository checks) {
+            GroundingCheckRepository checks, ClarificationRepository clarifications) {
+        this.clarifications = clarifications;
         this.draftRows = draftRows;
         this.checks = checks;
         this.questions = questions;
@@ -221,12 +225,28 @@ public class QuestionService {
                 : application.getPostingLines().stream()
                         .map(l -> new MatchRequest.PostingLinePart(l.getSection(), l.getText(), l.getKsa())).toList();
         return new MatchRequest(new MatchRequest.QuestionPart(question.getOrganization(), question.getText(), jobRole,
-                postingLines), experienceParts(question.getUserId()));
+                postingLines), experienceParts(question.getUserId(),
+                        application == null ? null : application.getId(), questionId));
     }
 
     /** 사용자의 경험 전부를 ai-api.md 「POST /match」 experiences 모양으로 — 매칭과 꺼내기(/ask, S-29)가 같이 쓴다. */
     @Transactional(readOnly = true)
     public List<MatchRequest.ExperiencePart> experienceParts(long userId) {
+        return experienceParts(userId, null, null);
+    }
+
+    /** 매칭용 후보 — 같은 지원서의 다른 문항에 남은 미답변 질문을 경험별 최근 10개까지 싣는다(ETC#354). */
+    @Transactional(readOnly = true)
+    public List<MatchRequest.ExperiencePart> experienceParts(long userId, Long applicationId, Long excludedQuestionId) {
+        Map<Long, List<String>> asked = new HashMap<>();
+        if (applicationId != null) {
+            for (Clarification c : clarifications.findUnansweredInOtherQuestions(applicationId, userId, excludedQuestionId)) {
+                List<String> texts = asked.computeIfAbsent(c.getExperienceId(), id -> new ArrayList<>());
+                if (texts.size() < MAX_ASKED_QUESTIONS) {
+                    texts.add(c.getText());
+                }
+            }
+        }
         return experiences.findAllOfUser(userId).stream()
                 .map(e -> new MatchRequest.ExperiencePart(e.getId(), e.getActivity().getId(), e.getActivity().getName(),
                         e.getActivity().getPeriod(), e.getContent(), e.getCompetencies(), e.getActor(),
@@ -234,7 +254,8 @@ public class QuestionService {
                         e.getCitations().stream().map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
                         // 앞 문항에서 답한 보완도 근거로 쓸 수 있게 싣는다(S-25) — 확인 전인 외부 AI 답은 뺀다(S-56)
                         e.getConfirmedSupplements().stream()
-                                .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList()))
+                                .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList(),
+                        asked.getOrDefault(e.getId(), List.of())))
                 .toList();
     }
 

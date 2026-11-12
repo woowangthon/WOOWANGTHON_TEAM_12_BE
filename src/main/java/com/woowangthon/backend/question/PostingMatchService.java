@@ -62,7 +62,7 @@ public class PostingMatchService {
                         a.getPostingLines().stream()
                                 .map(l -> new PostingMatchRequest.LinePart(l.getId(), l.getSection(), l.getText(), l.getKsa()))
                                 .toList(),
-                        questionService.experienceParts(a.getUserId())));
+                        questionService.experienceParts(a.getUserId(), a.getId(), null)));
     }
 
     /**

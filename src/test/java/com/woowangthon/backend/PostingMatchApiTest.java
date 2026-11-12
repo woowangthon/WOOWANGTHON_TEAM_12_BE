@@ -194,6 +194,48 @@ class PostingMatchApiTest {
     }
 
     @Test
+    void 공고_찾기는_같은_지원의_문항_미답변만_싣고_문항이_없으면_생략한다() throws Exception {
+        long id = submit("{\"questions\":[],\"postingLines\":" + LINES + "}");
+        assertThat((String) JsonPath.read(awaitPosting(id), "$.postingMatch.status")).isEqualTo("COMPLETED");
+        assertThat(JsonPath.<List<?>>read(POSTED.getLast(), "$.experiences[*].askedQuestions")).isEmpty();
+
+        String added = mvc.perform(post("/api/applications/{id}/questions", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"문제를 해결한 경험\"}"))
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        long questionId = ((Number) JsonPath.read(added, "$.questionId")).longValue();
+        awaitQuestions(id);
+        // 공고에서 이미 물은 것은 문항 매칭의 수집 대상도 아니다.
+        assertThat(JsonPath.<List<?>>read(MATCHED.getLast(), "$.experiences[*].askedQuestions")).isEmpty();
+        long unanswered = jdbc.queryForObject(
+                "insert into clarification (question_id, position, experience_id, question) values (?, 0, ?, ?) returning id",
+                Long.class, questionId, chat, "직접 고친 부분은 어디였나요?");
+        long answered = jdbc.queryForObject(
+                "insert into clarification (question_id, position, experience_id, question) values (?, 1, ?, ?) returning id",
+                Long.class, questionId, retro, "직접 설계한 API 는 무엇인가요?");
+        mvc.perform(post("/api/clarifications/{id}/answer", answered)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"answer\":\"게시글 API 를 설계했다\"}"))
+                .andExpect(status().isCreated());
+        // 같은 경험을 가리키더라도 다른 지원 · 다른 사용자의 되묻기는 들어가지 않는다.
+        long otherId = submit("{\"questions\":[{\"text\":\"다른 지원\"}]}");
+        awaitQuestions(otherId);
+        long otherQuestion = jdbc.queryForObject("select id from question where application_id = ?", Long.class, otherId);
+        jdbc.update("insert into clarification (question_id, position, experience_id, question) values (?, 0, ?, ?)",
+                otherQuestion, chat, "다른 지원의 질문");
+        long otherUser = jdbc.queryForObject("insert into app_user (name) values ('다른 사용자') returning id", Long.class);
+        jdbc.update("update question set user_id = ? where id = ?", otherUser, otherQuestion);
+        jdbc.update("update application set user_id = ? where id = ?", otherUser, otherId);
+
+        retry(id).andExpect(status().isAccepted());
+        assertThat((String) JsonPath.read(awaitPosting(id), "$.postingMatch.status")).isEqualTo("COMPLETED");
+        assertThat(JsonPath.<List<String>>read(POSTED.getLast(), "$.experiences[*].askedQuestions[*]"))
+                .containsExactly("직접 고친 부분은 어디였나요?");
+        assertThat(JsonPath.<List<String>>read(POSTED.getLast(), "$.experiences[*].supplements[*].answer"))
+                .containsExactly("게시글 API 를 설계했다");
+        assertThat(jdbc.queryForObject("select count(*) from clarification where id = ?", Integer.class, unanswered))
+                .isEqualTo(1);
+    }
+
+    @Test
     void 공고_되묻기에_답하면_보완이_되고_다시_찾기는_옛_판정_되묻기만_지운다() throws Exception {
         long id = submit("{\"questions\":[],\"postingLines\":" + LINES + "}");
         String done = awaitPosting(id);
