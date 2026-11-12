@@ -40,12 +40,14 @@ public class StarService {
     private final ActivityRepository activities;
     private final ExperienceRepository experiences;
     private final SupplementRepository supplements;
+    private final SupplementService supplementService;
 
     public StarService(ActivityRepository activities, ExperienceRepository experiences,
-            SupplementRepository supplements) {
+            SupplementRepository supplements, SupplementService supplementService) {
         this.activities = activities;
         this.experiences = experiences;
         this.supplements = supplements;
+        this.supplementService = supplementService;
     }
 
     public record AnswerRequest(String answer) {
@@ -346,7 +348,8 @@ public class StarService {
     }
 
     /**
-     * 칸 고치기(S-96) — 빈 글이면 칸만 비운다(보완은 남는다). 빈칸이면 답하기와 같고, 근거 칸이면 근거는 그대로 두고 새 보완으로 덮고,
+     * 칸 고치기(S-96) — 빈 글이면 칸을 비우고, 칸에서 만든 보완을 더 쓰는 칸이 없으면 같이 지운다.
+     * 빈칸이면 답하기와 같고, 근거 칸이면 근거는 그대로 두고 새 보완으로 덮고,
      * 보완 칸이면 그 보완의 답을 고친다(보완 고치기와 같은 효과).
      */
     @Transactional
@@ -358,6 +361,15 @@ public class StarService {
 
         if (text.isBlank()) {
             experience.replaceStarSlot(slot.cleared());
+            if (slot.getSourceType() == StarSourceType.SUPPLEMENT
+                    && experience.getStarSlots().stream()
+                            .noneMatch(other -> other.points(StarSourceType.SUPPLEMENT, slot.getSourceId()))) {
+                experience.getSupplements().stream()
+                        .filter(s -> s.getId().equals(slot.getSourceId()) && s.isFromStar())
+                        .findFirst().ifPresent(s -> supplementService.delete(s.getId()));
+                // 추천 근거 줄 정리로 영속성 컨텍스트가 비워질 수 있다 — 응답은 저장된 경험을 다시 읽는다.
+                experience = experiences.findById(experienceId).orElseThrow();
+            }
         } else if (!isFilled(experience, slot)) {
             fillWithNewSupplement(experience, slot, slot.getQuestion() == null ? name.label() : slot.getQuestion(),
                     text);
@@ -376,7 +388,7 @@ public class StarService {
     }
 
     private void fillWithNewSupplement(Experience experience, StarSlot slot, String question, String answer) {
-        Supplement supplement = supplements.saveAndFlush(new Supplement(experience, null, null, question, answer));
+        Supplement supplement = supplements.saveAndFlush(Supplement.fromStar(experience, question, answer));
         // 같은 요청 · 같은 영속성 컨텍스트에서 경험을 다시 읽어도 보이게
         if (Hibernate.isInitialized(experience.getSupplements())) {
             experience.getSupplements().add(supplement);
