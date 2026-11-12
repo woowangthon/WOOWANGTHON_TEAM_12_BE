@@ -23,6 +23,7 @@ import com.woowangthon.backend.experience.Experience;
 import com.woowangthon.backend.experience.Supplement;
 import com.woowangthon.backend.experience.SupplementRepository;
 import com.woowangthon.backend.mcp.McpConnectionService;
+import com.woowangthon.backend.mcp.McpController;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
@@ -134,20 +135,20 @@ class McpApiTest {
     }
 
     @Test
-    void 다시_만들면_예전_주소는_바로_401() throws Exception {
+    void 다시_만들면_예전_주소는_바로_404() throws Exception {
         String body = web.perform(post("/api/mcp/connection")).andReturn().getResponse().getContentAsString();
         String newToken = tokenOf(json.readTree(body).get("url").asString());
 
-        rpc(token, "ping", "{}").andExpect(status().isUnauthorized()).andExpect(content().string(""));
+        rpc(token, "ping", "{}").andExpect(status().isNotFound()).andExpect(jsonPath("$.error.code").value(-32001));
         rpc(newToken, "ping", "{}").andExpect(status().isOk());
     }
 
     @Test
-    void 끊으면_401_이고_다시_끊어도_204() throws Exception {
+    void 끊으면_404_이고_다시_끊어도_204() throws Exception {
         web.perform(delete("/api/mcp/connection")).andExpect(status().isNoContent());
         web.perform(delete("/api/mcp/connection")).andExpect(status().isNoContent());
 
-        rpc(token, "ping", "{}").andExpect(status().isUnauthorized());
+        rpc(token, "ping", "{}").andExpect(status().isNotFound());
     }
 
     @Test
@@ -159,8 +160,22 @@ class McpApiTest {
     // --- MCP 엔드포인트 ---
 
     @Test
-    void 없는_토큰은_본문_없이_401() throws Exception {
-        rpc("not-a-token", "initialize", "{}").andExpect(status().isUnauthorized()).andExpect(content().string(""));
+    void 없는_토큰은_읽을_수_있는_JSON_RPC_오류와_404() throws Exception {
+        rpc("not-a-token", "initialize", "{}")
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/json"))
+                .andExpect(jsonPath("$.jsonrpc").value("2.0"))
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.error.code").value(-32001))
+                .andExpect(jsonPath("$.error.message").value(McpController.TOKEN_GONE_MESSAGE));
+    }
+
+    @Test
+    void 요청_본문을_못_읽어도_404_오류_본문은_온다() throws Exception {
+        client.perform(post("/mcp/{token}", "not-a-token").contentType(MediaType.APPLICATION_JSON).content("not json"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.id").doesNotExist())
+                .andExpect(jsonPath("$.error.code").value(-32001));
     }
 
     @Test

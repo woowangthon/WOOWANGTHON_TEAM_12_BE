@@ -133,7 +133,7 @@ class McpWriteApiTest {
 
         String body = web.perform(post("/api/mcp/connection")).andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        rpc(token, "ping", "{}").andExpect(status().isUnauthorized());
+        rpc(token, "ping", "{}").andExpect(status().isNotFound());
         web.perform(get("/api/mcp/connection")).andExpect(jsonPath("$.writeEnabled").value(false));
         assertThat(jdbc.queryForObject("select count(*) from access_token where user_id = ?", Long.class, userId)).isEqualTo(1);
 
@@ -144,7 +144,7 @@ class McpWriteApiTest {
         enableWrite();
         web.perform(delete("/api/mcp/connection"))
                 .andExpect(status().isNoContent());
-        rpc(newToken, "ping", "{}").andExpect(status().isUnauthorized());
+        rpc(newToken, "ping", "{}").andExpect(status().isNotFound());
         web.perform(get("/api/mcp/connection"))
                 .andExpect(jsonPath("$.connected").value(false))
                 .andExpect(jsonPath("$.writeEnabled").value(false));

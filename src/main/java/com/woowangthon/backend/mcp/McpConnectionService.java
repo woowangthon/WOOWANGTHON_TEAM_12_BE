@@ -17,7 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * MCP 연결 주소(ETC docs/contracts/mcp-api.md 「연결 주소」). 사용자당 하나 — 다시 만들면 예전 토큰은 지운다(바로 401).
+ * MCP 연결 주소(ETC docs/contracts/mcp-api.md 「연결 주소」). 사용자당 하나 — 다시 만들면 예전 토큰은 지운다(바로 404).
  * READ · READ_WRITE 는 연결 하나의 두 상태다 — 쓰기를 켜고 꺼도 주소는 그대로이고 범위만 바뀐다(S-52).
  * 차곡이 일의 CHAGOK 토큰도 여기서 만들지만 연결 주소와는 따로 산다 — 연결 화면에 안 보이고 위 규칙에 안 세인다(「토큰 범위」).
  * 토큰은 32바이트 무작위 값을 URL 에 그대로 쓰는 base64url 로 내보내고, DB 에는 SHA-256 해시만 둔다.
@@ -107,7 +107,7 @@ public class McpConnectionService {
         return new ChagokToken(saved.getId(), internalBaseUrl + token);
     }
 
-    /** 일이 끝난 토큰을 지운다 — 바로 401. */
+    /** 일이 끝난 토큰을 지운다 — 바로 404. */
     @Transactional
     public void revoke(long tokenId) {
         tokens.deleteById(tokenId);

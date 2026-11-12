@@ -25,7 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
  * MCP 엔드포인트 — ETC docs/contracts/mcp-api.md 「POST /mcp/{token}」(SPEC F-11 · S-32 · 데모 7).
  * Streamable HTTP 를 상태 없이 쓴다: 요청 하나에 JSON-RPC 메시지 하나, 응답은 application/json 한 번(SSE · Mcp-Session-Id 없음).
  * 라이브러리 없이 다섯 메서드(initialize · notifications/initialized · ping · tools/list · tools/call)만 받는다.
- * /api 밖이라 로그인 세션 · 쿠키 · CORS 와 상관없고, 주소의 토큰으로만 사용자를 정한다. 없는 · 끊긴 토큰은 본문 없이 401.
+ * /api 밖이라 로그인 세션 · 쿠키 · CORS 와 상관없고, 주소의 토큰으로만 사용자를 정한다. 없는 · 끊긴 토큰은 404 + JSON-RPC 오류 본문(빈 401 이면 클라이언트가 SyntaxError 만 보이고, 401 이면 OAuth 등록으로 넘어가 이유가 가려진다 — BE#187).
  */
 @RestController
 public class McpController {
@@ -58,6 +58,9 @@ public class McpController {
             - answer_clarification 의 answer 는 사용자가 이 대화에서 그 되묻기에 한 말 그대로다. 사용자 대신 답하거나 경험 · 근거로 채우지 않는다.
             - mcpChange 가 있는 보완은 외부 AI 를 거쳐 아직 확인 전이다. 사용자가 웹에서 맞아요를 누르기 전엔 근거로 쓰이지 않는다.""";
 
+    // 없는 토큰과 끊긴 토큰을 구분하지 않는다 — 토큰이 있는지 알려 주지 않는다
+    public static final String TOKEN_GONE_MESSAGE = "연결 주소가 바뀌었거나 끊겼어요. 웹 「연결」 화면에서 새 주소를 받아 다시 연결해 주세요.";
+
     private final McpConnectionService connections;
     private final Map<String, McpTool> tools;
     private final JsonMapper json;
@@ -72,7 +75,7 @@ public class McpController {
     public ResponseEntity<Object> handle(@PathVariable String token, @RequestBody(required = false) String body) {
         Optional<McpConnectionService.Authenticated> owner = connections.authenticate(token);
         if (owner.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            return reply(HttpStatus.NOT_FOUND, error(requestId(body), -32001, TOKEN_GONE_MESSAGE));
         }
 
         JsonNode message;
@@ -107,6 +110,16 @@ public class McpController {
             case "tools/call" -> reply(HttpStatus.OK, callTool(id, owner.get(), params));
             default -> reply(HttpStatus.OK, error(id, -32601, "지원하지 않는 메서드: " + method.asString()));
         };
+    }
+
+    /** 인증 실패 응답에 되돌려 줄 요청 id. 읽을 수 없거나 없으면 null. */
+    private JsonNode requestId(String body) {
+        try {
+            JsonNode message = json.readTree(body == null ? "" : body);
+            return message != null && message.isObject() ? message.get("id") : null;
+        } catch (JacksonException e) {
+            return null;
+        }
     }
 
     private Map<String, Object> initialize(McpConnectionService.Authenticated owner, JsonNode params) {
