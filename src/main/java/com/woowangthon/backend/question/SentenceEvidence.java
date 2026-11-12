@@ -75,7 +75,7 @@ public class SentenceEvidence {
                 e.getCitations().stream().filter(c -> Boolean.TRUE.equals(c.getMatched()))
                         .map(c -> new MatchRequest.CitationPart(c.getId(), c.getQuote())).toList(),
                 e.getConfirmedSupplements().stream()
-                        .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList());
+                        .map(s -> new MatchRequest.SupplementPart(s.getId(), s.getQuestion(), s.getAnswer())).toList(), List.of());
     }
 
     /** AI 에 보낸 것 — 응답의 근거 ID 가 보낸 것인지 확인한다. EXPERIENCE 는 USER_ENTERED 경험만 된다. */

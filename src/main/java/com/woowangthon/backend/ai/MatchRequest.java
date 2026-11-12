@@ -41,7 +41,8 @@ public record MatchRequest(QuestionPart question, List<ExperiencePart> experienc
             Actor actor,
             SourceStatus sourceStatus,
             List<CitationPart> citations,
-            List<SupplementPart> supplements) {
+            List<SupplementPart> supplements,
+            @JsonInclude(JsonInclude.Include.NON_EMPTY) List<String> askedQuestions) {
     }
 
     public record CitationPart(Long id, String quote) {

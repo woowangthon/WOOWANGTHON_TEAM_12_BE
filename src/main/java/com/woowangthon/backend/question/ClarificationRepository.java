@@ -25,6 +25,14 @@ public interface ClarificationRepository extends JpaRepository<Clarification, Lo
             + "(select l.id from ApplicationPostingLine l where l.application.id = :applicationId)")
     void deleteByApplicationPosting(Long applicationId);
 
+    // 같은 지원서의 다른 문항에서 아직 답하지 않은 되묻기. 생성 시각 칸이 없어 증가하는 ID 로 최근 순서를 본다.
+    // 공고 되묻기는 question 이 없어 빠진다. 보완이 지워지면 다시 미답변으로 포함된다(S-24).
+    @Query("select c from Clarification c join c.question q "
+            + "where q.application.id = :applicationId and q.userId = :userId "
+            + "and (:excludedQuestionId is null or q.id <> :excludedQuestionId) "
+            + "and not exists (select 1 from Supplement s where s.clarificationId = c.id) order by c.id desc")
+    List<Clarification> findUnansweredInOtherQuestions(Long applicationId, Long userId, Long excludedQuestionId);
+
     // 되묻기에 답이 있는 문항 — 보완을 지우면 답이 없는 것으로 돌아간다(S-24)
     @Query("select distinct c.question.id from Clarification c where c.question.id in :questionIds "
             + "and exists (select 1 from Supplement s where s.clarificationId = c.id)")
