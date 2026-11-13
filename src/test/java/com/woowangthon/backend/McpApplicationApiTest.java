@@ -210,6 +210,45 @@ class McpApplicationApiTest {
     }
 
     @Test
+    void 문항_없이_공고_요건_줄만으로_지원을_만든다() throws Exception {
+        // BE#192 — 채용 공고 대부분엔 자소서 문항이 없다(S-18). 당근 광고 Backend 공고의 주요업무 · 자격요건 줄
+        connections.setWriteEnabled(userId, true);
+        int usedBefore = used();
+        String postingOnly = json.writeValueAsString(Map.of(
+                "organization", "당근",
+                "jobRole", "BACKEND",
+                "questions", List.of(),
+                "postingLines", List.of(
+                        Map.of("section", "DUTY", "text", "광고 서빙 · 집행 시스템을 설계하고 운영합니다", "readFrom", "TEXT"),
+                        Map.of("section", "REQUIRED", "text", "Kotlin 또는 Java 로 서버를 개발해 본 경험", "ksa", "SKILL", "readFrom", "TEXT"))));
+
+        JsonNode result = toolResult(call(token, "create_application", postingOnly));
+
+        long applicationId = result.get("applicationId").asLong();
+        assertThat(result.get("questionIds")).isEmpty();
+        assertThat(result.get("notice").asString()).startsWith("공고 요건 줄로 지원을 만들었어요");
+        verify(matches, never()).run(anyLong());
+        assertThat(used()).isEqualTo(usedBefore + 1); // 공고 기준 경험 찾기 1회
+        em.flush();
+        em.clear();
+        web.perform(get("/api/applications/{id}", applicationId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.questions").isEmpty())
+                .andExpect(jsonPath("$.postingLines[0].section").value("DUTY"))
+                .andExpect(jsonPath("$.postingLines[1].ksa").value("SKILL"));
+    }
+
+    @Test
+    void 도구_정의는_문항_0개와_공고_요건_줄을_받는다() throws Exception {
+        connections.setWriteEnabled(userId, true);
+        rpc(token, "tools/list", "{}")
+                .andExpect(jsonPath("$.result.tools[?(@.name == 'create_application')].inputSchema.properties.questions.minItems",
+                        hasItem(0)))
+                .andExpect(jsonPath("$.result.tools[?(@.name == 'create_application')].inputSchema.properties.postingLines.maxItems",
+                        hasItem(40)));
+    }
+
+    @Test
     void 웹과_같은_검사에_걸리면_아무것도_남기지_않는다() throws Exception {
         connections.setWriteEnabled(userId, true);
         long applications = count("application");
@@ -220,6 +259,7 @@ class McpApplicationApiTest {
         }
 
         assertToolError(call(token, "create_application", "{\"organization\":\"OO\",\"questions\":[]}"), "INVALID_ARGUMENT");
+        assertToolError(call(token, "create_application", "{\"organization\":\"OO\",\"questions\":[],\"postingLines\":[]}"), "INVALID_ARGUMENT");
         assertToolError(call(token, "create_application", "{\"organization\":\"OO\"}"), "INVALID_ARGUMENT");
         assertToolError(call(token, "create_application", "{\"questions\":\"문항\"}"), "INVALID_ARGUMENT");
         assertToolError(call(token, "create_application", json.writeValueAsString(Map.of("questions", eleven))), "INVALID_ARGUMENT");

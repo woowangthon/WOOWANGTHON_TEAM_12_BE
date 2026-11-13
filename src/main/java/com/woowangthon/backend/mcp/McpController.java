@@ -53,7 +53,7 @@ public class McpController {
             - add_source 의 text 는 사용자가 준 글 그대로다. 요약하거나 고쳐 쓰지 않는다.
             - update_experience 로 고친 경험은 바로 바뀌지만 확인 필요(NEEDS_REVIEW)가 된다. 사용자가 웹에서 맞아요를 누르거나 되돌린다 — 확정됐다고 말하지 않는다.
             - 고치기는 경험 본문만 된다. 수행 주체 · 역량 · 지우기는 웹에서 하도록 안내한다.
-            - create_application 의 문항은 사용자가 준 글에 적힌 것만 싣는다. 문항을 지어내지 않는다. 문항마다 분석 1회로 센다.
+            - create_application 의 문항은 사용자가 준 글에 적힌 것만 싣는다. 문항을 지어내지 않는다. 문항이 없는 공고면 questions 를 비우고 postingLines 에 공고 요건 줄을 싣는다. 문항마다 분석 1회, 공고 요건 줄이 있으면 1회 더 센다.
             - get_question 의 status 가 ANALYZING 이면 잠시 뒤 다시 부른다. FAILED 면 실패했다고 말하고 추천을 지어내지 않는다.
             - answer_clarification 의 answer 는 사용자가 이 대화에서 그 되묻기에 한 말 그대로다. 사용자 대신 답하거나 경험 · 근거로 채우지 않는다.
             - mcpChange 가 있는 보완은 외부 AI 를 거쳐 아직 확인 전이다. 사용자가 웹에서 맞아요를 누르기 전엔 근거로 쓰이지 않는다.""";
