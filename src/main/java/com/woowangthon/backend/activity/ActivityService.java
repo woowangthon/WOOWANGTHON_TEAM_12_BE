@@ -27,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class ActivityService {
 
     private static final int NOTE_MAX_LENGTH = 200;
+    /** 사용자가 쓰는 활동 이름은 100자까지(지원처 이름과 같다) — 새 경험 후보의 새 활동도 같다. */
+    public static final int NAME_MAX_LENGTH = 100;
 
     private final ActivityRepository activities;
     private final ExperienceService experiences;
@@ -106,6 +108,9 @@ public class ActivityService {
         body.string("name").ifPresent(name -> {
             if (name.value() == null || name.value().isBlank()) {
                 throw ApiException.invalidRequest("name 이 비었습니다");
+            }
+            if (name.value().length() > NAME_MAX_LENGTH) {
+                throw ApiException.invalidRequest("name 은 " + NAME_MAX_LENGTH + "자까지입니다");
             }
             activity.rename(name.value());
         });

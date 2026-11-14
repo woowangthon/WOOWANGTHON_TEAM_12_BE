@@ -528,7 +528,7 @@ public class DraftService {
 
     /**
      * 그 초안을 시작한 뒤 재료 경험의 주체가 UNKNOWN 에서 정해졌나(S-77). 보조 재료는 저장하지 않으므로, 켠 초안은 고른 경험의 활동 전체를 본다
-     * — 주체도 활동 단위로 정한다(S-76).
+     * — 주체도 활동 단위로 정한다(S-76). 재료는 초안을 시작할 때 이미 있던 경험이다 — 그 뒤에 만든 경험은 그 초안에 실리지 않았다.
      */
     private boolean actorDecidedSince(Draft draft, long userId) {
         if (draft == null || draft.getCreatedAt() == null) {
@@ -538,7 +538,9 @@ public class DraftService {
         List<Experience> material = !draft.isUseContext() || chosen.isEmpty() ? chosen
                 : experiences.findRecentInActivities(
                         chosen.stream().map(e -> e.getActivity().getId()).distinct().toList(), userId);
-        return material.stream().map(Experience::getActorDecidedAt)
+        return material.stream()
+                .filter(e -> e.getCreatedAt() == null || !e.getCreatedAt().isAfter(draft.getCreatedAt()))
+                .map(Experience::getActorDecidedAt)
                 .anyMatch(at -> at != null && at.isAfter(draft.getCreatedAt()));
     }
 

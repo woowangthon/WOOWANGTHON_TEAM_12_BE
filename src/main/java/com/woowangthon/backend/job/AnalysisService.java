@@ -58,6 +58,8 @@ public class AnalysisService {
 
     // experience-api.md 「POST /api/sources/batch」 sources 최대 개수
     static final int MAX_BATCH_SOURCES = 10;
+    // 파일 이름 · 폴더 안 경로(S-62 · S-63)까지 담는 길이
+    static final int MAX_NAME_LENGTH = 300;
 
     private static final DateTimeFormatter PASTED_NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -449,6 +451,9 @@ public class AnalysisService {
     private static String fileName(String name) {
         if (name == null || name.isBlank()) {
             throw ApiException.invalidRequest("FILE 은 name(파일 이름)이 필요합니다");
+        }
+        if (name.length() > MAX_NAME_LENGTH) {
+            throw ApiException.invalidRequest("name 은 " + MAX_NAME_LENGTH + "자까지입니다");
         }
         String lower = name.toLowerCase(Locale.ROOT);
         if (!lower.endsWith(".md") && !lower.endsWith(".txt") && sectionKind(name) == null) {

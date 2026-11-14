@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -110,6 +111,12 @@ public class McpController {
             case "tools/call" -> reply(HttpStatus.OK, callTool(id, owner.get(), params));
             default -> reply(HttpStatus.OK, error(id, -32601, "지원하지 않는 메서드: " + method.asString()));
         };
+    }
+
+    /** 본문 1MB 넘음(McpBodyLimitAdvice) — 본문을 읽지 않았으니 id 는 없다. */
+    @ExceptionHandler(McpBodyLimitAdvice.BodyTooLarge.class)
+    public ResponseEntity<Object> tooLarge() {
+        return reply(HttpStatus.CONTENT_TOO_LARGE, error(null, -32600, "요청이 너무 큽니다(1MB 이하)"));
     }
 
     /** 인증 실패 응답에 되돌려 줄 요청 id. 읽을 수 없거나 없으면 null. */
