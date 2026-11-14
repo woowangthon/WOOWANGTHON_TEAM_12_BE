@@ -388,6 +388,8 @@ class DraftConfirmApiTest {
 
     @Test
     void 초안_시작_시각과_주체를_정한_시각의_앞뒤가_공짜_여부를_가른다() throws Exception {
+        // 경험은 초안보다 먼저 있었다 — 아래에서 초안 시각을 한 시간 전으로 당긴다
+        jdbc.update("update experience set created_at = now() - interval '3 hours' where id in (?, ?)", chat, study);
         decide(actA, "ME").andExpect(status().isOk());
         int base = used();
         start(chat).andExpect(status().isAccepted());
@@ -432,6 +434,27 @@ class DraftConfirmApiTest {
         patchExperience(study, "{\"actor\": \"ME\"}").andExpect(status().isOk());
 
         postJson("{\"experienceIds\": [%d], \"useContext\": false}".formatted(chat)).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(used()).isEqualTo(base + 2);
+    }
+
+    @Test
+    void 초안_뒤에_만든_경험의_주체를_정해도_다시_만들기를_센다() throws Exception {
+        int base = used();
+        start(chat).andExpect(status().isAccepted());
+        awaitDraft();
+        assertThat(used()).isEqualTo(base + 1);
+
+        // 같은 활동에 주체 없이 만든 새 경험 — 그 초안의 재료가 아니었다
+        String created = mvc.perform(post("/api/activities/{id}/experiences", actA).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\": \"초안 뒤에 넣은 경험\", \"actor\": \"UNKNOWN\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long added = ((Number) JsonPath.read(created, "$.id")).longValue();
+        patchExperience(added, "{\"actor\": \"ME\"}").andExpect(status().isOk());
+        assertThat(actorDecidedAt(added)).isNotNull();
+        assertThat(freeRegenerate()).isFalse();
+
+        start(chat).andExpect(status().isAccepted());
         awaitDraft();
         assertThat(used()).isEqualTo(base + 2);
     }

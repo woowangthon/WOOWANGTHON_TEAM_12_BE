@@ -400,6 +400,10 @@ public class Experience {
         return values.stream().map(Competency::name).toArray(String[]::new);
     }
 
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
+    }
+
     public OffsetDateTime getActorDecidedAt() {
         return actorDecidedAt;
     }
