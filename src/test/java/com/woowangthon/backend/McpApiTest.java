@@ -179,6 +179,22 @@ class McpApiTest {
     }
 
     @Test
+    void 본문이_1MB_를_넘으면_토큰과_상관없이_413_오류_본문() throws Exception {
+        String big = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"pad\":\"" + "a".repeat(1024 * 1024) + "\"}";
+        for (String t : List.of("not-a-token", token)) {
+            client.perform(post("/mcp/{token}", t).contentType(MediaType.APPLICATION_JSON).content(big))
+                    .andExpect(status().isContentTooLarge())
+                    .andExpect(jsonPath("$.id").doesNotExist())
+                    .andExpect(jsonPath("$.error.code").value(-32600));
+        }
+        // 한도 안의 큰 요청은 그대로 받는다
+        String fits = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"pad\":\"" + "a".repeat(900 * 1024) + "\"}";
+        client.perform(post("/mcp/{token}", token).contentType(MediaType.APPLICATION_JSON).content(fits))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1));
+    }
+
+    @Test
     void initialize_는_보낸_버전과_읽는_규칙을_돌려준다() throws Exception {
         rpc(token, "initialize", """
                 {"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}""")
