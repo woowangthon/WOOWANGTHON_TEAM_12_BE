@@ -1,8 +1,17 @@
 # WOOWANGTHON_TEAM_12_BE
 
-2026 AI 우왕톤 12팀 「내가 우왕이 될 상인가」 — 백엔드
+2026 AI 우왕톤 12팀 「내가 우왕이 될 상인가」 — **차곡** 백엔드. 흩어진 기록은 차곡차곡 정리하고, 지원서엔 딱 맞게 꺼내 쓰는 AI 동료.
 
-전체 개요 · 명세 · 아키텍처 · 결정 기록은 [ETC 레포](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC).
+**서비스: https://app-woowang.miroda.live** · API `https://api-woowang.miroda.live/api`. 심사용 테스트 계정은 제출 폼에 있다.
+
+프로젝트 개요 · 문제 · AI 검증 · 아키텍처 · 결정 기록은 [ETC 레포](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC). 스택을 고른 이유는 ETC [ADR-003](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-003-stack-and-ai-boundary.md) · 배포는 [ADR-004](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-004-deploy.md).
+
+## 이 레포가 맡는 것
+
+- 인증 · 저장 · 사용자 구분 · 하루 분석 한도 · 분석 작업(뒤에서 돌고 상태 · 다시 시도를 남긴다)
+- **AI 서버를 부르는 유일한 곳** — AI 결과의 근거 · ID 를 다시 검증하고, 어긋나면 저장하지 않는다. AI 가 실패하면 정해 둔 답으로 채우지 않고 실패 이유를 남긴다
+- 출처 상태(원문에서 확인 · 내가 입력 · 확인 필요)와 수행 주체를 데이터로 나눠 쌓는다
+- MCP 서버 — 사용자의 AI(Claude 등)와 홈의 차곡이가 같은 도구를 쓴다(ETC ADR-008)
 
 ## 스택
 
@@ -42,7 +51,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 
 테스트 계정에 활동이 없을 때만 계약 예시를 한 번 넣는다(`SAMPLE(dev-seed-activities)`).
 
-> **공개 전에 끄고 시드 데이터를 지운다.** 로컬 · Access 뒤 개발 서버에서만 켠다.
+> **운영에선 끈다.** 로컬에서만 켠다.
 
 ## API
 
@@ -121,7 +130,7 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 - 주소 앞부분은 `MCP_BASE_URL`(기본 `http://localhost:8080/mcp/`). 서버에선 공개 API 주소로 넣는다 — 요청 호스트로 짐작하지 않는다.
 - 토큰은 해시만 저장한다 — 잃어버리면 다시 만든다. 주소가 곧 비밀번호라 로그에 남기지 않는다(접근 로그를 켜지 않았다).
 - 로컬 확인: 로그인한 뒤 `POST /api/mcp/connection` 으로 주소를 받아 `claude mcp add --transport http woowang <주소>` → 「WebSocket 경험 찾아 줘」.
-- claude.ai 커넥터는 Anthropic 서버에서 부르므로 서버에선 Cloudflare Access 가 `/mcp/*` 를 통과시켜야 한다(사람이 설정).
+- claude.ai 커넥터는 Anthropic 서버에서 부른다 — 서버 앞에 Cloudflare Access 같은 문을 다시 두면 `/mcp/*` 는 통과시켜야 한다.
 
 ### 테스트 계정 (`SAMPLE(test-account)`)
 
@@ -143,10 +152,10 @@ V1 마이그레이션의 사용자 1(`SAMPLE(fixed-user)`)은 아이디 · 비�
 
 ## 서버에 띄우기
 
-OCI 서버 하나에 Docker Compose 로 DB · AI · BE 와 Cloudflare Tunnel 을 띄운다(ETC ADR-004). 밖에서 들어오는 길은 Tunnel → BE 하나뿐이고, 공개 전엔 Cloudflare Access 로 팀원만 통과시킨다. 서버 · 도메인 · 비밀값은 사람이 다룬다.
+OCI 서버 하나에 Docker Compose 로 DB · AI · BE 와 Cloudflare Tunnel 을 띄운다(ETC ADR-004). 밖에서 들어오는 길은 Tunnel → BE 하나뿐이다. 공개 전엔 Cloudflare Access 로 팀원만 통과시켰고, 로그인 · 하루 한도를 붙인 뒤 풀었다(2026-11-14 · #21). 서버 · 도메인 · 비밀값은 사람이 다룬다.
 
 ```
-인터넷 ─ Cloudflare(Access) ─ Tunnel ─ cloudflared ─▶ be:8080 ─▶ ai:8000 (내부망)
+인터넷 ─ Cloudflare ─ Tunnel ─ cloudflared ─▶ be:8080 ─▶ ai:8000 (내부망)
                                                         └──────▶ db:5432 (내부망)
 ```
 
@@ -163,7 +172,7 @@ cp WOOWANGTHON_TEAM_12_AI/.env.example WOOWANGTHON_TEAM_12_AI/.env
 
 | 파일 | 채울 것 |
 | --- | --- |
-| BE `.env` | `DB_PASSWORD`(새로 만든 긴 값) · `SEED_SAMPLE`(Access 뒤 개발 서버면 `true`) · `CORS_ALLOWED_ORIGINS`(FE 주소) · `TEST_ACCOUNT_PASSWORD`(심사용 테스트 계정) · `TUNNEL_TOKEN`(3단계) |
+| BE `.env` | `DB_PASSWORD`(새로 만든 긴 값) · `SEED_SAMPLE`(운영은 `false`) · `CORS_ALLOWED_ORIGINS`(FE 주소) · `TEST_ACCOUNT_PASSWORD`(심사용 테스트 계정) · `TUNNEL_TOKEN`(3단계) |
 | AI `.env` | `OPENAI_API_KEY`(팀 키). 나머지는 그 레포 `.env.example` 기본값 |
 
 BE `.env` 의 `DB_URL` · `AI_BASE_URL` 은 서버에선 쓰이지 않는다 — compose 가 `db` · `ai` 서비스 이름으로 정한다.
@@ -186,9 +195,9 @@ docker compose logs -f be                        # 로그
 
 주소는 한 단계 서브도메인으로 둔다(`api-<앱이름>.<도메인>`). `api.<앱이름>.<도메인>` 처럼 두 단계면 Cloudflare 무료 인증서가 덮지 못해 HTTPS 오류가 난다.
 
-### 4. Cloudflare Access — 공개 전 팀원만
+### 4. (공개 전에만) Cloudflare Access — 팀원만
 
-Zero Trust → Access → Applications → Self-hosted, 주소 `api-<앱이름>.<도메인>`, 정책 Allow · 팀원 이메일. 시크릿 창에서 열면 로그인 화면이 먼저 나와야 한다.
+로그인이 붙기 전 개발 서버를 팀원만 들이려면: Zero Trust → Access → Applications → Self-hosted, 주소 `api-<앱이름>.<도메인>`, 정책 Allow · 팀원 이메일. 지금 운영은 Access 없이 앱 로그인으로 막는다.
 
 ### 고칠 때 · 끌 때
 
@@ -198,7 +207,7 @@ docker compose up -d --build                     # 바뀐 이미지만 다시 �
 docker compose down                              # 끄기(DB 데이터는 볼륨에 남는다)
 ```
 
-> **공개 전**: BE `.env` 에 `SEED_SAMPLE=false`, DB 를 비우고 새로 시작(`docker compose down -v` — 볼륨까지 지운다, 되돌릴 수 없음) · BE `.env` 에 `TEST_ACCOUNT_PASSWORD`(DB 를 비운 뒤 켜면 테스트 계정이 다시 생긴다) · FE 로그인 화면이 붙은 뒤 Access 해제.
+> **공개할 때**: BE `.env` 에 `SEED_SAMPLE=false`, DB 를 비우고 새로 시작(`docker compose down -v` — 볼륨까지 지운다, 되돌릴 수 없음) · BE `.env` 에 `TEST_ACCOUNT_PASSWORD`(DB 를 비운 뒤 켜면 테스트 계정이 다시 생긴다) · FE 로그인 화면이 붙은 뒤 Access 해제.
 
 ## 검증
 
