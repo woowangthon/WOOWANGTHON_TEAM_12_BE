@@ -23,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ExperienceService {
 
+    static final int CONTENT_MAX_LENGTH = 5000;
+
     private final ExperienceRepository experiences;
     private final CitationRepository citations;
     private final SupplementRepository supplements;
@@ -52,7 +54,7 @@ public class ExperienceService {
             if (field.value() == null || field.value().isBlank()) {
                 throw ApiException.invalidRequest("content 가 비었습니다");
             }
-            return field.value();
+            return checkContentLength(field.value());
         }).orElse(null);
 
         // 보내면 통째로 바꾼다. [] 는 지우기, null 은 400
@@ -110,6 +112,7 @@ public class ExperienceService {
         if (content == null || content.isBlank()) {
             throw ApiException.invalidRequest("content 가 비었습니다");
         }
+        checkContentLength(content);
         List<Competency> competencies = body.list("competencies").map(field -> parseCompetencies(field.value()))
                 .orElse(List.of());
         Actor actor = parseActor(body.string("actor").map(PatchBody.Field::value).orElse(null));
@@ -295,6 +298,14 @@ public class ExperienceService {
         } catch (IllegalArgumentException e) {
             throw ApiException.invalidRequest(e.getMessage());
         }
+    }
+
+    /** 경험 본문은 5000자까지(MCP update_experience 와 같다) — 화면과, 경험을 싣는 AI 요청 크기를 지킨다. */
+    private static String checkContentLength(String content) {
+        if (content.length() > CONTENT_MAX_LENGTH) {
+            throw ApiException.invalidRequest("content 는 " + CONTENT_MAX_LENGTH + "자까지입니다");
+        }
+        return content;
     }
 
     private static Actor parseActor(String value) {

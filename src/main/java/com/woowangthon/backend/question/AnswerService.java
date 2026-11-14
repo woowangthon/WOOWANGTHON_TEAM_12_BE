@@ -3,6 +3,7 @@ package com.woowangthon.backend.question;
 import com.woowangthon.backend.account.UsageLimiter;
 import com.woowangthon.backend.activity.Activity;
 import com.woowangthon.backend.activity.ActivityRepository;
+import com.woowangthon.backend.activity.ActivityService;
 import com.woowangthon.backend.activity.Period;
 import com.woowangthon.backend.ai.AiCallException;
 import com.woowangthon.backend.ai.MatchRequest;
@@ -265,6 +266,9 @@ public class AnswerService {
         String name = body.string("name").map(PatchBody.Field::value).map(String::strip).orElse(null);
         if (name == null || name.isEmpty()) {
             throw ApiException.invalidRequest("newActivity.name 이 비었습니다");
+        }
+        if (name.length() > ActivityService.NAME_MAX_LENGTH) {
+            throw ApiException.invalidRequest("newActivity.name 은 " + ActivityService.NAME_MAX_LENGTH + "자까지입니다");
         }
         Period period = body.object("period").map(field -> {
             PatchBody p = field.value();
