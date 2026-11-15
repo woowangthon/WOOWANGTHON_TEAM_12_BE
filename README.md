@@ -9,9 +9,53 @@
 ## 이 레포가 맡는 것
 
 - 인증 · 저장 · 사용자 구분 · 하루 분석 한도 · 분석 작업(뒤에서 돌고 상태 · 다시 시도를 남긴다)
-- **AI 서버를 부르는 유일한 곳** — AI 결과의 근거 · ID 를 다시 검증하고, 어긋나면 저장하지 않는다. AI 가 실패하면 정해 둔 답으로 채우지 않고 실패 이유를 남긴다
+- **AI 서버를 부르는 유일한 곳** — AI 응답이 요청과 맞는지(후보 ID · 같은 경험의 근거인지 · 개수 · 출처 상태와 근거 표시가 서로 맞는지) 확인하고, 어긋나면 저장하지 않는다. 글자 단위로 근거를 원본과 대조하는 일은 AI 서버가 한다. AI 가 실패하면 정해 둔 답으로 채우지 않고 실패 이유를 남긴다
 - 출처 상태(원문에서 확인 · 내가 입력 · 확인 필요)와 수행 주체를 데이터로 나눠 쌓는다
 - MCP 서버 — 사용자의 AI(Claude 등)와 홈의 차곡이가 같은 도구를 쓴다(ETC ADR-008)
+
+## 분석 작업이 도는 길
+
+자료를 넣으면 BE 가 **한 번에** 원본 저장 · 작업 만들기 · 하루 횟수 차감을 끝내고 바로 응답한다(202). 실제 분석은 뒤에서 돈다.
+
+```mermaid
+stateDiagram-v2
+    [*] --> QUEUED: 여러 파일을 한 번에 넣음 · 차례 기다림
+    [*] --> ANALYZING: 자료 · 문항 넣기
+    QUEUED --> ANALYZING: 앞 작업이 끝남
+    ANALYZING --> COMPLETED: AI 응답 확인 · 저장
+    ANALYZING --> FAILED: AI 오류 · 시간 초과 · 응답이 약속과 다름 · 서버 재시작
+    FAILED --> ANALYZING: 다시 시도
+```
+
+- 코드: `AnalysisService`(트랜잭션 안: 저장 · 작업 · 횟수) → `ExtractionRunner`(`@Async`, 트랜잭션 밖: AI 호출 · 결과 저장). 문항 추천 · 초안 · 차곡이 일도 같은 모양이다(`MatchRunner` · `DraftRunner` · `ChagokRunner`).
+- 사용자는 기다리지 않고 다른 화면을 쓴다. 작업 상태는 새로고침해도 이어진다. AI 호출 제한은 120초(동기 호출 60초)다.
+- **일이 안 되면 그 일만 `FAILED`(이유 포함)가 되고 정해진 결과로 채우지 않는다.** 다른 작업과 쌓인 기록은 그대로다.
+- 서버가 분석 도중 꺼지면 `InterruptedJobCleaner` 가 시작할 때 멈춰 있던 작업을 실패로 돌려 다시 시도할 수 있게 하고, 남은 차례를 이어 돌린다.
+- 하루 한도는 일을 시작하는 그 묶음 안에서 센다(`UsageLimiter`). 동시에 눌러도 한도를 넘지 않는다. 실패한 분석도 센다(LLM 은 이미 불렸을 수 있다).
+- 비어 있는 STAR 는 BE 가 알아서 뒤에서 정리한다(`StarSweeper`, 횟수를 세지 않음 — [ADR-019](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-019-star-no-auto-resort.md)).
+
+### AI 응답을 받아 BE 가 확인하는 것
+
+글자 단위 근거 대조와 숫자 대조는 AI 서버가 한다. BE 는 **응답이 요청과 맞는지**를 본다 — 하나라도 어기면 아무것도 저장하지 않고 작업을 `FAILED` 로 둔다.
+
+| 응답 | BE 가 확인하는 것 |
+| --- | --- |
+| 추출 | `SOURCE_CONFIRMED` 는 근거가 1개 이상이고 **전부 `matched: true`** 일 때만. 확인하지 않은 것을 확인했다고 저장하지 않는다. 역량은 목록 밖 값 · 중복 · 3개 초과를 버린다 |
+| 매칭 | 경험 · 근거 · 보완 ID 가 **보낸 후보**에 있는지 · 근거가 그 경험의 것인지 · 추천 · 되묻기 개수(되묻기가 추천한 경험에 붙었는지) · 요구사항 개수 |
+| 초안 | 문장 수 · 한 문장인지 · 사실 문장은 근거(`evidence`)가 있고 생각(`OPINION`)은 비었는지 · 「AI 가정」만으로 초안을 만들지 않았는지 · 소제목 길이 · 켠 지침마다 적용 여부 |
+| 새 경험 후보 | 후보 수 · 문장이 확정 글에 순서대로 있는지 · 빼야 할 문장이 아닌지 · 활동이 보낸 활동인지 |
+
+### 데이터 — 사실이 층으로 쌓인다
+
+```
+SOURCE(원본) ─▶ ACTIVITY(활동) ─▶ EXPERIENCE(경험) ─▶ CITATION(근거 발췌) · SUPPLEMENT(보완 — 되묻기 · STAR 답)
+APPLICATION(지원) ─▶ POSTING_LINE(공고 요건 줄) · QUESTION(문항) ─▶ RECOMMENDATION · CLARIFICATION · DRAFT_SENTENCE · ANSWER
+MCP_CHANGE(외부 AI 가 바꾼 것) · REVISION(수정 이력)
+```
+
+- 출처 상태(원문에서 확인 · 내가 입력 · 확인 필요)와 수행 주체(나 · 팀 · 알 수 없음)가 초안 근거 · 「맞아요」 · 내보내기 · MCP 읽기를 돌린다. 사용자가 고친 본문은 「내가 입력」이 되고 원래 근거는 남는다([ADR-018](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-018-show-only-exceptions.md)).
+- 스키마는 Flyway 마이그레이션 48개(`src/main/resources/db/migration/`)로 흐름이 붙을 때마다 자랐다. `ddl-auto=validate` — 코드가 스키마를 바꾸지 않는다.
+- 수정 이력은 고치는 요청과 같은 트랜잭션에서 남는다([ADR-013](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-013-revision-history.md)).
 
 ## 스택
 
@@ -97,6 +141,23 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 
 수정 이력은 고치는 요청과 같은 트랜잭션에서 남는다 — 경험 고치기(웹 · 외부 AI `update_experience` · 변경 기록의 되돌리기 · 맞아요) · 활동 이름 · 기간 · 답 「다 썼어요」 · 초안으로 덮어쓰기(`PUT …/answer-draft` 에 `fromDraft: true`). 자동 저장 · 값이 안 바뀐 저장은 남기지 않는다.
 
+### 그 밖의 API
+
+위 표는 핵심만 적었다. 요청 · 응답 · 오류의 원본은 계약이다.
+
+| 영역 | 경로 | 하는 일 | 계약 |
+| --- | --- | --- | --- |
+| 자료 | `/api/sources/batch` | 여러 파일을 한 번에 — 차례로 분석 | `experience-api.md` |
+| STAR | `/api/experiences/{id}/star` · `.../star/{slot}` · `/api/activities/{id}/star` | 경험의 S · T · A · R 칸 — 정리 · 빈칸에 답하기 · 칸 고치기 | `experience-api.md` |
+| 초안 · 답 | `/api/questions/{id}/draft` · `.../answer` · `.../answer-draft` · `/api/draft-sentences/{id}/confirm` · `.../removed` | 초안 만들기 · 문장 확인 · 빼기 · 답 확정 · 임시 글 | `question-api.md` |
+| 근거 점검 | `/api/questions/{id}/grounding-check` · `.../answer/new-facts` · `/api/new-fact-candidates/{id}/save` · `.../dismiss` | 쓴 글의 문장마다 근거 점검 · 확정 답의 새 경험 후보 | `question-api.md` |
+| 작성 지침 | `/api/guidelines` | 지침 정리 · 켜기 · 고치기 | `guideline-api.md` |
+| 홈 입구 · 꺼내기 | `/api/entrance/route` · `/api/entrance/parse-application` · `/api/ask` | 입력 가르기 · 지원 나누기(글 · 링크 · 캡처) · 한 줄 질문 | `entrance-api.md` |
+| 차곡이 | `/api/chagok/runs` | 일 만들기 · 단계 읽기 · 확인 · 그만두기 | `chagok-api.md` |
+| 진행 중인 일 | `/api/work` | 분석 · 초안 · 차곡이 일을 한곳에서 | `work-api.md` |
+| 내보내기 | `/api/exports` | Markdown 내보내기 | `export-api.md` |
+| MCP 변경 기록 | `/api/mcp/changes` | 외부 AI 가 바꾼 것 — 맞아요 · 되돌리기 | `mcp-api.md` |
+
 분석은 AI 서버(`AI_BASE_URL`, [ai-api 계약](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/contracts/ai-api.md))를 부른다. 로컬에서 끝까지 돌려 보려면 AI 레포를 8000 포트로 띄운다(그 레포 README). AI 서버가 없으면 작업은 `FAILED`(`AI_UNAVAILABLE`)가 된다 — 정해진 결과로 대신 채우지 않는다. 분석 중에 BE 를 다시 켜면 그 작업은 `FAILED` 가 되고 다시 시도할 수 있다.
 
 ### 로그인 · 하루 한도
@@ -110,9 +171,9 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /api/auth/logout` | 로그아웃(204) |
 | `GET /api/auth/me` | 내 아이디 · 오늘 쓴 분석 횟수 / 한도 |
 
-- 위 가입 · 로그인 · 로그아웃 말고는 전부 로그인해야 쓴다 — 아니면 401 `UNAUTHENTICATED`. 원본 · 활동 · 경험 · 지원 · 문항은 사용자별로 나뉜다.
+- 가입 · 로그인 · 로그아웃 · 공개 프로필 읽기와, 토큰이 주소에 든 MCP 엔드포인트 말고는 전부 로그인해야 쓴다 — 아니면 401 `UNAUTHENTICATED`. 원본 · 활동 · 경험 · 지원 · 문항은 사용자별로 나뉜다. 비밀번호는 BCrypt 해시로만 저장한다.
 - 분석을 시작하는 곳이 하루 횟수를 쓴다 — `POST /api/sources` · `/api/jobs/{id}/retry` · `POST /api/questions` · `/api/questions/{id}/retry` · `POST /api/applications/{id}/questions` 는 1회씩, `POST /api/applications` 는 문항 수만큼(남은 횟수가 모자라면 아무것도 저장하지 않는다). 다 쓰면 429 `DAILY_LIMIT_EXCEEDED` 로 시작하지 않는다. 한도는 `DAILY_ANALYSIS_LIMIT`(기본 20), 한국 시간 자정에 다시 채워진다.
-- 입력 크기 한도: 자료 텍스트 50000자 · 문항 5000자(계약).
+- 입력 크기 한도: 자료 텍스트 50000자 · 문항 5000자 · 경험 본문 5000자 · 활동 이름 100자 · 자료 이름 300자(계약). 한도는 세 겹이다 — 사용자별 하루 횟수 · 입력 크기 · LLM 제공사 콘솔의 사용 한도([ADR-004](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-004-deploy.md)). 실패한 분석도 횟수에 센다.
 - 세션은 BE 메모리에 있다 — BE 를 다시 켜면 다들 다시 로그인한다.
 
 ### 다른 AI 에서 쓰기 — MCP 서버
@@ -128,7 +189,11 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 | `POST /mcp/{token}` | MCP 엔드포인트(JSON-RPC, 로그인 세션 무관) — 읽기 도구 `search_experiences` · `list_activities` · `get_activity`. 쓰기를 켠 연결은 `add_source` · `update_experience` 를 바로 실행 — 고친 경험은 `NEEDS_REVIEW`, 변경 기록(`mcp_change`)이 남는다 |
 
 - 주소 앞부분은 `MCP_BASE_URL`(기본 `http://localhost:8080/mcp/`). 서버에선 공개 API 주소로 넣는다 — 요청 호스트로 짐작하지 않는다.
-- 토큰은 해시만 저장한다 — 잃어버리면 다시 만든다. 주소가 곧 비밀번호라 로그에 남기지 않는다(접근 로그를 켜지 않았다).
+- 토큰은 32바이트 무작위 값이고 **해시만 저장한다** — 잃어버리면 다시 만든다. 주소가 곧 비밀번호라 로그에 남기지 않는다(접근 로그를 켜지 않았다).
+- **도구 8개를 이 서버 한 곳에만 정의한다.** 기본(읽기)은 `search_experiences` · `list_activities` · `get_activity`, 쓰기를 켜면 `add_source` · `update_experience` · `create_application` · `get_question` · `answer_clarification` 이 더 열린다. 차곡이도 이 서버의 `tools/list` 를 그대로 쓴다.
+- **MCP 라이브러리 없이** Streamable HTTP 다섯 메서드(`initialize` · `notifications/initialized` · `ping` · `tools/list` · `tools/call`)를 상태 없이 JSON 으로 받는 컨트롤러 하나다(`McpController`). 로그인 세션과 상관없이 주소의 토큰으로만 사용자를 정하고, 없거나 끊긴 토큰은 404 다. 요청 본문은 1MB 까지 받는다.
+- **쓰기는 연결마다 켜야 하고 기본은 꺼짐**이다. 주소를 다시 만들면 다시 꺼진다. 하루 쓰기 상한(`MCP_DAILY_WRITE_LIMIT`, 기본 50) · 입력 크기 · 범위는 안내 글이 아니라 **BE 코드가 강제**한다.
+- 외부 AI 가 고친 경험은 **「확인 필요」(`NEEDS_REVIEW`)로 낮추고** 변경 기록(`mcp_change`)을 남긴다. 사용자가 웹에서 「맞아요」를 누르기 전엔 초안 · 근거 점검의 근거로 쓰지 않고, 건별로 되돌릴 수 있다. 자료 넣기는 웹과 같은 추출 · 근거 대조 · 하루 한도를 탄다([ADR-010](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-010-external-ai-write.md) · [ADR-011](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-011-external-ai-features.md)).
 - 로컬 확인: 로그인한 뒤 `POST /api/mcp/connection` 으로 주소를 받아 `claude mcp add --transport http woowang <주소>` → 「WebSocket 경험 찾아 줘」.
 - claude.ai 커넥터는 Anthropic 서버에서 부른다 — 서버 앞에 Cloudflare Access 같은 문을 다시 두면 `/mcp/*` 는 통과시켜야 한다.
 
@@ -145,6 +210,39 @@ $env:SEED_SAMPLE='true'; $env:TEST_ACCOUNT_PASSWORD='local-test-pw'; .\gradlew.b
 `SEED_SAMPLE=true` 면 예시 데이터(`SAMPLE(dev-seed-activities)`)를 이 계정에 넣는다 — 그래서 로컬에서 예시 데이터를 보려면 테스트 계정 비밀번호도 같이 넣는다.
 
 V1 마이그레이션의 사용자 1(`SAMPLE(fixed-user)`)은 아이디 · 비밀번호가 없어 로그인할 수 없다 — 로그인 전 개발 데이터의 주인으로만 남는다.
+
+## 기술 선택과 이유
+
+| 정한 것 | 이유 | 버린 안 | 기록 |
+| --- | --- | --- | --- |
+| Spring Boot · JPA · Flyway · PostgreSQL | 인증 · 데이터 · 작업 상태를 한 서버에서. 스키마는 마이그레이션으로 흐름마다 키운다 | — | [ADR-003](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-003-stack-and-ai-boundary.md) |
+| AI 서버와 분리, BE 만 부른다 | 저장 · 사용자 구분 · 호출 횟수를 BE 가 맡아 AI 서버는 JSON 만 보고 답한다 | BE 하나에서 LLM 까지 · AI 서버가 DB 직접 접근 | 같음 |
+| 임베딩 없이 경험 전부를 후보로 싣는다(pgvector 이미지는 받아 두고 확장은 안 켬) | 한 사람의 경험은 수십 ~ 백여 개라 본문 판정이 단순하고 정확하다 | 처음부터 pgvector · LangGraph | 같음 |
+| 서버 한 대 Docker Compose + Cloudflare Tunnel | 팀 크기 · 일정에 맞는 가장 단순한 운영. 밖에는 BE 만 내보낸다 | PaaS 서비스별 배포 · 포트 직접 공개 | [ADR-004](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-004-deploy.md) |
+| MCP 서버를 BE 에, 도구는 한 곳 | 토큰 · 사용자 · 한도가 BE 에 있고 안팎이 같은 도구를 쓴다 | 파이썬 MCP 서버를 AI 레포에 · 도구 두 벌 | [ADR-008](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-008-mcp-tools-in-be.md) |
+| 외부 AI 쓰기는 바로 반영하고 「확인 필요」로 낮춘다 | 대화를 끊지 않고, 확인 전엔 근거가 아니게 한다 | 앱 안 확인 대기함 · 외부 AI 승인에만 맡김 | [ADR-010](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/decisions/ADR-010-external-ai-write.md) |
+| AI 응답이 약속과 다르면 고치지 않고 작업을 실패로 둔다 | 그럴듯하게 손본 결과가 사실처럼 쌓이는 것을 막는다 | 정해진 결과로 채우기 | — |
+
+## 직접 구현 vs 외부 기술
+
+표 전체와 출처는 ETC [`docs/ai-scope.md`](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/ai-scope.md) §1 · §4.
+
+| 직접 구현 | 가져다 쓴 것 |
+| --- | --- |
+| 저장 구조 · 사용자가 고치면 출처 상태를 「내가 입력」으로 바꾸고 근거는 남기는 규칙 | Spring Boot 4 · Spring Data JPA(Hibernate) · Flyway |
+| 분석 작업 상태 · 다시 시도 · 시간 초과를 실패 이유로 남기기 · 서버 재시작 정리 · 차례 | Spring Security Crypto(BCrypt — 비밀번호 해시만) |
+| AI 응답 확인(후보 ID · 개수 · 근거 상태) | PostgreSQL 18(`pgvector/pgvector` 이미지) |
+| 가입 · 로그인 · 사용자별 하루 한도 · 데이터 나누기(필터 포함 직접) | Testcontainers(테스트) |
+| MCP 서버(라이브러리 없이) · 연결 토큰 · 쓰기 범위 · 변경 기록 · 되돌리기 | Docker · Docker Compose · Cloudflare Tunnel |
+| 차곡이 일 — 단계 쌓기 · 10분짜리 토큰 · 확인 뒤 실행 | MCP 명세 · Claude(클라이언트) |
+
+## AI 활용에서 BE 의 몫
+
+LLM 은 AI 서버가 부른다. BE 는 **무엇을 보내고 무엇을 받아 저장하는가**를 정한다.
+
+- 보내는 것: 매칭에는 경험 본문 · 근거 · 보완만 싣는다(역량 태그는 싣지 않는다 — 태그가 빠져도 매칭이 무너지지 않게). 외부 AI 를 거쳐 아직 확인 안 된 답은 재료에서 뺀다.
+- 받는 것: 위 「AI 응답을 받아 BE 가 확인하는 것」을 통과한 결과만 저장한다.
+- AI 기능의 검증 결과와 한계는 [AI 레포 README](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_AI#ai-검증-결과) · ETC [`docs/ai-scope.md`](https://github.com/woowangthon/WOOWANGTHON_TEAM_12_ETC/blob/main/docs/ai-scope.md).
 
 ## 환경변수
 
@@ -216,3 +314,21 @@ docker compose down                              # 끄기(DB 데이터는 볼륨
 ```
 
 Testcontainers 통합 테스트가 돌아서 Docker 가 실행 중이어야 한다. JDK 25 필요.
+
+## 코드 지도
+
+패키지 `com.woowangthon.backend` 아래.
+
+| 패키지 | 하는 일 |
+| --- | --- |
+| `account` | 가입 · 로그인 · 세션 · 하루 한도(`UsageLimiter`) |
+| `source` · `job` | 자료 넣기 · 분석 작업(`AnalysisService` · `ExtractionRunner` · `InterruptedJobCleaner`) |
+| `activity` · `experience` | 활동 · 경험 · 근거 · STAR(`StarSweeper`) · 경험 찾기 · 합치기 · 옮기기 |
+| `question` | 지원 · 문항 · 추천(`MatchRunner`) · 되묻기 · 초안(`DraftService` · `DraftRunner`) · 답 · 근거 점검 |
+| `entrance` | 홈 입력 가르기 · 지원 나누기 · 한 줄 질문 |
+| `chagok` | 차곡이 일(`ChagokService` · `ChagokRunner`) — AI `/agent` 스트림을 단계로 쌓기 |
+| `mcp` | MCP 서버(`McpController`) · 도구 8개 · 연결 주소 · 변경 기록 |
+| `revision` · `guideline` · `share` · `export` · `work` | 수정 이력 · 작성 지침 · 공개 프로필 · Markdown 내보내기 · 진행 중인 일 |
+| `ai` | AI 서버 호출(`AiClient` — 실패는 전부 `AiCallException`, 정해진 결과로 채우지 않는다) |
+| `seed` | 테스트 계정 · 예시 데이터(`SAMPLE(…)`) |
+| `common` | 공통 오류 · 응답 |
